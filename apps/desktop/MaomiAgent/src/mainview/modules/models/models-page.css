@@ -1,0 +1,169 @@
+.models-page,
+.models-page-surface,
+.models-page-table-shell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.models-page {
+  flex: 1;
+  padding: 20px 24px 16px;
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--app-accent-soft) 78%, transparent) 0, transparent 34%),
+    linear-gradient(180deg, color-mix(in srgb, var(--app-surface) 96%, transparent), color-mix(in srgb, var(--app-bg) 94%, transparent));
+}
+
+.models-page-surface,
+.models-page-table-shell {
+  flex: 1;
+}
+
+.models-page-toolbar,
+.models-page-toolbar-actions,
+.models-page-actions,
+.models-page-status-cell {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.models-page-toolbar,
+.models-page-toolbar-modal {
+  width: 100%;
+}
+
+.models-page-search {
+  width: min(360px, 100%);
+}
+
+.models-page-select {
+  min-width: 188px;
+}
+
+.models-page-empty-state {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: 24px;
+  border: 1px dashed var(--app-border-soft);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--app-surface) 94%, transparent);
+}
+
+.models-page-channel-cell,
+.models-page-provider-cell,
+.models-page-model-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.models-page-channel-meta,
+.models-page-model-meta {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.models-page-base-url {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.models-page-status-cell {
+  justify-content: center;
+}
+
+.models-page-actions {
+  justify-content: center;
+}
+
+.models-page-action-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+}
+
+.models-page-tag {
+  margin: 0;
+  border-radius: 999px;
+  padding-inline: 10px;
+}
+
+.models-page-tag-count {
+  background: color-mix(in srgb, var(--app-accent-soft) 78%, transparent);
+  color: var(--app-accent-text);
+}
+
+.models-page-tag-enabled {
+  background: color-mix(in srgb, var(--app-success-soft) 86%, transparent);
+  color: var(--app-success-text);
+}
+
+.models-page-tag-disabled {
+  background: color-mix(in srgb, var(--app-danger-soft) 82%, transparent);
+  color: var(--app-danger-text);
+}
+
+.models-page-tag-catalog {
+  background: color-mix(in srgb, var(--app-surface-subtle) 84%, transparent);
+  color: var(--app-text-secondary);
+}
+
+.models-page-tag-custom {
+  background: color-mix(in srgb, var(--app-debug-soft) 84%, transparent);
+  color: var(--app-debug-text);
+}
+
+.models-page-tag-kind {
+  background: color-mix(in srgb, var(--app-accent-soft) 72%, transparent);
+  color: var(--app-accent-text);
+}
+
+.models-page-capability-tags {
+  justify-content: center;
+}
+
+.models-page-models-modal-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.models-page-models-card {
+  flex: 1;
+  min-height: 0;
+}
+
+.models-page-provider-doc-alert {
+  margin-bottom: 16px;
+}
+
+.models-page-provider-env-grid {
+  margin-bottom: 8px;
+}
+
+.models-page-modal .ant-modal-content {
+  overflow: hidden;
+  border-radius: 16px;
+}
+
+@media (max-width: 960px) {
+  .models-page {
+    padding: 16px;
+  }
+
+  .models-page-search,
+  .models-page-select {
+    width: 100%;
+    min-width: 0;
+    flex-basis: 100%;
+  }
+}

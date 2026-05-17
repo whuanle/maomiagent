@@ -1,0 +1,159 @@
+import { describe, expect, test } from "bun:test";
+
+import type {
+  FeishuDocContentView,
+  FeishuDocTreeView,
+} from "../../../../../../shared/desktop-feishu";
+import { DocsDomainActionHandler } from "./docs-domain-action-handler";
+
+function createDocContentView(input: {
+  docId: string;
+  title: string;
+  markdown: string;
+}): FeishuDocContentView {
+  return {
+    docId: input.docId,
+    title: input.title,
+    markdown: input.markdown,
+    length: input.markdown.length,
+    totalLength: input.markdown.length,
+    offset: 0,
+    analysis: {
+      riskyBlocks: [],
+      riskySync: false,
+      syncMode: null,
+      riskyBlockMode: "safe",
+    },
+  };
+}
+
+function createDocTreeView(): FeishuDocTreeView {
+  return {
+    root: "document",
+    nodes: [
+      {
+        docId: "doc-roadmap",
+        title: "产品路线图",
+        hasChild: false,
+      },
+      {
+        docId: "doc-sync",
+        title: "团队周报",
+        hasChild: false,
+      },
+      {
+        docId: "doc-empty",
+        title: "未命中记录",
+        hasChild: false,
+      },
+    ],
+    hasMore: false,
+  };
+}
+
+function createHandler() {
+  const docs = {
+    "doc-roadmap": createDocContentView({
+      docId: "doc-roadmap",
+      title: "产品路线图",
+      markdown: "# 产品路线图\n\n这里记录飞书智能助手的迁移计划。",
+    }),
+    "doc-sync": createDocContentView({
+      docId: "doc-sync",
+      title: "团队周报",
+      markdown: "# 团队周报\n\n本周继续推进路线图里的飞书搜索动作。",
+    }),
+    "doc-empty": createDocContentView({
+      docId: "doc-empty",
+      title: "未命中记录",
+      markdown: "# 未命中记录\n\n没有相关关键字。",
+    }),
+  } as const;
+
+  return new DocsDomainActionHandler({
+    getDocsCapabilities: async () => {
+      throw new Error("not used in docs search test");
+    },
+    getDocTree: async () => createDocTreeView(),
+    getDocContent: async (docId: string) => docs[docId as keyof typeof docs],
+    getDocMediaPreviewUrls: async () => {
+      throw new Error("not used in docs search test");
+    },
+    getDocWhiteboardPreviewUrls: async () => {
+      throw new Error("not used in docs search test");
+    },
+    openWorkspaceDoc: async () => {
+      throw new Error("not used in docs search test");
+    },
+    getWorkspaceDocLocalDraft: async () => {
+      throw new Error("not used in docs search test");
+    },
+    saveWorkspaceDocLocalDraft: async () => {
+      throw new Error("not used in docs search test");
+    },
+    pullWorkspaceDoc: async () => {
+      throw new Error("not used in docs search test");
+    },
+    pushWorkspaceDoc: async () => {
+      throw new Error("not used in docs search test");
+    },
+  });
+}
+
+describe("DocsDomainActionHandler docs.search", () => {
+  test("returns matched docs from title and markdown instead of generic fallback", async () => {
+    const handler = createHandler();
+
+    const result = await handler.execute({
+      input: {
+        actionId: "docs.search",
+        query: "路线图",
+      },
+      domain: "docs",
+      availableRuntimeCount: 1,
+    });
+
+    expect(result.executed).toBe(true);
+    expect(result.confirmationRequired).toBe(false);
+    expect(result.summary.headline).toBe("搜索到 2 篇匹配文档");
+    expect(result.summary.nextSuggestedActionIds).toContain("docs.read");
+    expect(result.result).toEqual(
+      expect.objectContaining({
+        stage: "completed",
+        query: "路线图",
+        totalMatches: 2,
+        matches: expect.arrayContaining([
+          expect.objectContaining({
+            docId: "doc-roadmap",
+            matchedFields: expect.arrayContaining(["title", "markdown"]),
+          }),
+          expect.objectContaining({
+            docId: "doc-sync",
+            matchedFields: expect.arrayContaining(["markdown"]),
+          }),
+        ]),
+      }),
+    );
+  });
+
+  test("rejects docs.search when query is missing", async () => {
+    const handler = createHandler();
+
+    const result = await handler.execute({
+      input: {
+        actionId: "docs.search",
+      },
+      domain: "docs",
+      availableRuntimeCount: 1,
+    });
+
+    expect(result.executed).toBe(false);
+    expect(result.summary.headline).toBe("云文档动作参数不完整");
+    expect(result.result).toEqual(
+      expect.objectContaining({
+        stage: "invalid_input",
+        message: "query is required for docs search.",
+      }),
+    );
+  });
+});

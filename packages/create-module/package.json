@@ -1,0 +1,13 @@
+{
+  "name": "@maomiagent/create-module",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Scaffold a MaomiAgent application-layer module package.",
+  "bin": {
+    "create-maomi-module": "./bin/create-maomi-module.mjs"
+  },
+  "files": [
+    "bin",
+    "README.md"
+  ]
+}

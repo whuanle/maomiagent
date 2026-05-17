@@ -1,0 +1,22 @@
+bun test v1.3.12 (700fc117)
+System.Management.Automation.RemoteException
+src\bun\tests\desktop-host.test.ts:
+(pass) startDesktopApplication > boots a kernel IOC module host and wires single-instance activation [47.00ms]
+System.Management.Automation.RemoteException
+src\bun\modules\workspace\tests\desktop-workspace-service.test.ts:
+[2026-04-27T06:41:03.712Z] INFO desktop.workspace: Desktop workspace created {
+  directoryPath: "C:\\Users\\ASUS\\AppData\\Local\\Temp\\maomi-desktop-workspace-EXGd7S\\repo-Jlef1i",
+  location: "desktop.workspace",
+}
+[2026-04-27T06:41:03.714Z] INFO desktop.workspace: Desktop workspace updated {
+  location: "desktop.workspace",
+}
+[2026-04-27T06:41:03.715Z] WARN desktop.workspace: Desktop workspace removed {
+  location: "desktop.workspace",
+}
+(pass) DesktopWorkspaceService > manages directory records without workspace lifecycle side effects [15.00ms]
+System.Management.Automation.RemoteException
+ 2 pass
+ 0 fail
+ 37 expect() calls
+Ran 2 tests across 2 files. [684.00ms]

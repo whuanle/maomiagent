@@ -1,0 +1,16 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "desktop:dev",
+			"type": "shell",
+			"command": "bun",
+			"args": [
+				"run",
+				"desktop:dev"
+			],
+			"isBackground": true,
+			"group": "build"
+		}
+	]
+}

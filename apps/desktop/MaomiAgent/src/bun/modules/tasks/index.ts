@@ -1,0 +1,61 @@
+export type {
+  DesktopConversationTaskBlockedInput,
+  DesktopConversationTaskCompleteInput,
+  DesktopConversationTaskFailInput,
+  DesktopManagedConversationRootTaskPatchInput,
+  DesktopConversationTaskRunInput,
+  DesktopManagedConversationRootTaskSyncInput,
+  DesktopScheduledTaskDefinition,
+  DesktopScheduledTaskExecutionContext,
+  DesktopScheduledTaskExecutionResult,
+  DesktopScheduledTaskHandlerDescriptor,
+  DesktopTaskActionInput,
+  DesktopTaskDetailQuery,
+  DesktopTaskDetailResponse,
+  DesktopTaskExecutionMode,
+  DesktopTaskListQuery,
+  DesktopTaskListResponse,
+  DesktopTaskManagedHandlerBinding,
+  DesktopTaskOrigin,
+  DesktopTaskOutput,
+  DesktopTaskPriority,
+  DesktopTaskRecord,
+  DesktopTaskRunMode,
+  DesktopTaskRunRecord,
+  DesktopTaskRunsListQuery,
+  DesktopTaskRunsQuery,
+  DesktopTaskRunsResponse,
+  DesktopTaskRunStatus,
+  DesktopTaskSchedule,
+  DesktopTaskSourceRecord,
+  DesktopTaskStatus,
+  DesktopTaskStep,
+  DesktopTaskType,
+  DesktopTaskWorkspaceSummary,
+  DesktopTaskWorkspacesResponse,
+} from "./abstraction/models/desktop-tasks.models";
+export type {
+  DesktopTaskCenterAttentionState,
+  DesktopTaskCenterExposure,
+  DesktopTaskCenterItem,
+  DesktopTaskCenterSourceKind,
+} from "../../../shared/desktop-task-center";
+export type {
+  DesktopConversationTaskBridgePort,
+  DesktopScheduledTaskHandler,
+  DesktopScheduledTaskRegistryPort,
+  DesktopTasksCommandPort,
+  DesktopTasksPort,
+  DesktopTasksQueryPort,
+} from "./abstraction/ports/desktop-tasks.ports";
+export {
+  DESKTOP_CONVERSATION_TASK_BRIDGE_PORT,
+  DESKTOP_SCHEDULED_TASK_HANDLER,
+  DESKTOP_SCHEDULED_TASK_REGISTRY_PORT,
+  DESKTOP_TASKS_COMMAND_PORT,
+  DESKTOP_TASKS_PORT,
+  DESKTOP_TASKS_QUERY_PORT,
+} from "./abstraction/tokens/desktop-tasks.tokens";
+export { DesktopTasksModule } from "./composition/tasks.module";
+export { DesktopTasksService } from "./implementation/services/desktop-tasks-service";
+export { DesktopTasksStore } from "./implementation/stores/desktop-tasks-store";

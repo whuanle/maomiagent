@@ -1,0 +1,242 @@
+.shell-page {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.shell-page.is-embedded {
+  min-height: 0;
+  height: 100%;
+  background: var(--chat-surface);
+}
+
+.shell-page-surface {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px;
+}
+
+.shell-page.is-embedded .shell-page-surface {
+  gap: 10px;
+  padding: 10px 12px 12px;
+}
+
+.shell-page-toolbar-shell {
+  flex: 0 0 auto;
+}
+
+.shell-page-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.shell-page-toolbar .ant-input,
+.shell-page-toolbar .ant-select .ant-select-selector,
+.shell-page-toolbar .ant-btn {
+  height: 36px;
+}
+
+.shell-page-workspace-select {
+  width: 220px;
+}
+
+.shell-page-shell-select {
+  width: 140px;
+}
+
+.shell-page-title-input {
+  width: 180px;
+}
+
+.shell-page-cwd-input {
+  flex: 1 1 320px;
+}
+
+.shell-page-empty-state {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+}
+
+.shell-page-session-shell {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.shell-page-tabs > .ant-tabs-nav {
+  margin: 0;
+}
+
+.shell-page-tabs > .ant-tabs-content-holder {
+  display: none;
+}
+
+.shell-page-tab-label {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.shell-page-tab-text {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shell-page-session-stage {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.shell-page-session-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.shell-page-meta-tag.ant-tag,
+.shell-page-status-tag.ant-tag {
+  margin: 0;
+  border-radius: 999px;
+}
+
+.shell-page-meta-tag.ant-tag {
+  background: color-mix(in srgb, var(--chat-surface-subtle) 86%, transparent);
+  color: var(--chat-text-secondary);
+}
+
+.shell-page-meta-tag.ant-tag.is-soft {
+  background: color-mix(in srgb, var(--chat-accent-soft) 70%, transparent);
+  color: var(--chat-accent-text);
+}
+
+.shell-page-status-tag.ant-tag.is-running {
+  background: color-mix(in srgb, var(--chat-success-soft) 76%, transparent);
+  color: var(--chat-success-solid);
+}
+
+.shell-page-status-tag.ant-tag.is-exited,
+.shell-page-status-tag.ant-tag.is-closed {
+  background: color-mix(in srgb, var(--chat-surface-subtle) 86%, transparent);
+  color: var(--chat-text-secondary);
+}
+
+.shell-page-status-tag.ant-tag.is-failed {
+  background: color-mix(in srgb, var(--chat-danger-soft) 76%, transparent);
+  color: var(--chat-danger-solid);
+}
+
+.shell-page-meta-path {
+  font-size: 12px;
+  color: var(--chat-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.shell-page-output-shell {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  border: 1px solid var(--chat-border-soft);
+  border-radius: 14px;
+  background: #0b1120;
+}
+
+.shell-page.is-embedded .shell-page-output-shell {
+  border-radius: 12px;
+}
+
+.shell-page-terminal-viewport,
+.shell-terminal-viewport,
+.shell-webshell-terminal {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  flex: 1 1 auto;
+  overflow: hidden;
+  background: #0b1120;
+}
+
+.shell-page-output-pre {
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  margin: 0;
+  overflow: auto;
+  padding: 14px 16px;
+  color: #dbe7ff;
+  font-size: 12px;
+  line-height: 1.55;
+  font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.shell-page-output-error {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  left: 14px;
+  z-index: 1;
+  padding: 10px 12px;
+  border: 1px solid rgba(248, 113, 113, 0.24);
+  border-radius: 10px;
+  background: rgba(124, 24, 24, 0.28);
+  color: var(--chat-danger-solid);
+  pointer-events: none;
+}
+
+.shell-page-input-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.shell-page-command-input .ant-input {
+  font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+}
+
+.shell-page-input-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+@media (max-width: 900px) {
+  .shell-page-toolbar {
+    align-items: stretch;
+  }
+
+  .shell-page-workspace-select,
+  .shell-page-shell-select,
+  .shell-page-title-input,
+  .shell-page-cwd-input {
+    width: 100%;
+    flex: 1 1 100%;
+  }
+
+  .shell-page-session-meta {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

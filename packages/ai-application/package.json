@@ -1,0 +1,7 @@
+{
+  "name": "@maomiagent/ai-application",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cross-host AI application layer contracts for conversation runtime composition."
+}

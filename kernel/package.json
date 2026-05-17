@@ -1,0 +1,41 @@
+{
+  "name": "@maomiagent/kernel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.3.9",
+  "exports": {
+    ".": "./src/index.ts",
+    "./ai": "./ai/index.ts",
+    "./ai/contracts": "./ai/contracts/index.ts",
+    "./ai/channels": "./ai/channels/index.ts",
+    "./ai/channels/shared": "./ai/channels/shared/index.ts",
+    "./ai/codecs": "./ai/codecs/index.ts",
+    "./ai/codecs/shared": "./ai/codecs/shared/index.ts",
+    "./ai/execution-profiles": "./ai/execution-profiles/index.ts",
+    "./ioc": "./ioc/index.ts",
+    "./core": "./core/index.ts",
+    "./core/algorithms/context": "./core/algorithms/context/index.ts",
+    "./core/algorithms/retry": "./core/algorithms/retry/index.ts",
+    "./host": "./src/host/index.ts",
+    "./host/agents": "./src/host/agents/index.ts",
+    "./host/application": "./src/host/application/index.ts",
+    "./host/context": "./src/host/context/index.ts",
+    "./host/interactions": "./src/host/interactions/index.ts",
+    "./host/one-shot": "./src/host/one-shot/index.ts",
+    "./host/sessions": "./src/host/sessions/index.ts",
+    "./host/tasks": "./src/host/tasks/index.ts",
+    "./host/tools": "./src/host/tools/index.ts",
+    "./host/turn-input-assembler": "./src/host/turn-input-assembler.ts",
+    "./host/workspace": "./src/host/workspace/index.ts",
+    "./adapters": "./src/adapters/index.ts",
+    "./adapters/events": "./src/adapters/events/index.ts",
+    "./adapters/tools": "./src/adapters/tools/index.ts",
+    "./adapters/persistence/sqlite": "./src/adapters/persistence/sqlite/index.ts"
+  },
+  "scripts": {
+    "test:ioc": "bun test tests/ioc-service-collection.test.ts",
+    "verify:public-api": "node verify-public-api.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  }
+}

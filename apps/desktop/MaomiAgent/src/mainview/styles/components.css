@@ -1,0 +1,418 @@
+.app-table-card,
+.app-table-card-body,
+.app-table-card-viewport {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.app-table-card-fill,
+.app-table-card-fill .app-table-card-body,
+.app-table-card-fill .app-table-card-viewport {
+  flex: 1;
+  min-height: 0;
+}
+
+.app-table-card-body {
+  gap: 16px;
+}
+
+.app-table-card-toolbar,
+.app-table-card-content-before,
+.app-table-card-footer,
+.app-table-card-footer-actions {
+  min-width: 0;
+}
+
+.app-table-card-viewport .ant-table-wrapper,
+.app-table-card-viewport .ant-spin,
+.app-table-card-viewport .ant-spin-nested-loading,
+.app-table-card-viewport .ant-spin-container,
+.app-table-card-viewport .ant-table,
+.app-table-card-viewport .ant-table-container {
+  min-height: 0;
+}
+
+.app-table-card-fill .app-table-card-viewport .ant-table-wrapper,
+.app-table-card-fill .app-table-card-viewport .ant-spin,
+.app-table-card-fill .app-table-card-viewport .ant-spin-nested-loading,
+.app-table-card-fill .app-table-card-viewport .ant-spin-container,
+.app-table-card-fill .app-table-card-viewport .ant-table,
+.app-table-card-fill .app-table-card-viewport .ant-table-container {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.app-table-card-viewport .ant-table,
+.app-table-card-viewport .ant-table-container,
+.app-table-card-viewport .ant-table-header,
+.app-table-card-viewport .ant-table-content,
+.app-table-card-viewport .ant-table-body {
+  background: transparent;
+}
+
+.app-table-card-viewport .ant-table-placeholder > td {
+  background: transparent !important;
+}
+
+.app-data-table .ant-table {
+  background: transparent;
+}
+
+.app-data-table .ant-table-header,
+.app-data-table .ant-table-content {
+  flex: 0 0 auto;
+}
+
+.app-data-table .ant-table-body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.ant-table-wrapper {
+  --rc-virtual-list-scrollbar-bg: var(--app-table-scrollbar-thumb) !important;
+}
+
+.ant-table-wrapper .ant-table-header,
+.ant-table-wrapper .ant-table-content,
+.ant-table-wrapper .ant-table-body {
+  scrollbar-width: thin;
+  scrollbar-color: var(--app-table-scrollbar-thumb) var(--app-table-scrollbar-track);
+}
+
+.ant-table-wrapper .ant-table-header::-webkit-scrollbar,
+.ant-table-wrapper .ant-table-content::-webkit-scrollbar,
+.ant-table-wrapper .ant-table-body::-webkit-scrollbar {
+  width: var(--app-table-scrollbar-size);
+  height: var(--app-table-scrollbar-size);
+}
+
+.ant-table-wrapper .ant-table-header::-webkit-scrollbar-track,
+.ant-table-wrapper .ant-table-content::-webkit-scrollbar-track,
+.ant-table-wrapper .ant-table-body::-webkit-scrollbar-track {
+  background: var(--app-table-scrollbar-track);
+}
+
+.ant-table-wrapper .ant-table-header::-webkit-scrollbar-thumb,
+.ant-table-wrapper .ant-table-content::-webkit-scrollbar-thumb,
+.ant-table-wrapper .ant-table-body::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--app-table-scrollbar-thumb);
+}
+
+.ant-table-wrapper .ant-table-header::-webkit-scrollbar-thumb:hover,
+.ant-table-wrapper .ant-table-content::-webkit-scrollbar-thumb:hover,
+.ant-table-wrapper .ant-table-body::-webkit-scrollbar-thumb:hover {
+  background: var(--app-table-scrollbar-thumb-hover);
+}
+
+.ant-table-wrapper .ant-table-sticky-scroll {
+  background: transparent !important;
+  border-top: 0 !important;
+  box-shadow: none !important;
+}
+
+.ant-table-wrapper .ant-table-sticky-scroll-bar {
+  background: var(--app-table-scrollbar-thumb) !important;
+}
+
+.ant-table-wrapper .ant-table-sticky-scroll-bar:hover,
+.ant-table-wrapper .ant-table-sticky-scroll-bar-active {
+  background: var(--app-table-scrollbar-thumb-hover) !important;
+}
+
+.app-data-table .ant-table-container,
+.app-data-table .ant-table-header,
+.app-data-table .ant-table-content,
+.app-data-table .ant-table-container table > thead > tr:first-child > *:first-child,
+.app-data-table .ant-table-container table > thead > tr:first-child > *:last-child {
+  border-radius: var(--app-table-radius) !important;
+}
+
+.app-data-table .ant-table-thead > tr > th {
+  background: var(--app-table-head-bg);
+  color: var(--app-text-secondary);
+  border-bottom-color: var(--app-table-head-border);
+  font-size: var(--app-table-head-font-size);
+  font-weight: var(--app-table-head-font-weight);
+  line-height: 1.5;
+  text-align: center;
+  white-space: nowrap;
+  position: relative;
+  border-radius: var(--app-table-radius) !important;
+}
+
+.app-data-table .ant-table-thead > tr > th .ant-table-cell-content,
+.app-data-table .ant-table-thead > tr > th .ant-table-column-sorters {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 22px;
+  text-align: center;
+}
+
+.app-data-table .ant-table-thead > tr > th .ant-table-column-sorters,
+.app-data-table .ant-table-thead > tr > th .ant-table-filter-column {
+  gap: 6px;
+}
+
+.app-data-table .ant-table-thead > tr > th .ant-table-column-title {
+  min-width: 0;
+  text-align: center;
+}
+
+.app-data-table .ant-table-thead > tr > th .ant-table-column-sorter {
+  margin-inline-start: 0;
+}
+
+.app-data-table .ant-table-thead > tr > th::before {
+  display: none !important;
+}
+
+.app-data-table .ant-table-thead > tr > th:not(:first-child):not(.ant-table-cell-scrollbar)::after {
+  content: "";
+  position: absolute;
+  top: var(--app-table-head-divider-inset);
+  left: 0;
+  bottom: var(--app-table-head-divider-inset);
+  width: var(--app-table-head-divider-width);
+  background: var(--app-table-head-divider);
+  border-radius: var(--app-table-head-divider-radius);
+  opacity: var(--app-table-head-divider-opacity);
+}
+
+.app-data-table .ant-table-thead > tr > th.ant-table-cell-scrollbar {
+  border-inline-start-color: transparent;
+  background: var(--app-table-head-scrollbar-bg) !important;
+  box-shadow: none;
+  border-radius: var(--app-table-radius) !important;
+}
+
+.ant-table-wrapper .ant-table-thead > tr > th.ant-table-cell-scrollbar {
+  border-inline-start-color: transparent;
+  background: var(--app-table-head-scrollbar-bg) !important;
+  box-shadow: none;
+}
+
+.app-data-table .ant-table-thead > tr > th.ant-table-cell-scrollbar::before,
+.app-data-table .ant-table-thead > tr > th.ant-table-cell-scrollbar::after {
+  display: none;
+}
+
+.ant-table-wrapper .ant-table-thead > tr > th.ant-table-cell-scrollbar::before,
+.ant-table-wrapper .ant-table-thead > tr > th.ant-table-cell-scrollbar::after {
+  display: none;
+}
+
+.app-data-table .ant-table-tbody > tr > td {
+  background: transparent;
+  border-bottom-color: var(--app-table-row-border);
+  font-size: var(--app-table-body-font-size);
+  line-height: var(--app-table-line-height);
+  vertical-align: var(--app-table-cell-vertical-align);
+}
+
+.app-data-table .ant-table-tbody > tr:hover > td {
+  background: var(--app-table-row-hover);
+}
+
+.app-data-table .ant-table-cell {
+  color: var(--app-text);
+  line-height: var(--app-table-line-height);
+}
+
+.app-data-table .ant-table-tbody > tr > td code,
+.app-data-table .ant-table-tbody > tr > td .ant-tag {
+  font-size: var(--app-table-support-font-size);
+  line-height: 1.5;
+}
+
+.app-table-card-empty-loading {
+  min-height: 132px;
+  display: flex;
+
+.ant-tabs > .ant-tabs-nav .ant-tabs-nav-wrap::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.ant-tabs > .ant-tabs-nav .ant-tabs-nav-wrap::-webkit-scrollbar-track {
+  background: var(--app-table-scrollbar-track);
+}
+
+.ant-tabs > .ant-tabs-nav .ant-tabs-nav-wrap::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--app-table-scrollbar-thumb);
+}
+
+.ant-tabs > .ant-tabs-nav .ant-tabs-nav-wrap::-webkit-scrollbar-thumb:hover {
+  background: var(--app-table-scrollbar-thumb-hover);
+}
+  align-items: center;
+  justify-content: center;
+  color: var(--app-text-secondary);
+}
+
+.app-table-card-empty-loading .ant-spin {
+  transform: scale(1.5);
+  transform-origin: center;
+}
+
+.app-table-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--app-table-footer-border);
+  background: var(--app-table-footer-bg);
+  padding-top: var(--app-table-footer-padding-top);
+  padding-bottom: var(--app-table-footer-padding-bottom);
+}
+
+.app-table-card-footer .ant-typography {
+  color: var(--app-table-footer-text);
+}
+
+.app-table-card-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.app-table-card-footer-actions .ant-btn {
+  min-width: var(--app-table-pagination-button-size);
+  height: var(--app-table-pagination-button-size);
+  border-radius: var(--app-table-pagination-radius);
+  border-color: var(--app-table-pagination-border);
+  background: var(--app-table-pagination-bg);
+  color: var(--app-table-pagination-text);
+  box-shadow: none;
+}
+
+.app-table-card-footer-actions .ant-btn:hover,
+.app-table-card-footer-actions .ant-btn:focus-visible {
+  border-color: var(--app-accent-border);
+  background: var(--app-table-pagination-hover-bg);
+  color: var(--app-accent-text);
+}
+
+.app-table-card-footer-actions .ant-btn-primary {
+  border-color: var(--app-primary-button-border);
+  background: var(--app-primary-button-bg);
+  color: var(--app-primary-button-text);
+}
+
+.app-table-card-footer-actions .ant-btn-primary:hover,
+.app-table-card-footer-actions .ant-btn-primary:focus-visible {
+  border-color: var(--app-primary-button-hover-border);
+  background: var(--app-primary-button-hover-bg);
+  color: var(--app-primary-button-text);
+}
+
+.app-table-card-footer-actions .ant-space {
+  gap: var(--app-table-pagination-gap) !important;
+}
+
+.app-table-card-page-size {
+  min-width: var(--app-table-page-size-width);
+}
+
+.app-table-card-page-size .ant-select-selector,
+.app-table-card-page-size .ant-select-selection-item,
+.app-table-card-page-size .ant-select-selection-placeholder {
+  min-width: var(--app-table-page-size-width);
+}
+
+.app-table-card-page-size .ant-select-selector {
+  min-height: var(--app-table-page-size-height) !important;
+  height: var(--app-table-page-size-height) !important;
+  padding-block: 0 !important;
+  border-radius: var(--app-table-pagination-radius);
+  border-color: var(--app-table-pagination-border);
+  background: var(--app-table-pagination-bg);
+  box-shadow: none;
+}
+
+.app-table-card-page-size.ant-select-single {
+  height: var(--app-table-page-size-height);
+}
+
+.app-table-card-page-size.ant-select-single .ant-select-selector .ant-select-selection-item,
+.app-table-card-page-size.ant-select-single .ant-select-selector .ant-select-selection-placeholder {
+  line-height: calc(var(--app-table-page-size-height) - 2px) !important;
+}
+
+.app-table-card-page-size .ant-select-selection-item,
+.app-table-card-page-size .ant-select-selection-placeholder {
+  text-align: left;
+}
+
+.app-table-card-page-size:hover .ant-select-selector,
+.app-table-card-page-size.ant-select-focused .ant-select-selector,
+.app-table-card-page-size.ant-select-open .ant-select-selector {
+  border-color: var(--app-accent-border);
+  background: var(--app-table-pagination-hover-bg);
+}
+
+.app-table-card-ellipsis {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+}
+
+.ant-select-dropdown {
+  padding: 8px;
+  border: 1px solid var(--app-popup-border);
+  border-radius: 12px;
+  background: var(--app-popup-bg);
+  box-shadow: var(--app-surface-shadow);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+
+.ant-select-dropdown .ant-select-item {
+  min-height: 32px;
+  border-radius: var(--app-control-radius);
+  color: var(--app-text);
+}
+
+.ant-select-dropdown .ant-select-item-option-active:not(.ant-select-item-option-disabled) {
+  background: var(--app-table-row-hover);
+}
+
+.ant-select-dropdown .ant-select-item-option-selected:not(.ant-select-item-option-disabled) {
+  background: color-mix(in srgb, var(--app-accent-soft) 78%, transparent);
+  color: var(--app-accent-text);
+  font-weight: 600;
+}
+
+.ant-picker-dropdown .ant-picker-panel-container {
+  border: 1px solid var(--app-popup-border);
+  border-radius: 12px;
+  background: var(--app-popup-bg);
+  box-shadow: var(--app-surface-shadow);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+
+.ant-picker-dropdown .ant-picker-panel-layout,
+.ant-picker-dropdown .ant-picker-panel,
+.ant-picker-dropdown .ant-picker-date-panel,
+.ant-picker-dropdown .ant-picker-time-panel,
+.ant-picker-dropdown .ant-picker-footer {
+  background: transparent;
+}
+
+.ant-picker-dropdown .ant-picker-header {
+  border-bottom-color: var(--app-border-soft);
+}
+
+.ant-picker-dropdown .ant-picker-time-panel-column:not(:first-child) {
+  border-inline-start-color: var(--app-border-soft);
+}

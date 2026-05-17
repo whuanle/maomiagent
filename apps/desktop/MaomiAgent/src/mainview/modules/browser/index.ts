@@ -1,0 +1,1 @@
+export { BrowserPage } from "./page";

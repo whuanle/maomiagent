@@ -1,0 +1,243 @@
+@import "./styles/titlebar.css";
+@import "./styles/shell.css";
+@import "./styles/components.css";
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --app-window-frame-gap: 0;
+  --app-window-frame-radius: 0;
+  --app-window-frame-border: transparent;
+  --app-window-frame-shadow: none;
+  --app-window-frame-overlay-shadow: none;
+  --app-window-frame-overlay-fill: none;
+  --app-window-frame-backdrop: transparent;
+}
+
+html[data-desktop-platform="windows"] {
+  --app-window-frame-gap: 0;
+  --app-window-frame-radius: 16px;
+  --app-window-frame-border: color-mix(in srgb, var(--app-border-strong, #bac6d5) 56%, transparent);
+  --app-window-frame-shadow:
+    0 22px 48px rgba(12, 18, 28, 0.07),
+    0 8px 18px rgba(12, 18, 28, 0.035),
+    inset 0 1px 0 color-mix(in srgb, #ffffff 8%, transparent),
+    inset 0 0 34px color-mix(in srgb, #000000 4%, transparent);
+  --app-window-frame-overlay-shadow:
+    inset 0 1px 0 color-mix(in srgb, #ffffff 14%, transparent),
+    inset 0 -26px 40px color-mix(in srgb, var(--app-border-strong, #bac6d5) 8%, transparent),
+    inset 0 16px 30px color-mix(in srgb, #ffffff 5%, transparent),
+    inset 1px 0 0 color-mix(in srgb, #ffffff 5%, transparent),
+    inset -1px 0 0 color-mix(in srgb, #000000 4%, transparent);
+  --app-window-frame-overlay-fill:
+    radial-gradient(
+      140% 140% at 0% 100%,
+      color-mix(in srgb, var(--app-border-strong, #bac6d5) 10%, transparent) 0%,
+      transparent 64%
+    ) bottom left / 38px 38px no-repeat,
+    radial-gradient(
+      140% 140% at 100% 100%,
+      color-mix(in srgb, var(--app-border-strong, #bac6d5) 10%, transparent) 0%,
+      transparent 64%
+    ) bottom right / 38px 38px no-repeat;
+  --app-window-frame-backdrop:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--app-surface, #ffffff) 94%, var(--app-border-strong, #bac6d5) 6%) 0%,
+      color-mix(in srgb, var(--app-surface-subtle, #f5f6f8) 96%, var(--app-border-strong, #bac6d5) 4%) 100%
+    );
+}
+
+html[data-desktop-platform="other"] {
+  --app-window-frame-gap: 1px;
+  --app-window-frame-radius: 10px;
+  --app-window-frame-border: color-mix(in srgb, var(--app-border-strong, #bac6d5) 54%, transparent);
+  --app-window-frame-shadow: 0 20px 44px rgba(15, 23, 42, 0.08);
+  --app-window-frame-overlay-shadow:
+    inset 0 1px 0 color-mix(in srgb, #ffffff 34%, transparent),
+    inset 0 -24px 36px color-mix(in srgb, var(--app-border-strong, #bac6d5) 9%, transparent);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  background: transparent;
+}
+
+body {
+  overflow: hidden;
+  background: var(--app-window-frame-backdrop);
+  color: var(--app-text);
+  font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+#root {
+  padding: var(--app-window-frame-gap);
+  background: var(--app-window-frame-backdrop, rgba(255, 255, 255, 0.01));
+  border-radius: var(--app-window-frame-radius);
+  overflow: hidden;
+  transition: padding 0.16s ease;
+}
+
+html[data-desktop-platform="windows"] #root {
+  background: var(--app-window-frame-backdrop);
+}
+
+html[data-desktop-window-maximized="true"] #root {
+  padding: 0;
+  transition: none;
+}
+
+.ant-app {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: inherit;
+  background: var(--app-window-frame-backdrop);
+  color: var(--app-text);
+}
+
+.app-shell {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid var(--app-window-frame-border);
+  border-radius: var(--app-window-frame-radius);
+  background: var(--app-shell-backdrop, var(--app-bg));
+  box-shadow: var(--app-window-frame-shadow);
+  transition: border-color 0.16s ease, border-radius 0.16s ease, box-shadow 0.16s ease;
+}
+
+.app-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: inherit;
+  pointer-events: none;
+  background: var(--app-window-frame-overlay-fill);
+  box-shadow: var(--app-window-frame-overlay-shadow);
+  opacity: 0.98;
+  transition: opacity 0.16s ease, box-shadow 0.16s ease;
+}
+
+html[data-desktop-window-maximized="true"] .app-shell {
+  border-color: transparent;
+  border-width: 0;
+  border-radius: 0;
+  box-shadow: none;
+  transition: none;
+}
+
+html[data-desktop-window-maximized="true"] .app-shell::before {
+  opacity: 0;
+}
+
+html[data-desktop-window-maximized="true"] #root,
+html[data-desktop-window-maximized="true"] .ant-app {
+  border-radius: 0;
+}
+
+.app-content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  z-index: 0;
+  overflow: auto;
+  padding: 0;
+  background: var(--app-shell-backdrop, var(--app-bg));
+}
+
+.app-route-tabs-shell {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-route-tabs-shell > .ant-tabs-nav {
+  display: none;
+}
+
+.app-route-tabs-shell > .ant-tabs-content-holder {
+  min-height: 0;
+  flex: 1;
+}
+
+.app-route-tabs-shell .ant-tabs-content,
+.app-route-tabs-shell .ant-tabs-tabpane {
+  height: 100%;
+}
+
+.app-route-tabpane {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-error-boundary {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--app-bg);
+  color: var(--app-text);
+}
+
+.app-error-boundary__panel {
+  width: min(640px, 100%);
+  padding: 24px;
+  border: 1px solid var(--app-border-soft);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--app-surface) 92%, transparent);
+  box-shadow: var(--app-surface-shadow);
+}
+
+.app-error-boundary__title {
+  margin: 0 0 12px;
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.app-error-boundary__copy {
+  margin: 0 0 12px;
+  color: var(--app-text-secondary);
+}
+
+.app-error-boundary__message {
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--app-surface-subtle) 88%, transparent);
+  color: var(--app-text);
+}
+
+.app-error-boundary__actions {
+  margin-top: 16px;
+}

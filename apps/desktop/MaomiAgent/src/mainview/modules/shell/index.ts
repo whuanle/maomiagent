@@ -1,0 +1,1 @@
+export { ShellPage } from "./page";

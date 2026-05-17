@@ -1,0 +1,25 @@
+{
+  "name": "@maomiagent/module-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser SDK for MaomiAgent application modules.",
+  "exports": {
+    ".": {
+      "types": "./dist/web.d.ts",
+      "default": "./dist/web.js"
+    },
+    "./web": {
+      "types": "./dist/web.d.ts",
+      "default": "./dist/web.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "default": "./dist/server.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ]
+}

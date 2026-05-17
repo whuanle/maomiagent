@@ -1,0 +1,1011 @@
+import { BrowserWindow, Updater, Utils, defineElectrobunRPC } from "electrobun/bun";
+
+import {
+  checkDesktopAppUpdate,
+  installDesktopAppUpdate,
+} from "./desktop-app-update";
+import { startDesktopApplication } from "./desktop-host";
+import type { ModuleHost } from "./shared/ioc";
+import { createSingleInstanceCoordinator } from "./single-instance";
+import type { DesktopRendererRPC, DesktopWindowAction } from "../shared/desktop-rpc";
+import {
+  RUNTIME_LOGGER_FACTORY_PORT,
+  RUNTIME_LOGS_QUERY_PORT,
+  RUNTIME_LOG_WRITER_PORT,
+  type RuntimeLogsQuery,
+} from "./modules/logs";
+import { DESKTOP_AI_ONE_SHOT_PORT } from "./modules/ai";
+import {
+  DESKTOP_AGENTS_COMMAND_PORT,
+  DESKTOP_AGENTS_QUERY_PORT,
+} from "./modules/agents";
+import {
+  DESKTOP_CONVERSATION_COMMAND_PORT,
+  DESKTOP_CONVERSATION_QUERY_PORT,
+  DESKTOP_CONVERSATION_SERVICE_TOKEN,
+  DesktopConversationService,
+} from "./modules/conversation";
+import {
+  DESKTOP_MODELS_COMMAND_PORT,
+  DESKTOP_MODELS_QUERY_PORT,
+} from "./modules/models";
+import {
+  DESKTOP_MEMORY_COMMAND_PORT,
+  DESKTOP_MEMORY_QUERY_PORT,
+} from "./modules/memory";
+import {
+  DESKTOP_SKILLS_COMMAND_PORT,
+  DESKTOP_SKILLS_MARKET_PORT,
+  DESKTOP_SKILLS_QUERY_PORT,
+} from "./modules/skills";
+import {
+  DESKTOP_MCP_COMMAND_PORT,
+  DESKTOP_MCP_MARKET_PORT,
+  DESKTOP_MCP_QUERY_PORT,
+} from "./modules/mcp";
+import {
+  DESKTOP_WORKSPACE_COMMAND_PORT,
+  DESKTOP_WORKSPACE_QUERY_PORT,
+} from "./modules/workspace";
+import {
+  DESKTOP_GIT_COMMAND_PORT,
+  DESKTOP_GIT_QUERY_PORT,
+} from "./modules/git";
+import {
+  DESKTOP_TASKS_COMMAND_PORT,
+  DESKTOP_TASKS_QUERY_PORT,
+} from "./modules/tasks";
+import {
+  DESKTOP_TERMINALS_COMMAND_PORT,
+  DESKTOP_TERMINALS_QUERY_PORT,
+} from "./modules/terminals";
+import {
+  DESKTOP_WECHAT_COMMAND_PORT,
+  DESKTOP_WECHAT_QUERY_PORT,
+} from "./modules/wechat";
+import {
+  DESKTOP_FEISHU_COMMAND_PORT,
+  DESKTOP_FEISHU_QUERY_PORT,
+} from "./modules/feishu";
+import type {
+  DesktopMemoryMaintenanceRequest,
+  DesktopMemoryProjectionQuery,
+} from "../shared/desktop-memory";
+
+const APP_IDENTIFIER = "com.maomiagent.desktop";
+const DEFAULT_MAIN_VIEW_URL = "views://mainview/index.html";
+
+function resolveSingleInstanceAppKey(channel: string): string {
+  if (channel === "dev" && process.env.MAOMI_DESKTOP_DEV_APP_KEY) {
+    return process.env.MAOMI_DESKTOP_DEV_APP_KEY;
+  }
+
+  return `${APP_IDENTIFIER}:${channel}`;
+}
+
+async function resolveMainViewUrl(channel: string): Promise<string> {
+  const devServerUrl = process.env.MAOMI_DESKTOP_DEV_SERVER_URL?.trim();
+
+  if (channel === "dev" && devServerUrl) {
+    try {
+      await fetch(devServerUrl, { method: "HEAD" });
+      console.log(`Using Vite dev server at ${devServerUrl}`);
+      return devServerUrl;
+    } catch {
+      console.log("Vite dev server not detected. Falling back to bundled views.");
+    }
+  }
+
+  return DEFAULT_MAIN_VIEW_URL;
+}
+
+function appendReloadToken(url: string): string {
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}reload=${Date.now()}`;
+}
+
+async function runProjectCommand(command: string[]): Promise<void> {
+  const processHandle = Bun.spawn({
+    cmd: command,
+    cwd: process.cwd(),
+    env: Bun.env,
+    stdin: "ignore",
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+
+  const exitCode = await processHandle.exited;
+  if (exitCode === 0) {
+    return;
+  }
+
+  throw new Error(`Command failed with exit code ${exitCode}: ${command.join(" ")}`);
+}
+
+async function rebuildBundledMainView(): Promise<void> {
+  console.log("Rebuilding bundled desktop main view before refresh.");
+  await runProjectCommand(["bun", "run", "brand:generate"]);
+  await runProjectCommand(["bun", "x", "vite", "build"]);
+}
+
+async function refreshMainView(window: BrowserWindow | null, currentChannel: string) {
+  if (!window) {
+    throw new Error("Desktop main window is unavailable.");
+  }
+
+  const resolvedUrl = await resolveMainViewUrl(currentChannel);
+  const usedDevServer = resolvedUrl !== DEFAULT_MAIN_VIEW_URL;
+  let rebuilt = false;
+
+  if (currentChannel === "dev" && !usedDevServer) {
+    await rebuildBundledMainView();
+    rebuilt = true;
+  }
+
+  const reloadUrl = appendReloadToken(resolvedUrl);
+  window.url = reloadUrl;
+  window.webview.loadURL(reloadUrl);
+
+  return {
+    url: resolvedUrl,
+    usedDevServer,
+    rebuilt,
+  };
+}
+
+const channel = await Updater.localInfo.channel();
+const singleInstance = await createSingleInstanceCoordinator({
+  appKey: resolveSingleInstanceAppKey(channel),
+  appName: channel === "dev" ? "MaomiAgent dev" : "MaomiAgent",
+});
+
+if (singleInstance.kind === "secondary") {
+  console.log(
+    "Detected an existing MaomiAgent instance. Activated it instead of launching a duplicate process.",
+  );
+  process.exit(0);
+}
+
+const url = await resolveMainViewUrl(channel);
+
+type DesktopWindowFrame = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+type DesktopWindowDragPointer = {
+  offsetX: number;
+  offsetY: number;
+  windowWidth: number;
+};
+
+let lastNormalWindowFrame: DesktopWindowFrame | null = null;
+const MIN_VISIBLE_TITLEBAR_HEIGHT = 56;
+let restoreFrameTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function applyRestoreFrame(window: BrowserWindow, frame: DesktopWindowFrame): void {
+  if (restoreFrameTimeoutId) {
+    clearTimeout(restoreFrameTimeoutId);
+    restoreFrameTimeoutId = null;
+  }
+
+  window.focus();
+  window.setFrame(frame.x, frame.y, frame.width, frame.height);
+
+  // Windows maximize->restore transition can race with setFrame; re-apply once in next tick.
+  restoreFrameTimeoutId = setTimeout(() => {
+    window.focus();
+    window.setFrame(frame.x, frame.y, frame.width, frame.height);
+    restoreFrameTimeoutId = null;
+  }, 16);
+}
+
+function restoreWindowForDrag(
+  window: BrowserWindow,
+  dragPointer?: DesktopWindowDragPointer,
+): void {
+  if (!window.isMaximized()) {
+    return;
+  }
+
+  const maximizedFrame = window.getFrame();
+  const fallbackFrame: DesktopWindowFrame = {
+    x: maximizedFrame.x,
+    y: maximizedFrame.y,
+    width: Math.max(900, Math.round(maximizedFrame.width * 0.86)),
+    height: Math.max(640, Math.round(maximizedFrame.height * 0.86)),
+  };
+  const restoreFrame = lastNormalWindowFrame ?? fallbackFrame;
+  const fittedRestoreFrame: DesktopWindowFrame = {
+    x: restoreFrame.x,
+    y: restoreFrame.y,
+    width: clamp(Math.round(restoreFrame.width), 480, Math.round(maximizedFrame.width)),
+    height: clamp(Math.round(restoreFrame.height), 320, Math.round(maximizedFrame.height)),
+  };
+
+  window.unmaximize();
+
+  if (!dragPointer) {
+    applyRestoreFrame(window, fittedRestoreFrame);
+    lastNormalWindowFrame = { ...fittedRestoreFrame };
+    return;
+  }
+
+  const pointerScreenX = maximizedFrame.x + dragPointer.offsetX;
+  const pointerScreenY = maximizedFrame.y + dragPointer.offsetY;
+  const pointerRatioX = clamp(dragPointer.offsetX / Math.max(1, dragPointer.windowWidth), 0, 1);
+  const targetX = Math.round(pointerScreenX - fittedRestoreFrame.width * pointerRatioX);
+  const targetY = Math.round(pointerScreenY - clamp(dragPointer.offsetY, 8, 72));
+
+  // Keep restored window anchored to the current display bounds during drag restore.
+  const minX = Math.round(maximizedFrame.x);
+  const maxX = Math.round(maximizedFrame.x + maximizedFrame.width - fittedRestoreFrame.width);
+  const minY = Math.round(maximizedFrame.y);
+  const maxY = Math.round(maximizedFrame.y + maximizedFrame.height - MIN_VISIBLE_TITLEBAR_HEIGHT);
+  const boundedX = clamp(targetX, minX, Math.max(minX, maxX));
+  const boundedY = clamp(targetY, minY, Math.max(minY, maxY));
+
+  applyRestoreFrame(window, {
+    x: boundedX,
+    y: boundedY,
+    width: fittedRestoreFrame.width,
+    height: fittedRestoreFrame.height,
+  });
+  lastNormalWindowFrame = {
+    x: boundedX,
+    y: boundedY,
+    width: fittedRestoreFrame.width,
+    height: fittedRestoreFrame.height,
+  };
+}
+
+function handleWindowAction(
+  window: BrowserWindow | null,
+  action: DesktopWindowAction,
+  dragPointer?: DesktopWindowDragPointer,
+) {
+  if (!window) {
+    return { maximized: false };
+  }
+
+  if (action === "minimize") {
+    window.minimize();
+  } else if (action === "toggleMaximize") {
+    if (window.isMaximized()) {
+      window.unmaximize();
+      if (lastNormalWindowFrame) {
+        window.setFrame(
+          lastNormalWindowFrame.x,
+          lastNormalWindowFrame.y,
+          lastNormalWindowFrame.width,
+          lastNormalWindowFrame.height,
+        );
+      }
+    } else {
+      lastNormalWindowFrame = window.getFrame();
+      window.maximize();
+    }
+  } else if (action === "restoreForDrag") {
+    restoreWindowForDrag(window, dragPointer);
+  } else if (action === "exitFullScreen") {
+    if (window.isFullScreen()) {
+      window.setFullScreen(false);
+    }
+  } else if (action === "close") {
+    window.close();
+  }
+
+  return { maximized: window.isMaximized() };
+}
+
+async function chooseDirectory(startingFolder?: string): Promise<string | null> {
+  const normalizedStartingFolder = startingFolder?.trim();
+  const selections = await Utils.openFileDialog({
+    ...(normalizedStartingFolder ? { startingFolder: normalizedStartingFolder } : {}),
+    canChooseFiles: false,
+    canChooseDirectory: true,
+    allowsMultipleSelection: false,
+  });
+
+  const directoryPath = selections
+    .map((value) => value.trim())
+    .find(Boolean);
+
+  return directoryPath ?? null;
+}
+
+async function openPathInFileManager(targetPath: string): Promise<{ opened: boolean }> {
+  const normalizedTargetPath = targetPath.trim();
+  if (!normalizedTargetPath) {
+    throw new Error("Path is required to open the file manager.");
+  }
+
+  const command = process.platform === "win32"
+    ? ["explorer.exe", normalizedTargetPath.replaceAll("/", "\\")]
+    : process.platform === "darwin"
+      ? ["open", normalizedTargetPath]
+      : ["xdg-open", normalizedTargetPath];
+
+  const processHandle = Bun.spawn({
+    cmd: command,
+    cwd: process.cwd(),
+    env: Bun.env,
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+
+  const exitCode = await processHandle.exited;
+  if (exitCode !== 0) {
+    throw new Error(`Failed to open path in file manager: ${normalizedTargetPath}`);
+  }
+
+  return { opened: true };
+}
+
+async function openExternalUrl(targetUrl: string): Promise<{ opened: boolean }> {
+  const normalizedTargetUrl = targetUrl.trim();
+  if (!normalizedTargetUrl) {
+    throw new Error("URL is required to open an external browser.");
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(normalizedTargetUrl);
+  } catch {
+    throw new Error(`Invalid external URL: ${normalizedTargetUrl}`);
+  }
+
+  if (!["http:", "https:", "mailto:", "tel:"].includes(parsedUrl.protocol)) {
+    throw new Error(`Unsupported external URL protocol: ${parsedUrl.protocol}`);
+  }
+
+  const command = process.platform === "win32"
+    ? ["rundll32.exe", "url.dll,FileProtocolHandler", parsedUrl.toString()]
+    : process.platform === "darwin"
+      ? ["open", parsedUrl.toString()]
+      : ["xdg-open", parsedUrl.toString()];
+
+  const processHandle = Bun.spawn({
+    cmd: command,
+    cwd: process.cwd(),
+    env: Bun.env,
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+
+  const exitCode = await processHandle.exited;
+  if (exitCode !== 0) {
+    throw new Error(`Failed to open external URL: ${parsedUrl.toString()}`);
+  }
+
+  return { opened: true };
+}
+
+function resolveModuleHost(host: ModuleHost | null): ModuleHost {
+  if (!host) {
+    throw new Error("Desktop IOC host is not ready.");
+  }
+
+  return host;
+}
+
+function resolveRuntimeLogsQueryPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(RUNTIME_LOGS_QUERY_PORT);
+}
+
+function resolveRuntimeLogWriterPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(RUNTIME_LOG_WRITER_PORT);
+}
+
+function resolveDesktopAiOneShotPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_AI_ONE_SHOT_PORT);
+}
+
+function resolveDesktopWorkspaceQueryPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_WORKSPACE_QUERY_PORT);
+}
+
+function resolveDesktopWorkspaceCommandPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_WORKSPACE_COMMAND_PORT);
+}
+
+function resolveDesktopGitQueryPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_GIT_QUERY_PORT);
+}
+
+function resolveDesktopGitCommandPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_GIT_COMMAND_PORT);
+}
+
+function resolveDesktopTasksQueryPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_TASKS_QUERY_PORT);
+}
+
+function resolveDesktopTasksCommandPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_TASKS_COMMAND_PORT);
+}
+
+function resolveDesktopTerminalsQueryPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_TERMINALS_QUERY_PORT);
+}
+
+function resolveDesktopTerminalsCommandPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_TERMINALS_COMMAND_PORT);
+}
+
+function resolveDesktopWechatQueryPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_WECHAT_QUERY_PORT);
+}
+
+function resolveDesktopWechatCommandPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_WECHAT_COMMAND_PORT);
+}
+
+function resolveDesktopFeishuQueryPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_FEISHU_QUERY_PORT);
+}
+
+function resolveDesktopFeishuCommandPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_FEISHU_COMMAND_PORT);
+}
+
+function resolveDesktopMemoryQueryPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_MEMORY_QUERY_PORT);
+}
+
+function resolveDesktopMemoryCommandPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_MEMORY_COMMAND_PORT);
+}
+
+function resolveDesktopAgentsQueryPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_AGENTS_QUERY_PORT);
+}
+
+function resolveDesktopAgentsCommandPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_AGENTS_COMMAND_PORT);
+}
+
+function resolveDesktopModelsQueryPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_MODELS_QUERY_PORT);
+}
+
+function resolveDesktopModelsCommandPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_MODELS_COMMAND_PORT);
+}
+
+function resolveDesktopConversationQueryPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_CONVERSATION_QUERY_PORT);
+}
+
+function resolveDesktopConversationCommandPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_CONVERSATION_COMMAND_PORT);
+}
+
+function resolveDesktopConversationService(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(
+    DESKTOP_CONVERSATION_SERVICE_TOKEN,
+  ) as DesktopConversationService;
+}
+
+function resolveDesktopSkillsQueryPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_SKILLS_QUERY_PORT);
+}
+
+function resolveDesktopSkillsCommandPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_SKILLS_COMMAND_PORT);
+}
+
+function resolveDesktopSkillsMarketPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_SKILLS_MARKET_PORT);
+}
+
+function resolveDesktopMcpQueryPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_MCP_QUERY_PORT);
+}
+
+function resolveDesktopMcpCommandPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_MCP_COMMAND_PORT);
+}
+
+function resolveDesktopMcpMarketPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_MCP_MARKET_PORT);
+}
+
+function toDesktopMemoryProjectionInput(query?: DesktopMemoryProjectionQuery) {
+  if (!query) {
+    return {};
+  }
+
+  return {
+    units: {
+      scopeFilter: query.scopeFilter,
+      q: query.q,
+      tiers: query.tiers,
+      kinds: query.kinds,
+      status: query.status,
+      includeGlobal: query.includeGlobal,
+      limit: query.unitsLimit ?? query.limit,
+      offset: query.unitsOffset ?? query.offset,
+    },
+    traces: {
+      limit: query.traceLimit,
+      queryLike: query.traceQueryLike,
+      unitId: query.traceUnitId,
+      from: query.traceFrom,
+      to: query.traceTo,
+    },
+    runtimeContextQuery: query.runtimeQuery,
+  };
+}
+
+function toDesktopMemoryMaintenanceInput(input?: DesktopMemoryMaintenanceRequest) {
+  if (!input) {
+    return {};
+  }
+
+  return {
+    scopeFilter: input.scopeFilter,
+    action: input.action,
+    criteria: input.criteria,
+  };
+}
+
+function createRuntimeLogsRpcLogger(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(RUNTIME_LOGGER_FACTORY_PORT).createLogger({
+    source: "desktop",
+    module: "desktop.logs.rpc",
+  });
+}
+
+function clearRuntimeLogsBefore(host: ModuleHost | null, query: Pick<RuntimeLogsQuery, "from" | "to">) {
+  if (!query.to) {
+    throw new Error("Query parameter \"to\" is required");
+  }
+
+  const deleted = resolveRuntimeLogsQueryPort(host).deleteByQuery(query);
+  void createRuntimeLogsRpcLogger(host).warn("Desktop runtime logs before cutoff cleared", {
+    context: {
+      by: "rpc",
+      deleted,
+      from: query.from,
+      to: query.to,
+    },
+  });
+  return { deleted };
+}
+
+try {
+  let host: ModuleHost | null = null;
+
+  await startDesktopApplication({
+    appIdentifier: APP_IDENTIFIER,
+    appName: channel === "dev" ? "MaomiAgent dev" : "MaomiAgent",
+    channel,
+    mainViewUrl: url,
+    singleInstance,
+    onHostCreated(nextHost) {
+      host = nextHost;
+    },
+    window: {
+      title: "MaomiAgent",
+      frame: {
+        width: 1240,
+        height: 840,
+        x: 160,
+        y: 80,
+      },
+    },
+    createWindow(options) {
+      let window: BrowserWindow | null = null;
+      const rpc = defineElectrobunRPC<DesktopRendererRPC, "bun">("bun", {
+        maxRequestTime: Infinity,
+        handlers: {
+          requests: {
+            getWindowState: () => ({ maximized: window?.isMaximized() ?? false }),
+            windowControl: ({ action, dragPointer }) => handleWindowAction(window, action, dragPointer),
+            refreshMainView: () => refreshMainView(window, channel),
+            chooseDirectory: (options) => chooseDirectory(options?.startingFolder),
+            openPathInFileManager: ({ path }) => openPathInFileManager(path),
+            openExternalUrl: ({ url }) => openExternalUrl(url),
+            checkDesktopAppUpdate: () => checkDesktopAppUpdate(),
+            installDesktopAppUpdate: (input) => installDesktopAppUpdate(input),
+            listDesktopConversationSessions: (query) =>
+              resolveDesktopConversationQueryPort(host).listSessions(query ?? {}),
+            getDesktopConversationSession: ({ sessionId }) =>
+              resolveDesktopConversationQueryPort(host).getSession(sessionId),
+            getDesktopConversationSessionDetail: ({ sessionId }) =>
+              resolveDesktopConversationQueryPort(host).getSessionDetail(sessionId),
+            listDesktopConversationCapabilities: (query) =>
+              resolveDesktopConversationQueryPort(host).listCapabilities(query),
+            createDesktopConversationSession: (input) =>
+              resolveDesktopConversationCommandPort(host).createSession(input),
+            hideDesktopConversationSession: ({ sessionId }) =>
+              resolveDesktopConversationCommandPort(host).hideSession(sessionId),
+            applyDesktopConversationWorkspaceSettings: (input) =>
+              resolveDesktopConversationCommandPort(host).applyWorkspaceSettings(input),
+            sendDesktopConversationMessage: (input) =>
+              resolveDesktopConversationCommandPort(host).sendMessage(input),
+            stopDesktopConversationMessage: (input) =>
+              resolveDesktopConversationCommandPort(host).stopMessage(input),
+            answerDesktopConversationInteraction: (input) =>
+              resolveDesktopConversationCommandPort(host).answerInteraction(input),
+            rejectDesktopConversationInteraction: (input) =>
+              resolveDesktopConversationCommandPort(host).rejectInteraction(input),
+            executeDesktopAiOneShot: (input) =>
+              resolveDesktopAiOneShotPort(host).execute(input),
+            getRuntimeLogs: (query) => resolveRuntimeLogsQueryPort(host).query(query ?? {}),
+            getRuntimeLogsSummary: (query) => resolveRuntimeLogsQueryPort(host).summary(query ?? {}),
+            writeRuntimeLog: (input) => resolveRuntimeLogWriterPort(host).write(input),
+            clearRuntimeLogs: () => {
+              const deleted = resolveRuntimeLogsQueryPort(host).clear();
+              void createRuntimeLogsRpcLogger(host).warn("Desktop runtime logs cleared", {
+                context: {
+                  by: "rpc",
+                  deleted,
+                },
+              });
+              return { deleted };
+            },
+            clearRuntimeLogsBefore: (query) => clearRuntimeLogsBefore(host, query),
+            getDesktopWechatState: () => resolveDesktopWechatQueryPort(host).getState(),
+            saveDesktopWechatConfig: (input) => resolveDesktopWechatCommandPort(host).saveConfig(input),
+            startDesktopWechatQrLogin: (input) => resolveDesktopWechatCommandPort(host).startQrLogin(input),
+            pollDesktopWechatQrLogin: (input) => resolveDesktopWechatCommandPort(host).pollQrLogin(input),
+            setDesktopWechatAccountStatus: ({ accountId, input }) =>
+              resolveDesktopWechatCommandPort(host).setAccountStatus(accountId, input),
+            clearDesktopWechatAccountConversations: ({ accountId }) =>
+              resolveDesktopWechatCommandPort(host).clearAccountConversations(accountId),
+            removeDesktopWechatAccount: ({ accountId }) =>
+              resolveDesktopWechatCommandPort(host).removeAccount(accountId),
+            getDesktopFeishuState: () => resolveDesktopFeishuQueryPort(host).getState(),
+            saveDesktopFeishuDeveloperConfig: (input) =>
+              resolveDesktopFeishuCommandPort(host).saveDeveloperConfig(input),
+            beginDesktopFeishuDeveloperAuthorization: (input) =>
+              resolveDesktopFeishuCommandPort(host).beginDeveloperAuthorization(input),
+            refreshDesktopFeishuDeveloperToken: () =>
+              resolveDesktopFeishuCommandPort(host).refreshDeveloperToken(),
+            clearDesktopFeishuSmartAssistantConfig: () =>
+              resolveDesktopFeishuCommandPort(host).clearSmartAssistantConfig(),
+            clearDesktopFeishuConfig: () =>
+              resolveDesktopFeishuCommandPort(host).clearConfig(),
+            getDesktopFeishuBotState: () => resolveDesktopFeishuQueryPort(host).getBotState(),
+            saveDesktopFeishuBotConfig: (input) =>
+              resolveDesktopFeishuCommandPort(host).saveBotConfig(input),
+            clearDesktopFeishuBotConfig: () =>
+              resolveDesktopFeishuCommandPort(host).clearBotConfig(),
+            getDesktopFeishuDocsCapabilities: () =>
+              resolveDesktopFeishuQueryPort(host).getDocsCapabilities(),
+            getDesktopFeishuDocTree: (input) =>
+              resolveDesktopFeishuQueryPort(host).getDocTree(input),
+            getDesktopFeishuDocContent: ({ docId }) =>
+              resolveDesktopFeishuQueryPort(host).getDocContent(docId),
+            getDesktopFeishuDocMediaPreviewUrls: ({ fileTokens }) =>
+              resolveDesktopFeishuQueryPort(host).getDocMediaPreviewUrls({ fileTokens }),
+            getDesktopFeishuDocWhiteboardPreviewUrls: ({ whiteboardTokens }) =>
+              resolveDesktopFeishuQueryPort(host).getDocWhiteboardPreviewUrls({ whiteboardTokens }),
+            openDesktopFeishuWorkspaceDoc: ({ workspaceId, docId }) =>
+              resolveDesktopFeishuCommandPort(host).openWorkspaceDoc({ workspaceId, docId }),
+            getDesktopFeishuWorkspaceDocLocalDraft: ({ workspaceId, docId }) =>
+              resolveDesktopFeishuQueryPort(host).getWorkspaceDocLocalDraft({ workspaceId, docId }),
+            saveDesktopFeishuWorkspaceDocLocalDraft: (input) =>
+              resolveDesktopFeishuCommandPort(host).saveWorkspaceDocLocalDraft(input),
+            pullDesktopFeishuWorkspaceDoc: ({ workspaceId, docId }) =>
+              resolveDesktopFeishuCommandPort(host).pullWorkspaceDoc({ workspaceId, docId }),
+            pushDesktopFeishuWorkspaceDoc: (input) =>
+              resolveDesktopFeishuCommandPort(host).pushWorkspaceDoc(input),
+            executeDesktopFeishuSmartAssistantAction: (input) =>
+              resolveDesktopFeishuCommandPort(host).executeSmartAssistantAction(input),
+            getDesktopWorkspaceFileTree: ({ workspaceId, path }) =>
+              resolveDesktopWorkspaceQueryPort(host).getFileTree(workspaceId, path),
+            getDesktopWorkspaceFileContent: ({ workspaceId, path }) =>
+              resolveDesktopWorkspaceQueryPort(host).getFileContent(workspaceId, path),
+            getDesktopGitIgnore: ({ workspaceId }) =>
+              resolveDesktopGitQueryPort(host).getGitIgnore(workspaceId),
+            getDesktopGitChanges: ({ workspaceId }) =>
+              resolveDesktopGitQueryPort(host).getGitChanges(workspaceId),
+            getDesktopGitReview: ({ workspaceId }) =>
+              resolveDesktopGitQueryPort(host).getGitReview(workspaceId),
+            getDesktopGitReviewDetail: ({ workspaceId, query }) =>
+              resolveDesktopGitQueryPort(host).getGitReviewDetail(workspaceId, query),
+            compareDesktopGitRefs: ({ workspaceId, query }) =>
+              resolveDesktopGitQueryPort(host).compareGitRefs(workspaceId, query),
+            getDesktopGitBranches: ({ workspaceId }) =>
+              resolveDesktopGitQueryPort(host).getGitBranches(workspaceId),
+            getDesktopGitStashes: ({ workspaceId }) =>
+              resolveDesktopGitQueryPort(host).getGitStashes(workspaceId),
+            getDesktopGitHistory: ({ workspaceId, query }) =>
+              resolveDesktopGitQueryPort(host).getGitHistory(workspaceId, query),
+            getDesktopGitHistoryDetail: ({ workspaceId, hash }) =>
+              resolveDesktopGitQueryPort(host).getGitHistoryDetail(workspaceId, hash),
+            getDesktopGitModuleSnapshot: ({ workspaceId, query }) =>
+              resolveDesktopGitQueryPort(host).getGitModuleSnapshot(workspaceId, query),
+            getDesktopGitHunks: ({ workspaceId, query }) =>
+              resolveDesktopGitQueryPort(host).getGitHunks(workspaceId, query),
+            saveDesktopGitIgnore: ({ workspaceId, input }) =>
+              resolveDesktopGitCommandPort(host).saveGitIgnore(workspaceId, input),
+            initDesktopGitRepository: ({ workspaceId }) =>
+              resolveDesktopGitCommandPort(host).initGitRepository(workspaceId),
+            stageDesktopGitChanges: ({ workspaceId, input }) =>
+              resolveDesktopGitCommandPort(host).stageGitChanges(workspaceId, input),
+            unstageDesktopGitChanges: ({ workspaceId, input }) =>
+              resolveDesktopGitCommandPort(host).unstageGitChanges(workspaceId, input),
+            discardDesktopGitChanges: ({ workspaceId, input }) =>
+              resolveDesktopGitCommandPort(host).discardGitChanges(workspaceId, input),
+            commitDesktopGitChanges: ({ workspaceId, input }) =>
+              resolveDesktopGitCommandPort(host).commitGitChanges(workspaceId, input),
+            generateDesktopGitCommitMessage: ({ workspaceId, query }) =>
+              resolveDesktopGitQueryPort(host).generateGitCommitMessage(workspaceId, query),
+            createDesktopGitStash: ({ workspaceId, input }) =>
+              resolveDesktopGitCommandPort(host).createGitStash(workspaceId, input),
+            applyDesktopGitStash: ({ workspaceId, input }) =>
+              resolveDesktopGitCommandPort(host).applyGitStash(workspaceId, input),
+            popDesktopGitStash: ({ workspaceId, input }) =>
+              resolveDesktopGitCommandPort(host).popGitStash(workspaceId, input),
+            dropDesktopGitStash: ({ workspaceId, input }) =>
+              resolveDesktopGitCommandPort(host).dropGitStash(workspaceId, input),
+            createDesktopGitBranch: ({ workspaceId, input }) =>
+              resolveDesktopGitCommandPort(host).createGitBranch(workspaceId, input),
+            createDesktopGitTag: ({ workspaceId, input }) =>
+              resolveDesktopGitCommandPort(host).createGitTag(workspaceId, input),
+            checkoutDesktopGitBranch: ({ workspaceId, input }) =>
+              resolveDesktopGitCommandPort(host).checkoutGitBranch(workspaceId, input),
+            mergeDesktopGitBranchIntoCurrent: ({ workspaceId, input }) =>
+              resolveDesktopGitCommandPort(host).mergeGitBranchIntoCurrent(workspaceId, input),
+            rebaseDesktopGitBranchIntoCurrent: ({ workspaceId, input }) =>
+              resolveDesktopGitCommandPort(host).rebaseCurrentGitBranch(workspaceId, input),
+            renameDesktopGitBranch: ({ workspaceId, input }) =>
+              resolveDesktopGitCommandPort(host).renameGitBranch(workspaceId, input),
+            deleteDesktopGitBranch: ({ workspaceId, input }) =>
+              resolveDesktopGitCommandPort(host).deleteGitBranch(workspaceId, input),
+            fetchDesktopGitRemote: ({ workspaceId }) =>
+              resolveDesktopGitCommandPort(host).fetchGitRemote(workspaceId),
+            pullDesktopGitRemote: ({ workspaceId }) =>
+              resolveDesktopGitCommandPort(host).pullGitRemote(workspaceId),
+            pushDesktopGitRemote: ({ workspaceId, input }) =>
+              resolveDesktopGitCommandPort(host).pushGitRemote(workspaceId, input),
+            revertDesktopGitCommit: ({ workspaceId, input }) =>
+              resolveDesktopGitCommandPort(host).revertGitCommit(workspaceId, input),
+            cherryPickDesktopGitCommit: ({ workspaceId, input }) =>
+              resolveDesktopGitCommandPort(host).cherryPickGitCommit(workspaceId, input),
+            resetDesktopGitCommit: ({ workspaceId, input }) =>
+              resolveDesktopGitCommandPort(host).resetGitCommit(workspaceId, input),
+            stageDesktopGitHunks: ({ workspaceId, input }) =>
+              resolveDesktopGitCommandPort(host).stageGitHunks(workspaceId, input),
+            unstageDesktopGitHunks: ({ workspaceId, input }) =>
+              resolveDesktopGitCommandPort(host).unstageGitHunks(workspaceId, input),
+            discardDesktopGitHunks: ({ workspaceId, input }) =>
+              resolveDesktopGitCommandPort(host).discardGitHunks(workspaceId, input),
+            listDesktopWorkspaces: (query) => resolveDesktopWorkspaceQueryPort(host).list(query ?? {}),
+            listDesktopTaskWorkspaces: () => resolveDesktopTasksQueryPort(host).listWorkspaces(),
+            listDesktopTaskCenter: (query) => resolveDesktopTasksQueryPort(host).listTaskCenter(query ?? {}),
+            listDesktopTasks: (query) => resolveDesktopTasksQueryPort(host).list(query ?? {}),
+            listDesktopTerminalSessions: (query) => resolveDesktopTerminalsQueryPort(host).list(query ?? {}),
+            listDesktopMemoryUnits: (params) =>
+              resolveDesktopMemoryQueryPort(host).listUnits({
+                workspaceId: params?.workspaceId,
+                ...(params?.query ?? {}),
+              }),
+            getDesktopMemoryProjection: (params) =>
+              resolveDesktopMemoryQueryPort(host).getProjection({
+                workspaceId: params?.workspaceId,
+                ...toDesktopMemoryProjectionInput(params?.query),
+              }),
+            appendDesktopMemory: ({ workspaceId, input }) =>
+              resolveDesktopMemoryCommandPort(host).append({
+                ...input,
+                workspaceId: input.workspaceId ?? workspaceId,
+              }),
+            patchDesktopMemoryUnit: ({ workspaceId, unitId, input }) =>
+              resolveDesktopMemoryCommandPort(host).patch({
+                workspaceId,
+                unitId,
+                patch: input,
+              }),
+            removeDesktopMemoryUnit: ({ workspaceId, unitId }) =>
+              resolveDesktopMemoryCommandPort(host).remove({ workspaceId, unitId }),
+            searchDesktopMemory: ({ workspaceId, query }) =>
+              resolveDesktopMemoryQueryPort(host).search({
+                workspaceId,
+                ...query,
+              }),
+            listDesktopMemoryTraces: async (params) => ({
+              items: await resolveDesktopMemoryQueryPort(host).listRetrievalTraces({
+                workspaceId: params?.workspaceId,
+                ...(params?.query ?? {}),
+              }),
+            }),
+            getDesktopMemoryRuntimeContext: (params) =>
+              resolveDesktopMemoryQueryPort(host).getRuntimeContext(params ?? {}),
+            previewDesktopMemoryMaintenance: (params) =>
+              resolveDesktopMemoryCommandPort(host).previewMaintenance({
+                workspaceId: params?.workspaceId,
+                ...toDesktopMemoryMaintenanceInput(params?.input),
+              }),
+            applyDesktopMemoryMaintenance: ({ workspaceId, runId }) =>
+              resolveDesktopMemoryCommandPort(host).applyMaintenance({ workspaceId, runId }),
+            pullDesktopMemoryWorkingSet: ({ workspaceId, query }) =>
+              resolveDesktopMemoryQueryPort(host).pullWorkingSet({
+                workspaceId,
+                ...query,
+              }),
+            pushDesktopMemoryWorkingSet: ({ workspaceId, input }) =>
+              resolveDesktopMemoryCommandPort(host).pushWorkingSet({
+                workspaceId,
+                ...input,
+              }),
+            getDesktopTask: ({ workspaceId, taskId }) =>
+              resolveDesktopTasksQueryPort(host).get(workspaceId, taskId),
+            getDesktopTaskDetail: ({ workspaceId, taskId, runLimit, runOffset }) =>
+              resolveDesktopTasksQueryPort(host).getDetail({
+                workspaceId,
+                taskId,
+                runLimit,
+                runOffset,
+              }),
+            listDesktopTaskRuns: ({ workspaceId, taskId, limit, offset }) =>
+              resolveDesktopTasksQueryPort(host).listRuns({
+                workspaceId,
+                taskId,
+                limit,
+                offset,
+              }),
+            runDesktopTaskNow: ({ workspaceId, taskId }) =>
+              resolveDesktopTasksCommandPort(host).runNow(workspaceId, taskId),
+            cancelDesktopTask: ({ workspaceId, taskId }) =>
+              resolveDesktopTasksCommandPort(host).cancel(workspaceId, taskId),
+            retryDesktopTask: ({ workspaceId, taskId }) =>
+              resolveDesktopTasksCommandPort(host).retry(workspaceId, taskId),
+            pauseDesktopTaskSchedule: ({ workspaceId, taskId }) =>
+              resolveDesktopTasksCommandPort(host).pauseSchedule(workspaceId, taskId),
+            resumeDesktopTaskSchedule: ({ workspaceId, taskId }) =>
+              resolveDesktopTasksCommandPort(host).resumeSchedule(workspaceId, taskId),
+            getDesktopTerminalDetail: (query) =>
+              resolveDesktopTerminalsQueryPort(host).getDetail(query),
+            createDesktopTerminalSession: (input) =>
+              resolveDesktopTerminalsCommandPort(host).create(input),
+            executeDesktopTerminalInput: ({ sessionId, input }) =>
+              resolveDesktopTerminalsCommandPort(host).execute(sessionId, input),
+            resizeDesktopTerminalSession: ({ sessionId, input }) =>
+              resolveDesktopTerminalsCommandPort(host).resize(sessionId, input),
+            closeDesktopTerminalSession: ({ sessionId }) =>
+              resolveDesktopTerminalsCommandPort(host).close(sessionId),
+            getDesktopWorkspace: ({ workspaceId }) =>
+              resolveDesktopWorkspaceQueryPort(host).get(workspaceId),
+            createDesktopWorkspace: (input) =>
+              resolveDesktopWorkspaceCommandPort(host).create(input),
+            updateDesktopWorkspace: ({ workspaceId, input }) =>
+              resolveDesktopWorkspaceCommandPort(host).update(workspaceId, input),
+            removeDesktopWorkspace: async ({ workspaceId }) => ({
+              removed: await resolveDesktopWorkspaceCommandPort(host).remove(workspaceId),
+            }),
+            listDesktopAgents: (query) => resolveDesktopAgentsQueryPort(host).list(query ?? {}),
+            getDesktopAgent: ({ agentId }) => resolveDesktopAgentsQueryPort(host).get(agentId),
+            getDesktopAgentBundle: ({ agentId }) =>
+              resolveDesktopAgentsQueryPort(host).getBundle(agentId),
+            createDesktopAgent: (input) => resolveDesktopAgentsCommandPort(host).create(input),
+            updateDesktopAgent: ({ agentId, input }) =>
+              resolveDesktopAgentsCommandPort(host).update(agentId, input),
+            saveDesktopAgentBundle: (input) =>
+              resolveDesktopAgentsCommandPort(host).saveBundle(input),
+            setDesktopAgentEnabled: ({ agentId, enabled }) =>
+              resolveDesktopAgentsCommandPort(host).setEnabled(agentId, enabled),
+            removeDesktopAgent: ({ agentId }) =>
+              resolveDesktopAgentsCommandPort(host).remove(agentId),
+            previewDesktopAgentImport: (input) =>
+              resolveDesktopAgentsCommandPort(host).previewImport(input),
+            importDesktopAgents: (input) =>
+              resolveDesktopAgentsCommandPort(host).importAgents(input),
+            listDesktopModelProviders: async () => ({
+              items: await resolveDesktopModelsQueryPort(host).listProviders(),
+            }),
+            listDesktopModelChannels: async (query) => ({
+              items: await resolveDesktopModelsQueryPort(host).listChannels(query ?? {}),
+            }),
+            getDesktopModelsSnapshot: () => resolveDesktopModelsQueryPort(host).getSnapshot(),
+            getDesktopModelRuntimeSelectionSnapshot: async (query) => ({
+              item: await resolveDesktopModelsQueryPort(host).getRuntimeSelectionSnapshot(query ?? {}),
+            }),
+            listDesktopSkills: (query) => resolveDesktopSkillsQueryPort(host).list(query ?? {}),
+            getDesktopSkill: ({ skillId }) => resolveDesktopSkillsQueryPort(host).get(skillId),
+            discoverDesktopSkills: (query) => resolveDesktopSkillsQueryPort(host).discover(query ?? {}),
+            getDesktopSkillsEffective: ({ workspaceId, q }) =>
+              resolveDesktopSkillsQueryPort(host).getEffective(workspaceId, q),
+            listDesktopSkillsMarketProviders: async () => ({
+              items: resolveDesktopSkillsMarketPort(host).listProviders(),
+            }),
+            searchDesktopSkillsMarket: (query) =>
+              resolveDesktopSkillsMarketPort(host).search(query ?? {}),
+            installDesktopSkillMarket: (input) => resolveDesktopSkillsMarketPort(host).install(input),
+            adoptDesktopSkill: (input) => resolveDesktopSkillsCommandPort(host).adopt(input),
+            patchDesktopSkill: ({ skillId, input }) =>
+              resolveDesktopSkillsCommandPort(host).patch(skillId, input),
+            setDesktopSkillEnabled: ({ skillId, enabled }) =>
+              resolveDesktopSkillsCommandPort(host).setEnabled(skillId, enabled),
+            removeDesktopSkill: async ({ skillId }) => ({
+              deleted: await resolveDesktopSkillsCommandPort(host).remove(skillId),
+              skillId,
+            }),
+            listDesktopChannelModels: async ({ providerType, channelId }) => ({
+              items: await resolveDesktopModelsQueryPort(host).listChannelModels(providerType, channelId),
+            }),
+            createDesktopModelChannel: ({ providerType, input }) =>
+              resolveDesktopModelsCommandPort(host).createChannel(providerType, input),
+            updateDesktopModelChannel: ({ providerType, channelId, input }) =>
+              resolveDesktopModelsCommandPort(host).updateChannel(providerType, channelId, input),
+            setDesktopModelChannelEnabled: ({ providerType, channelId, enabled }) =>
+              resolveDesktopModelsCommandPort(host).setChannelEnabled(providerType, channelId, enabled),
+            removeDesktopModelChannel: ({ providerType, channelId }) =>
+              resolveDesktopModelsCommandPort(host).removeChannel(providerType, channelId),
+            setDesktopChannelModelEnabled: ({ providerType, channelId, modelId, enabled }) =>
+              resolveDesktopModelsCommandPort(host).setModelEnabled(providerType, channelId, modelId, enabled),
+            batchSetDesktopChannelModelsEnabled: async ({ providerType, channelId, updates }) => ({
+              items: await resolveDesktopModelsCommandPort(host).batchSetModelEnabled(
+                providerType,
+                channelId,
+                updates,
+              ),
+            }),
+            discoverDesktopChannelModels: ({ providerType, channelId }) =>
+              resolveDesktopModelsCommandPort(host).discoverChannelModels(providerType, channelId),
+            listDesktopMcp: (query) => resolveDesktopMcpQueryPort(host).list(query ?? {}),
+            getDesktopMcpEffective: (params) => resolveDesktopMcpQueryPort(host).effective(params),
+            listDesktopMcpRecommended: () => resolveDesktopMcpQueryPort(host).recommended(),
+            createDesktopMcp: (input) => resolveDesktopMcpCommandPort(host).create(input),
+            patchDesktopMcp: ({ mcpId, input }) => resolveDesktopMcpCommandPort(host).patch(mcpId, input),
+            deleteDesktopMcp: ({ mcpId }) => resolveDesktopMcpCommandPort(host).delete(mcpId),
+            testDesktopMcpConnection: ({ mcpId }) => resolveDesktopMcpCommandPort(host).testConnection(mcpId),
+            healthCheckDesktopMcp: ({ mcpId }) => resolveDesktopMcpCommandPort(host).healthCheck(mcpId),
+            fetchDesktopMcpCapabilities: ({ mcpId }) => resolveDesktopMcpCommandPort(host).capabilities(mcpId),
+            listDesktopMcpHealthHistory: ({ mcpId, limit, offset }) =>
+              resolveDesktopMcpQueryPort(host).healthHistory({ mcpId, limit, offset }),
+            getDesktopMcpRuntimeConfig: (params) => resolveDesktopMcpQueryPort(host).runtimeConfig(params ?? {}),
+            installDesktopMcpRecommended: ({ id, input }) =>
+              resolveDesktopMcpCommandPort(host).installRecommended(id, input),
+            listDesktopMcpMarketProviders: () => resolveDesktopMcpMarketPort(host).providers(),
+            searchDesktopMcpMarket: (input) => resolveDesktopMcpMarketPort(host).search(input ?? {}),
+            searchDesktopMcpMarketByRequirement: (input) =>
+              resolveDesktopMcpMarketPort(host).searchByRequirement(input ?? {}),
+            installDesktopMcpMarket: (input) => resolveDesktopMcpMarketPort(host).install(input),
+            autoInstallDesktopMcpMarketByRequirement: (input) =>
+              resolveDesktopMcpMarketPort(host).autoInstallByRequirement(input),
+          },
+          messages: {},
+        },
+      });
+
+      resolveDesktopConversationService(host).setSessionDetailPublisher((update) => {
+        rpc.send("desktopConversationSessionDetailUpdated", update);
+      });
+      resolveDesktopConversationService(host).setRuntimeEventsPublisher((update) => {
+        rpc.send("desktopConversationRuntimeEventsUpdated", update);
+      });
+
+      window = new BrowserWindow({
+        ...options,
+        rpc,
+        titleBarStyle: "hidden",
+        // On Windows, hidden custom chrome should also be borderless; otherwise
+        // native resize borders can show through as an opaque frame after scale/
+        // restore transitions when window transparency is disabled.
+        styleMask: process.platform === "win32" ? { Borderless: true } : undefined,
+        // Electrobun hidden+transparent windows on Windows can leak right-edge clicks
+        // into the window behind the app. Keep transparency on other platforms.
+        transparent: process.platform === "win32" ? false : true,
+      });
+      return window;
+    },
+  });
+} catch (error) {
+  await singleInstance.dispose();
+  throw error;
+}
+
+console.log("MaomiAgent Electrobun app started.");

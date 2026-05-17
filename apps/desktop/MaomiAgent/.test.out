@@ -1,0 +1,26 @@
+bun test v1.3.12 (700fc117)
+System.Management.Automation.RemoteException
+src\bun\tests\desktop-host.test.ts:
+(pass) startDesktopApplication > boots a kernel IOC module host and wires single-instance activation [16.00ms]
+System.Management.Automation.RemoteException
+src\mainview\lib\app-route.test.ts:
+(pass) desktop route ownership > keeps workspace, logs and settings on the native desktop shell
+(pass) desktop route ownership > parses only known desktop hash routes
+System.Management.Automation.RemoteException
+src\bun\modules\workspace\tests\desktop-workspace-service.test.ts:
+[2026-04-27T07:46:56.302Z] INFO desktop.workspace: Desktop workspace created {
+  directoryPath: "C:\\Users\\ASUS\\AppData\\Local\\Temp\\maomi-desktop-workspace-pi29Ru\\repo-GM8jRf",
+  location: "desktop.workspace",
+}
+[2026-04-27T07:46:56.303Z] INFO desktop.workspace: Desktop workspace updated {
+  location: "desktop.workspace",
+}
+[2026-04-27T07:46:56.304Z] WARN desktop.workspace: Desktop workspace removed {
+  location: "desktop.workspace",
+}
+(pass) DesktopWorkspaceService > manages directory records without workspace lifecycle side effects [16.00ms]
+System.Management.Automation.RemoteException
+ 4 pass
+ 0 fail
+ 53 expect() calls
+Ran 4 tests across 3 files. [228.00ms]

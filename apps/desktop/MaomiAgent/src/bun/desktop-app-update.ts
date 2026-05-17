@@ -1,0 +1,515 @@
+import { createHash, type Hash } from "node:crypto";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+import {
+  loadDesktopAppUpdateConfig,
+  DEFAULT_DESKTOP_APP_UPDATE_CHANNEL,
+  DEFAULT_DESKTOP_APP_UPDATE_SOFTWARE_CODE,
+} from "./desktop-app-update/config";
+import {
+  parseDesktopAppPublicLatestRelease,
+  selectDesktopAppPublicReleaseAssets,
+} from "./desktop-app-update/public-contract";
+import {
+  resolveDesktopAppUpdatePlatformExecutor,
+} from "./desktop-app-update/platform-executor";
+import type {
+  DesktopAppUpdateCheckResult,
+  DesktopAppUpdateInstallInput,
+  DesktopAppUpdateInstallResult,
+} from "../shared/desktop-updater";
+
+type LocalVersionInfo = {
+  version: string;
+  versionCode: number;
+  channel: string;
+  resourcesRoot?: string;
+  bundleRoot?: string;
+};
+
+type FrontDownloadUrlResponse = {
+  downloadUrl: string;
+  fileName: string;
+};
+
+type EmbeddedUpdateInfo = {
+  version?: string;
+  hash?: string;
+};
+
+const DEFAULT_VERSION = "0.1.0";
+const VERSION_RE = /^v?(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:-(?<pre>[0-9A-Za-z.-]+))?$/u;
+
+export async function checkDesktopAppUpdate(): Promise<DesktopAppUpdateCheckResult> {
+  const localInfo = await resolveLocalVersionInfo();
+  const updateConfig = await loadDesktopAppUpdateConfig(localInfo.resourcesRoot);
+  const platformExecutor = resolveDesktopAppUpdatePlatformExecutor();
+
+  if (!platformExecutor.supported) {
+    return {
+      configured: Boolean(updateConfig.publicBaseUrl),
+      supported: false,
+      hasUpdate: false,
+      currentVersion: localInfo.version,
+      currentVersionCode: localInfo.versionCode,
+      currentChannel: localInfo.channel,
+      message: platformExecutor.message,
+    };
+  }
+
+  if (!localInfo.bundleRoot || !localInfo.resourcesRoot) {
+    return {
+      configured: false,
+      supported: true,
+      hasUpdate: false,
+      currentVersion: localInfo.version,
+      currentVersionCode: localInfo.versionCode,
+      currentChannel: localInfo.channel,
+      message: "The current runtime is not a packaged desktop bundle.",
+    };
+  }
+
+  if (!updateConfig.publicBaseUrl) {
+    return {
+      configured: false,
+      supported: true,
+      hasUpdate: false,
+      currentVersion: localInfo.version,
+      currentVersionCode: localInfo.versionCode,
+      currentChannel: localInfo.channel,
+      message: "Desktop update service is not configured.",
+    };
+  }
+
+  const queryUrl = new URL(joinUrl(updateConfig.publicBaseUrl, "releases", "latest"));
+  queryUrl.searchParams.set("softwareCode", updateConfig.softwareCode || DEFAULT_DESKTOP_APP_UPDATE_SOFTWARE_CODE);
+  queryUrl.searchParams.set("channel", updateConfig.channel || localInfo.channel);
+  queryUrl.searchParams.set("os", updateConfig.os || "win");
+  queryUrl.searchParams.set("arch", updateConfig.arch || "x64");
+  queryUrl.searchParams.set("currentVersionCode", String(localInfo.versionCode));
+
+  const response = await fetch(queryUrl);
+  if (!response.ok) {
+    throw new Error(`Update check failed (${response.status}).`);
+  }
+
+  const payload = parseDesktopAppPublicLatestRelease(await response.json());
+  if (!payload.hasUpdate || !payload.releaseId || !payload.version) {
+    return {
+      configured: true,
+      supported: true,
+      hasUpdate: false,
+      currentVersion: localInfo.version,
+      currentVersionCode: localInfo.versionCode,
+      currentChannel: localInfo.channel,
+      message: "You are already on the latest version.",
+    };
+  }
+
+  const {
+    bundleAsset,
+    updateInfoAsset,
+    installerAsset,
+  } = selectDesktopAppPublicReleaseAssets(payload.assets);
+  if (!bundleAsset) {
+    return {
+      configured: true,
+      supported: true,
+      hasUpdate: false,
+      currentVersion: localInfo.version,
+      currentVersionCode: localInfo.versionCode,
+      currentChannel: localInfo.channel,
+      message: "The latest release does not contain a downloadable bundle package.",
+    };
+  }
+
+  return {
+    configured: true,
+    supported: true,
+    hasUpdate: true,
+    currentVersion: localInfo.version,
+    currentVersionCode: localInfo.versionCode,
+    currentChannel: localInfo.channel,
+    message: "A newer desktop version is available.",
+    releaseId: payload.releaseId,
+    releaseVersion: payload.version,
+    releaseVersionCode: payload.versionCode,
+    title: payload.title,
+    releaseNotes: payload.releaseNotes,
+    isForceUpdate: payload.isForceUpdate,
+    isPrerelease: payload.isPrerelease,
+    bundleAsset,
+    installerAsset,
+    updateInfoAsset,
+  };
+}
+
+export async function installDesktopAppUpdate(
+  input: DesktopAppUpdateInstallInput,
+): Promise<DesktopAppUpdateInstallResult> {
+  const platformExecutor = resolveDesktopAppUpdatePlatformExecutor();
+  if (!platformExecutor.supported) {
+    throw new Error(platformExecutor.message);
+  }
+
+  const localInfo = await resolveLocalVersionInfo();
+  if (!localInfo.bundleRoot || !localInfo.resourcesRoot) {
+    throw new Error("The current runtime is not a packaged desktop bundle.");
+  }
+
+  const updateConfig = await loadDesktopAppUpdateConfig(localInfo.resourcesRoot);
+  if (!updateConfig.publicBaseUrl) {
+    throw new Error("Desktop update service is not configured.");
+  }
+
+  const stagingRoot = await createUpdateStagingRoot();
+  const bundleDownload = await requestDownloadUrl(updateConfig.publicBaseUrl, input.releaseId, input.bundleAssetId);
+  const archivePath = path.join(stagingRoot, sanitizeFileName(bundleDownload.fileName || `${input.targetVersion}.tar.zst`));
+  const expectedBundleHash = input.updateInfoAssetId
+    ? await fetchExpectedBundleHash(updateConfig.publicBaseUrl, input.releaseId, input.updateInfoAssetId)
+    : "";
+
+  try {
+    await downloadToFile(bundleDownload.downloadUrl, archivePath);
+
+    const archiveStat = await stat(archivePath);
+    if (input.bundleFileSize > 0 && archiveStat.size !== input.bundleFileSize) {
+      throw new Error(`Downloaded bundle size mismatch. Expected ${input.bundleFileSize}, received ${archiveStat.size}.`);
+    }
+
+    if (expectedBundleHash) {
+      const actualHash = await computeFileDigest(archivePath, "sha256");
+      if (actualHash.toLowerCase() !== expectedBundleHash.toLowerCase()) {
+        throw new Error("Downloaded bundle checksum mismatch.");
+      }
+    }
+
+    const extractRoot = path.join(stagingRoot, "bundle-extract");
+    await mkdir(extractRoot, { recursive: true });
+
+    const zstdPath = path.join(localInfo.bundleRoot, "bin", "zig-zstd.exe");
+    if (!existsSync(zstdPath)) {
+      throw new Error(`Required decompressor is missing: ${zstdPath}`);
+    }
+
+    await extractCompressedBundle(archivePath, extractRoot, zstdPath);
+
+    const stagedBundleRoot = await resolveSingleExtractedDirectory(extractRoot);
+    const launcherPath = path.join(localInfo.bundleRoot, "bin", "launcher.exe");
+    if (!existsSync(launcherPath)) {
+      throw new Error(`Current launcher is missing: ${launcherPath}`);
+    }
+
+    const applyScriptPath = path.join(stagingRoot, "apply-update.ps1");
+    await writeFile(applyScriptPath, buildWindowsApplyUpdateScript(), "utf8");
+    launchDetachedApplyScript({
+      scriptPath: applyScriptPath,
+      currentPid: process.pid,
+      sourceBundlePath: stagedBundleRoot,
+      targetBundlePath: localInfo.bundleRoot,
+      launcherPath,
+    });
+
+    return {
+      scheduled: true,
+      closeRequested: true,
+      targetVersion: input.targetVersion,
+      targetVersionCode: input.targetVersionCode,
+      message: "The update package is ready. The app will close and restart to finish installation.",
+    };
+  } catch (error) {
+    await rm(stagingRoot, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function resolveLocalVersionInfo(): Promise<LocalVersionInfo> {
+  const resourcesRoot = resolveResourcesRoot();
+  const versionInfoPath = resourcesRoot ? path.join(resourcesRoot, "version.json") : "";
+  const fallbackVersion = normalizeText(process.env.MAOMI_DESKTOP_VERSION) || DEFAULT_VERSION;
+
+  if (!resourcesRoot || !versionInfoPath || !existsSync(versionInfoPath)) {
+    return {
+      version: fallbackVersion,
+      versionCode: resolveVersionCode(fallbackVersion),
+      channel: DEFAULT_DESKTOP_APP_UPDATE_CHANNEL,
+    };
+  }
+
+  const payload = JSON.parse(await readFile(versionInfoPath, "utf8")) as Record<string, unknown>;
+  const version = readText(payload, ["version"]) || fallbackVersion;
+  const channel = readText(payload, ["channel"]) || DEFAULT_DESKTOP_APP_UPDATE_CHANNEL;
+
+  return {
+    version,
+    versionCode: resolveVersionCode(version),
+    channel,
+    resourcesRoot,
+    bundleRoot: path.resolve(resourcesRoot, ".."),
+  };
+}
+
+function resolveResourcesRoot(): string | undefined {
+  const candidates = [
+    path.resolve(import.meta.dir, "..", ".."),
+    path.resolve(process.execPath, "..", "..", "Resources"),
+  ];
+
+  return candidates.find((candidate) => existsSync(path.join(candidate, "version.json")));
+}
+
+async function requestDownloadUrl(
+  publicBaseUrl: string,
+  releaseId: number,
+  assetId: number,
+): Promise<FrontDownloadUrlResponse> {
+  const response = await fetch(joinUrl(publicBaseUrl, "releases", String(releaseId), "download-url"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+    },
+    body: JSON.stringify({ assetId }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to request download URL (${response.status}).`);
+  }
+
+  const payload = await response.json() as Record<string, unknown>;
+  const downloadUrl = readText(payload, ["downloadUrl", "DownloadUrl"]);
+  if (!downloadUrl) {
+    throw new Error("Download URL response did not contain a valid downloadUrl.");
+  }
+
+  return {
+    downloadUrl,
+    fileName: readText(payload, ["fileName", "FileName"]) || "",
+  };
+}
+
+async function fetchExpectedBundleHash(
+  publicBaseUrl: string,
+  releaseId: number,
+  updateInfoAssetId: number,
+): Promise<string> {
+  const download = await requestDownloadUrl(publicBaseUrl, releaseId, updateInfoAssetId);
+  const response = await fetch(download.downloadUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to download update metadata (${response.status}).`);
+  }
+
+  const payload = JSON.parse(await response.text()) as EmbeddedUpdateInfo;
+  return normalizeText(payload.hash);
+}
+
+async function downloadToFile(url: string, filePath: string): Promise<void> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to download update bundle (${response.status}).`);
+  }
+
+  await Bun.write(filePath, await response.arrayBuffer());
+}
+
+async function extractCompressedBundle(
+  archivePath: string,
+  extractRoot: string,
+  zstdPath: string,
+): Promise<void> {
+  const tarPath = path.join(path.dirname(archivePath), "bundle.tar");
+
+  try {
+    runCommandSync([zstdPath, "decompress", "-i", archivePath, "-o", tarPath, "--threads", "max"]);
+    runCommandSync(["tar", "-xf", tarPath, "-C", extractRoot]);
+  } finally {
+    await unlink(tarPath).catch(() => undefined);
+  }
+}
+
+function runCommandSync(command: string[]): void {
+  const result = Bun.spawnSync({
+    cmd: command,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  if (result.exitCode === 0) {
+    return;
+  }
+
+  const stderr = result.stderr ? new TextDecoder().decode(result.stderr).trim() : "";
+  throw new Error(stderr || `Command failed: ${command.join(" ")}`);
+}
+
+async function resolveSingleExtractedDirectory(extractRoot: string): Promise<string> {
+  const entries = await readdir(extractRoot, { withFileTypes: true });
+  const directories = entries.filter((entry) => entry.isDirectory());
+  if (directories.length !== 1) {
+    throw new Error("The downloaded update bundle did not contain exactly one root directory.");
+  }
+
+  return path.join(extractRoot, directories[0]!.name);
+}
+
+async function createUpdateStagingRoot(): Promise<string> {
+  const root = path.join(os.tmpdir(), "maomiagent-update", `${Date.now()}`);
+  await mkdir(root, { recursive: true });
+  return root;
+}
+
+function launchDetachedApplyScript(input: {
+  scriptPath: string;
+  currentPid: number;
+  sourceBundlePath: string;
+  targetBundlePath: string;
+  launcherPath: string;
+}): void {
+  const command = [
+    "$arguments = @(",
+    "'-NoProfile'",
+    "'-ExecutionPolicy'",
+    "'Bypass'",
+    "'-File'",
+    `'${escapePowerShellSingleQuoted(input.scriptPath)}'`,
+    "'-CurrentPid'",
+    `'${String(input.currentPid)}'`,
+    "'-SourceBundlePath'",
+    `'${escapePowerShellSingleQuoted(input.sourceBundlePath)}'`,
+    "'-TargetBundlePath'",
+    `'${escapePowerShellSingleQuoted(input.targetBundlePath)}'`,
+    "'-LauncherPath'",
+    `'${escapePowerShellSingleQuoted(input.launcherPath)}'`,
+    ");",
+    "Start-Process -WindowStyle Hidden -FilePath 'powershell.exe' -ArgumentList $arguments",
+  ].join(" ");
+
+  Bun.spawn({
+    cmd: ["powershell.exe", "-NoProfile", "-Command", command],
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+}
+
+function buildWindowsApplyUpdateScript(): string {
+  return [
+    "param(",
+    "  [int]$CurrentPid,",
+    "  [string]$SourceBundlePath,",
+    "  [string]$TargetBundlePath,",
+    "  [string]$LauncherPath",
+    ")",
+    "$ErrorActionPreference = 'Stop'",
+    "for ($i = 0; $i -lt 300; $i++) {",
+    "  if (-not (Get-Process -Id $CurrentPid -ErrorAction SilentlyContinue)) {",
+    "    break",
+    "  }",
+    "  Start-Sleep -Milliseconds 500",
+    "}",
+    "$targetParent = Split-Path -Parent $TargetBundlePath",
+    "if (-not (Test-Path $targetParent)) {",
+    "  New-Item -ItemType Directory -Path $targetParent -Force | Out-Null",
+    "}",
+    "if (Test-Path $TargetBundlePath) {",
+    "  Remove-Item -Path $TargetBundlePath -Recurse -Force",
+    "}",
+    "Move-Item -Path $SourceBundlePath -Destination $TargetBundlePath -Force",
+    "$launcherDirectory = Split-Path -Parent $LauncherPath",
+    "Start-Process -FilePath $LauncherPath -WorkingDirectory $launcherDirectory",
+  ].join("\n");
+}
+
+async function computeFileDigest(filePath: string, algorithm: "sha256"): Promise<string> {
+  const hash = createHash(algorithm);
+  await updateHashFromFile(hash, filePath);
+  return hash.digest("hex");
+}
+
+async function updateHashFromFile(hash: Hash, filePath: string): Promise<void> {
+  const reader = Bun.file(filePath).stream().getReader();
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        return;
+      }
+      if (value) {
+        hash.update(value);
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function resolveVersionCode(version: string): number {
+  const match = VERSION_RE.exec(version);
+  if (!match?.groups) {
+    return 0;
+  }
+
+  const major = Number.parseInt(match.groups.major, 10);
+  const minor = Number.parseInt(match.groups.minor, 10);
+  const patch = Number.parseInt(match.groups.patch, 10);
+  const prereleaseWeight = derivePrereleaseWeight(match.groups.pre);
+  return (major * 1_000_000_000) + (minor * 1_000_000) + (patch * 1_000) + prereleaseWeight;
+}
+
+function derivePrereleaseWeight(prerelease: string | undefined): number {
+  if (!prerelease) {
+    return 900;
+  }
+
+  const parts = prerelease
+    .split(/[.-]/u)
+    .map((part) => part.trim().toLowerCase())
+    .filter(Boolean);
+  const label = parts[0] || "pre";
+  const sequence = Number.parseInt(parts[1] || "0", 10);
+  const base = label === "dev"
+    ? 100
+    : label === "alpha"
+      ? 200
+      : label === "beta"
+        ? 300
+        : label === "rc"
+          ? 400
+          : label === "canary"
+            ? 500
+            : 600;
+  return Math.min(base + Math.max(sequence, 0), 899);
+}
+
+function normalizeText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function sanitizeFileName(value: string): string {
+  return value.replace(/[\\/:*?"<>|]/gu, "-");
+}
+
+function joinUrl(base: string, ...segments: string[]): string {
+  const normalizedBase = base.replace(/\/+$/u, "");
+  const normalizedSegments = segments.map((segment) => segment.replace(/^\/+|\/+$/gu, ""));
+  return [normalizedBase, ...normalizedSegments].join("/");
+}
+
+function escapePowerShellSingleQuoted(value: string): string {
+  return value.replaceAll("'", "''");
+}
+
+function readText(value: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const candidate = value[key];
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+  return "";
+}
+

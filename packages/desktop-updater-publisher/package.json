@@ -1,0 +1,12 @@
+{
+  "name": "@maomiagent/desktop-updater-publisher",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "publish:cos": "node scripts/publish-cos-updater.mjs"
+  },
+  "dependencies": {
+    "cos-nodejs-sdk-v5": "^2.15.4"
+  }
+}

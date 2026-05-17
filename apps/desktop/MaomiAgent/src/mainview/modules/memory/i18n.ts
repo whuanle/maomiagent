@@ -1,0 +1,166 @@
+import type { LanguageCode } from "../../config/titlebar";
+
+const zhCNMessages = {
+  "记忆页.提示.请先连接sidecar": "尚未连接桌面桥接，无法读取记忆。",
+  "记忆页.提示.加载中": "正在加载",
+  "记忆页.提示.确认删除": "确认删除这条记忆吗？",
+  "记忆页.输入.搜索占位": "搜索内容或摘要",
+  "记忆页.输入.workspaceId占位": "选择工作区",
+  "记忆页.值.未设置": "未设置",
+  "记忆页.值.scope.全局": "全局记忆",
+  "记忆页.值.scope.工作区": "工作区记忆",
+  "记忆页.筛选.scope.全部": "全部记忆",
+  "记忆页.筛选.scope.全局": "仅全局记忆",
+  "记忆页.筛选.scope.工作区": "仅工作区记忆",
+  "记忆页.筛选.kind.全部": "全部类型",
+  "记忆页.筛选.status.全部": "全部状态",
+  "记忆页.按钮.刷新": "刷新",
+  "记忆页.按钮.手动添加": "新增记忆",
+  "记忆页.按钮.编辑": "编辑",
+  "记忆页.按钮.删除": "删除",
+  "记忆页.按钮.取消": "取消",
+  "记忆页.按钮.保存": "保存",
+  "记忆页.入口.记录列表": "记忆记录",
+  "记忆页.更多工具.理解记忆": "理解记忆",
+  "记忆页.更多工具.理解记忆.输入占位": "输入问题或关键词",
+  "记忆页.更多工具.理解记忆.按钮": "开始理解",
+  "记忆页.更多工具.理解记忆.说明": "查看当前最相关的记忆，以及针对问题命中的结果。",
+  "记忆页.更多工具.理解记忆.当前相关记忆": "当前相关记忆",
+  "记忆页.更多工具.整理记忆": "整理记忆",
+  "记忆页.更多工具.整理记忆.按钮": "开始整理",
+  "记忆页.更多工具.整理记忆.说明": "按时间范围预览可整理的记忆，先看结果再决定后续处理。",
+  "记忆页.更多工具.整理记忆.空状态": "设置范围后开始整理",
+  "记忆页.更多工具.整理记忆.结果.范围": "范围：{范围}",
+  "记忆页.更多工具.整理记忆.结果.扫描": "扫描条目：{数量}",
+  "记忆页.更多工具.整理记忆.结果.命中": "可整理条目：{数量}",
+  "记忆页.更多工具.整理记忆.结果.天数": "时间范围：超过 {天数} 天",
+  "记忆页.列.内容": "内容",
+  "记忆页.列.scope": "范围",
+  "记忆页.列.kind": "类型",
+  "记忆页.列.status": "状态",
+  "记忆页.列.更新时间": "更新时间",
+  "记忆页.列.操作": "操作",
+  "记忆页.空状态.无记忆": "暂无记忆记录",
+  "记忆页.空状态.无检索结果": "暂无命中结果",
+  "记忆页.空状态.无运行时上下文": "暂无相关记忆",
+  "记忆页.检索.标题": "命中结果",
+  "记忆页.维护.字段.olderThanDays": "超过多少天",
+  "记忆页.弹窗.标题.编辑": "编辑记忆",
+  "记忆页.弹窗.标题.新增": "新增记忆",
+  "记忆页.字段.kind": "类型",
+  "记忆页.字段.scope": "范围",
+  "记忆页.字段.workspaceId": "工作区",
+  "记忆页.字段.summary": "摘要",
+  "记忆页.字段.content": "内容",
+  "记忆页.字段.createdAt": "创建时间",
+  "记忆页.校验.内容必填": "请填写内容",
+  "记忆页.校验.工作区ID必填": "请选择工作区",
+  "记忆页.校验.检索词必填": "请输入要理解的问题",
+  "记忆页.反馈.加载工作区失败": "加载工作区失败：{错误}",
+  "记忆页.反馈.加载失败": "加载记忆失败：{错误}",
+  "记忆页.反馈.创建成功": "记忆已创建",
+  "记忆页.反馈.更新成功": "记忆已更新",
+  "记忆页.反馈.保存失败": "保存记忆失败：{错误}",
+  "记忆页.反馈.删除成功": "记忆已删除",
+  "记忆页.反馈.删除失败": "删除记忆失败：{错误}",
+  "记忆页.反馈.检索失败": "理解记忆失败：{错误}",
+  "记忆页.反馈.整理完成": "整理预览已完成",
+  "记忆页.反馈.整理失败": "整理记忆失败：{错误}",
+  "记忆页.文案.工作区前缀": "工作区：{工作区}",
+} as const;
+
+const enUSMessages: Record<keyof typeof zhCNMessages, string> = {
+  "记忆页.提示.请先连接sidecar": "Desktop bridge is unavailable. Memory data cannot be loaded.",
+  "记忆页.提示.加载中": "Loading",
+  "记忆页.提示.确认删除": "Delete this memory item?",
+  "记忆页.输入.搜索占位": "Search content or summary",
+  "记忆页.输入.workspaceId占位": "Select a workspace",
+  "记忆页.值.未设置": "Unset",
+  "记忆页.值.scope.全局": "Global Memory",
+  "记忆页.值.scope.工作区": "Workspace Memory",
+  "记忆页.筛选.scope.全部": "All Memory",
+  "记忆页.筛选.scope.全局": "Global Only",
+  "记忆页.筛选.scope.工作区": "Workspace Only",
+  "记忆页.筛选.kind.全部": "All Kinds",
+  "记忆页.筛选.status.全部": "All Statuses",
+  "记忆页.按钮.刷新": "Refresh",
+  "记忆页.按钮.手动添加": "Add Memory",
+  "记忆页.按钮.编辑": "Edit",
+  "记忆页.按钮.删除": "Delete",
+  "记忆页.按钮.取消": "Cancel",
+  "记忆页.按钮.保存": "Save",
+  "记忆页.入口.记录列表": "Memory Records",
+  "记忆页.更多工具.理解记忆": "Understand Memory",
+  "记忆页.更多工具.理解记忆.输入占位": "Enter a question or keyword",
+  "记忆页.更多工具.理解记忆.按钮": "Understand",
+  "记忆页.更多工具.理解记忆.说明": "Review the most relevant memory items together with matched results.",
+  "记忆页.更多工具.理解记忆.当前相关记忆": "Relevant Memory Now",
+  "记忆页.更多工具.整理记忆": "Organize Memory",
+  "记忆页.更多工具.整理记忆.按钮": "Organize",
+  "记忆页.更多工具.整理记忆.说明": "Preview memory that may need cleanup by time range before taking follow-up action.",
+  "记忆页.更多工具.整理记忆.空状态": "Set a range and start organizing",
+  "记忆页.更多工具.整理记忆.结果.范围": "Scope: {范围}",
+  "记忆页.更多工具.整理记忆.结果.扫描": "Scanned: {数量}",
+  "记忆页.更多工具.整理记忆.结果.命中": "Selected: {数量}",
+  "记忆页.更多工具.整理记忆.结果.天数": "Range: older than {天数} days",
+  "记忆页.列.内容": "Content",
+  "记忆页.列.scope": "Scope",
+  "记忆页.列.kind": "Kind",
+  "记忆页.列.status": "Status",
+  "记忆页.列.更新时间": "Updated",
+  "记忆页.列.操作": "Actions",
+  "记忆页.空状态.无记忆": "No memory records",
+  "记忆页.空状态.无检索结果": "No matched results",
+  "记忆页.空状态.无运行时上下文": "No related memory",
+  "记忆页.检索.标题": "Matched Results",
+  "记忆页.维护.字段.olderThanDays": "Older than days",
+  "记忆页.弹窗.标题.编辑": "Edit Memory",
+  "记忆页.弹窗.标题.新增": "Add Memory",
+  "记忆页.字段.kind": "Kind",
+  "记忆页.字段.scope": "Scope",
+  "记忆页.字段.workspaceId": "Workspace",
+  "记忆页.字段.summary": "Summary",
+  "记忆页.字段.content": "Content",
+  "记忆页.字段.createdAt": "Created At",
+  "记忆页.校验.内容必填": "Content is required",
+  "记忆页.校验.工作区ID必填": "Select a workspace",
+  "记忆页.校验.检索词必填": "Enter a question to understand",
+  "记忆页.反馈.加载工作区失败": "Failed to load workspaces: {错误}",
+  "记忆页.反馈.加载失败": "Failed to load memory: {错误}",
+  "记忆页.反馈.创建成功": "Memory created",
+  "记忆页.反馈.更新成功": "Memory updated",
+  "记忆页.反馈.保存失败": "Failed to save memory: {错误}",
+  "记忆页.反馈.删除成功": "Memory deleted",
+  "记忆页.反馈.删除失败": "Failed to delete memory: {错误}",
+  "记忆页.反馈.检索失败": "Failed to understand memory: {错误}",
+  "记忆页.反馈.整理完成": "Organize preview completed",
+  "记忆页.反馈.整理失败": "Failed to organize memory: {错误}",
+  "记忆页.文案.工作区前缀": "Workspace: {工作区}",
+};
+
+export type MemoryI18nKey = keyof typeof zhCNMessages;
+export type MemoryI18nParams = Record<string, string | number>;
+export type MemoryTranslate = (key: MemoryI18nKey, params?: MemoryI18nParams) => string;
+
+const dictionaries: Record<LanguageCode, Record<MemoryI18nKey, string>> = {
+  "zh-CN": zhCNMessages,
+  "en-US": enUSMessages,
+};
+
+export function createMemoryTranslator(language: LanguageCode): MemoryTranslate {
+  const dictionary = dictionaries[language] || dictionaries["zh-CN"];
+
+  return (key, params) => {
+    const template = dictionary[key] ?? dictionaries["zh-CN"][key] ?? key;
+    if (!params) {
+      return template;
+    }
+
+    return template.replace(/\{([^}]+)\}/g, (token, paramKey: string) => {
+      if (!(paramKey in params)) {
+        return token;
+      }
+      return String(params[paramKey]);
+    });
+  };
+}

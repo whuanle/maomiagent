@@ -1,0 +1,6 @@
+﻿[install]
+registry = "https://registry.npmmirror.com"
+
+# Optional fallback for GitHub Packages if later needed:
+# [install.scopes]
+# "@your-scope" = { url = "https://npm.pkg.github.com", token = "$GITHUB_TOKEN" }

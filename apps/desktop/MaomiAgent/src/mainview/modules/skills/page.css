@@ -1,0 +1,466 @@
+.skills-page {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--skills-page-bg);
+}
+
+.skills-page-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 12px 24px 0;
+  background: transparent;
+}
+
+.skills-page-tabs {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.skills-page-tabs > .ant-tabs-nav {
+  margin: 0;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--app-border-soft);
+}
+
+.skills-page-tabs > .ant-tabs-nav::before {
+  border-bottom-color: transparent;
+}
+
+.skills-page-tabs > .ant-tabs-content-holder,
+.skills-page-tabs > .ant-tabs-content-holder > .ant-tabs-content,
+.skills-page-tabs .ant-tabs-tabpane,
+.skills-page-tabs .ant-tabs-tabpane-active {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.skills-page-tabs .ant-tabs-tabpane-hidden {
+  display: none !important;
+}
+
+.skills-page-tabs .ant-tabs-tabpane {
+  padding-top: 16px;
+}
+
+.skills-page-tab-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.skills-page-tab-badge .ant-badge-count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-surface-subtle) 88%, transparent);
+  color: var(--app-text-secondary);
+  box-shadow: none;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+}
+
+.skills-page-tabs > .ant-tabs-nav .ant-tabs-tab.ant-tabs-tab-active .skills-page-tab-badge .ant-badge-count {
+  background: color-mix(in srgb, var(--app-accent-soft) 78%, transparent);
+  color: var(--app-accent-text);
+}
+
+.skills-page-table-card {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.skills-page-panel {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.skills-page-panel-discovery {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 0;
+  align-items: stretch;
+}
+
+.skills-page-table-card .app-table-card-body {
+  gap: 0;
+}
+
+.skills-page-table-card-discovery {
+  border-inline-start: 0;
+}
+
+.skills-page-table-card .app-table-card-toolbar {
+  align-items: stretch;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--app-border-soft);
+}
+
+.skills-page-table-card-discovery .app-table-card-toolbar {
+  padding-inline-start: 16px;
+}
+
+.skills-page-table-card .app-table-card-viewport {
+  padding-top: 16px;
+}
+
+.skills-page-table-card .ant-table-tbody > tr > td {
+  font-size: var(--app-table-body-font-size);
+  line-height: var(--app-table-line-height);
+}
+
+.skills-page-table-card .ant-table-thead > tr > th {
+  vertical-align: middle;
+}
+
+.skills-page-source-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 0 !important;
+  border-inline-end-color: var(--app-border-soft) !important;
+  background: var(--app-surface) !important;
+  box-shadow: none !important;
+}
+
+.skills-page-source-card .ant-card-head {
+  min-height: 48px;
+  border-bottom-color: var(--app-border-soft);
+}
+
+.skills-page-source-card .ant-card-head-title {
+  color: var(--app-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.skills-page-source-card .ant-card-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  padding: 12px;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.skills-page-source-list {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+}
+
+.skills-page-source-empty {
+  display: flex;
+  flex: 1;
+  min-height: 160px;
+  align-items: center;
+  justify-content: center;
+}
+
+.skills-page-source-footer {
+  padding-top: 4px;
+  border-top: 1px solid var(--app-border-soft);
+}
+
+.skills-source-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--app-border-soft);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--app-surface) 84%, transparent);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.skills-source-item:hover {
+  border-color: color-mix(in srgb, var(--app-accent-soft) 48%, var(--app-border));
+  background: color-mix(in srgb, var(--app-accent-soft) 82%, var(--app-surface));
+}
+
+.skills-source-item.is-active {
+  border-color: color-mix(in srgb, var(--app-accent-border) 62%, var(--app-border));
+  background: color-mix(in srgb, var(--app-accent-soft) 88%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-accent-border) 28%, transparent);
+}
+
+.skills-source-item-head,
+.skills-source-item-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.skills-source-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--app-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.skills-source-item-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-accent-soft) 88%, transparent);
+  color: var(--app-accent-text);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.skills-source-item-meta .ant-typography {
+  font-size: 12px;
+}
+
+.skills-source-item-path {
+  color: var(--app-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.skills-page-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  width: 100%;
+  flex-wrap: wrap;
+}
+
+.skills-page-toolbar-wrap {
+  align-items: flex-start;
+}
+
+.skills-page-search {
+  flex: 0 1 320px;
+  width: 320px;
+  min-width: 220px;
+}
+
+.skills-page-select {
+  flex: 0 0 180px;
+}
+
+.skills-page-toolbar .ant-input,
+.skills-page-toolbar .ant-select-selection-item,
+.skills-page-toolbar .ant-select-selection-placeholder,
+.skills-page-toolbar .ant-btn {
+  font-size: 13px;
+}
+
+.skills-page-toolbar .ant-input-affix-wrapper,
+.skills-page-toolbar .ant-select .ant-select-selector,
+.skills-page-toolbar .ant-btn {
+  min-height: 32px;
+  height: 32px;
+}
+
+.skills-page-toolbar .ant-input-affix-wrapper,
+.skills-page-toolbar .ant-select .ant-select-selector {
+  align-items: center;
+  padding-block: 0;
+  border-color: color-mix(in srgb, var(--app-border) 76%, transparent);
+  background: var(--app-control-bg);
+  box-shadow: none;
+}
+
+.skills-page-toolbar .ant-input-affix-wrapper:hover,
+.skills-page-toolbar .skills-page-select.ant-select:hover .ant-select-selector {
+  border-color: var(--app-border-strong) !important;
+  background: var(--app-control-bg-hover) !important;
+}
+
+.skills-page-toolbar .ant-input-affix-wrapper-focused,
+.skills-page-toolbar .skills-page-select.ant-select-focused .ant-select-selector,
+.skills-page-toolbar .skills-page-select.ant-select-open .ant-select-selector {
+  border-color: var(--app-accent-border) !important;
+  background: var(--app-control-bg-hover) !important;
+  box-shadow: 0 0 0 3px var(--app-focus-ring) !important;
+}
+
+.skills-page-table-card .ant-table-selection-column .ant-checkbox,
+.skills-page-table-card .ant-table-selection-column .ant-checkbox .ant-checkbox-inner,
+.skills-page-table-card .ant-table-selection-column .ant-checkbox-checked .ant-checkbox-inner,
+.skills-page-table-card .ant-table-selection-column .ant-checkbox-indeterminate .ant-checkbox-inner {
+  border-radius: 2px !important;
+}
+
+.skills-page-clamp {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  word-break: break-all;
+}
+
+.skills-page-stack-cell {
+  width: 100%;
+  min-width: 0;
+}
+
+.skills-page-path {
+  word-break: break-all;
+}
+
+.skills-page-inline-tag {
+  margin-inline-end: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-accent-soft) 82%, transparent) !important;
+  color: var(--app-accent-text) !important;
+  font-size: var(--app-table-support-font-size);
+  line-height: 1.5;
+}
+
+.skills-page-status-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.skills-page-row-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.skills-page-inline-action {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0 !important;
+  border-radius: 10px;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--app-text-secondary);
+}
+
+.skills-page-inline-action .anticon {
+  font-size: 16px;
+}
+
+.skills-page-inline-action:hover,
+.skills-page-inline-action:focus-visible {
+  background: color-mix(in srgb, var(--resource-row-hover) 88%, transparent) !important;
+  color: var(--app-text) !important;
+}
+
+.skills-page-action-link {
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding-inline: 0;
+  color: var(--app-accent-solid);
+}
+
+.skills-page-action-link:hover,
+.skills-page-action-link:focus-visible {
+  border: none !important;
+  background: transparent !important;
+  color: var(--app-accent-text) !important;
+  text-decoration: underline;
+}
+
+.skills-page-install-ref {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--app-table-support-font-size);
+  line-height: 1.5;
+}
+
+.skills-page-empty-state {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.skills-page-metrics {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.skills-page-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding-inline: 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-surface-subtle) 72%, transparent);
+}
+
+@media (max-width: 1100px) {
+  .skills-page-main {
+    padding-inline: 16px;
+  }
+
+  .skills-page-panel-discovery {
+    grid-template-columns: 1fr;
+  }
+
+  .skills-page-search,
+  .skills-page-select {
+    flex: 1 1 220px;
+    width: auto;
+  }
+
+  .skills-page-table-card-discovery {
+    border-inline-start: 1px solid var(--app-border-soft);
+  }
+
+  .skills-page-metrics {
+    margin-left: 0;
+  }
+}

@@ -1,0 +1,31 @@
+export {
+  AGENT_MODE_VALUES,
+  AGENT_SOURCE_VALUES,
+} from "../../../../../shared/desktop-agents";
+
+export type {
+  AgentBundleMemberInput,
+  AgentCreateInput,
+  AgentErrorBody,
+  AgentIdentity,
+  AgentItem,
+  AgentMode,
+  AgentModelStrategy,
+  AgentPatchInput,
+  AgentSkillsConfig,
+  AgentSource,
+  AgentSubAgentPolicy,
+  AgentSubAgentPolicyMode,
+  AgentWorkflowConfig,
+  AgentsListQuery,
+  AgentsListResponse,
+  DesktopAgentBundleSaveInput,
+  DesktopAgentBundleSaveResponse,
+  DesktopAgentBundleView,
+  DesktopAgentCreateResponse,
+  DesktopAgentDeleteResponse,
+  OpencodeAgentImportFormat,
+  OpencodeAgentImportInput,
+  OpencodeAgentImportPreview,
+  OpencodeAgentImportResult,
+} from "../../../../../shared/desktop-agents";

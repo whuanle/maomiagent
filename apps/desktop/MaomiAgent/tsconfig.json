@@ -1,0 +1,42 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "baseUrl": ".",
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "paths": {
+      "#maomiagent/ai-application": ["../../../packages/ai-application/src/index.ts"],
+      "#maomiagent/ai-application/*": ["../../../packages/ai-application/src/*"],
+      "#maomiagent/kernel/adapters": ["../../../kernel/src/adapters/index.ts"],
+      "#maomiagent/kernel/adapters/*": ["../../../kernel/src/adapters/*"],
+      "#maomiagent/kernel/host": ["../../../kernel/src/host/index.ts"],
+      "#maomiagent/kernel/host/*": ["../../../kernel/src/host/*"],
+      "#maomiagent/kernel/*": ["../../../kernel/*"],
+      "react": ["./node_modules/@types/react/index.d.ts"],
+      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime.d.ts"],
+      "react/jsx-dev-runtime": ["./node_modules/@types/react/jsx-dev-runtime.d.ts"],
+      "react-dom": ["./node_modules/@types/react-dom/index.d.ts"],
+      "react-dom/client": ["./node_modules/@types/react-dom/client.d.ts"]
+    },
+    "types": ["bun", "vite/client", "react", "react-dom"]
+  },
+  "include": [
+    "src",
+    "scripts",
+    "src/vite-env.d.ts",
+    "electrobun.config.ts",
+    "vite.config.ts"
+  ]
+}

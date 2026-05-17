@@ -1,0 +1,343 @@
+import type { DesktopFeishuPort } from "../../abstraction/ports/desktop-feishu.ports";
+import type { DesktopFeishuActionExecutorPort } from "../../abstraction/ports/desktop-feishu-action-executor.ports";
+import type { DesktopFeishuDocRuntimePort } from "../../abstraction/ports/desktop-feishu-doc-runtime.ports";
+import type {
+  DesktopFeishuStorePort,
+  DesktopFeishuStoreSnapshot,
+} from "../../abstraction/ports/desktop-feishu-store.ports";
+import type {
+  FeishuBotConfigInput,
+  FeishuBotStateView,
+  FeishuDeveloperAuthorizeResult,
+  FeishuDeveloperConfigInput,
+  FeishuDocContentView,
+  FeishuDocMediaPreviewResult,
+  FeishuDocTreeQuery,
+  FeishuDocTreeView,
+  FeishuDocWhiteboardPreviewResult,
+  FeishuDocWorkspacePullResult,
+  FeishuDocWorkspacePushResult,
+  FeishuDocsCapabilitiesView,
+  FeishuPersonalConfigInput,
+  FeishuSmartAssistantActionExecuteResultView,
+  FeishuSmartAssistantExecuteActionInput,
+  FeishuStateView,
+  FeishuWorkspaceDocInput,
+} from "../../../../../shared/desktop-feishu";
+import { hydrateDesktopFeishuStateView } from "./desktop-feishu-state-hydrator";
+
+export class DesktopFeishuService implements DesktopFeishuPort {
+  constructor(
+    private readonly store: DesktopFeishuStorePort,
+    private readonly actionExecutor: DesktopFeishuActionExecutorPort,
+    private readonly docRuntime: DesktopFeishuDocRuntimePort,
+  ) {}
+
+  private hydrateState(state: FeishuStateView): FeishuStateView {
+    return hydrateDesktopFeishuStateView(state);
+  }
+
+  async getState(): Promise<FeishuStateView> {
+    const store = await this.store.read();
+    return this.hydrateState(store.state as FeishuStateView);
+  }
+
+  async savePersonalConfig(input: FeishuPersonalConfigInput): Promise<FeishuStateView> {
+    const payload = input as any;
+    const store = await this.store.read();
+    store.state.mode = "personal";
+    store.state.personalDocs.enabled = true;
+    store.state.personalDocs.serverUrl = payload.serverUrl ?? "";
+    store.state.personalDocs.savedAt = new Date().toISOString();
+    store.state.personalDocs.docsMcp = {
+      mcpId: "desktop.feishu.personal",
+      name: "maomi_feishu_personal_docs",
+      endpoint: payload.serverUrl ?? "",
+      transport: "http-streamable",
+      enabled: true,
+      updatedAt: new Date().toISOString(),
+    };
+    store.state.personal = {
+      serverUrl: payload.serverUrl ?? "",
+      savedAt: new Date().toISOString(),
+      discoveredTools: [],
+    };
+    await this.store.write(store);
+    return this.hydrateState(store.state as FeishuStateView);
+  }
+
+  async clearPersonalConfig(): Promise<FeishuStateView> {
+    const store = await this.store.read();
+    store.state.mode = "none";
+    store.state.personal = null;
+    store.state.personalDocs = {
+      enabled: false,
+      discoveredTools: [],
+      docsMcp: null,
+    };
+    await this.store.write(store);
+    return this.hydrateState(store.state as FeishuStateView);
+  }
+
+  async saveDeveloperConfig(input: FeishuDeveloperConfigInput): Promise<FeishuStateView> {
+    const payload = input as any;
+    const store = await this.store.read();
+    const now = new Date().toISOString();
+    store.state.mode = "developer";
+    store.state.developer = {
+      appId: payload.appId ?? "",
+      hasAppSecret: Boolean(payload.appSecret),
+      redirectUri: payload.redirectUri ?? "http://127.0.0.1/desktop/feishu/oauth/callback",
+      redirectOrigin: "http://127.0.0.1",
+      authStatus: "idle",
+      authMethod: "oauth",
+      hasRefreshToken: false,
+      scopes: [],
+      allowedTools: [],
+      autoRefreshTask: {
+        enabled: false,
+      },
+    };
+    store.state.smartAssistant = {
+      ...store.state.smartAssistant,
+      enabled: true,
+      appId: payload.appId ?? "",
+      hasAppSecret: Boolean(payload.appSecret),
+      redirectUri: payload.redirectUri ?? "http://127.0.0.1/desktop/feishu/oauth/callback",
+      redirectOrigin: "http://127.0.0.1",
+      authStatus: "idle",
+      hasRefreshToken: false,
+      docsMcp: {
+        mcpId: "desktop.feishu.smart-assistant",
+        name: "maomi_feishu_assistant_docs",
+        endpoint: "desktop://feishu-assistant/docs",
+        transport: "http-streamable",
+        enabled: true,
+        updatedAt: now,
+      },
+    };
+    await this.store.write(store);
+    return this.hydrateState(store.state as FeishuStateView);
+  }
+
+  async beginDeveloperAuthorization(
+    input: FeishuDeveloperConfigInput,
+  ): Promise<FeishuDeveloperAuthorizeResult> {
+    const payload = input as any;
+    const store = await this.store.read();
+    if (store.state.developer) {
+      store.state.developer.authStatus = "pending";
+    }
+    store.state.smartAssistant.authStatus = "pending";
+    await this.store.write(store);
+
+    return {
+      item: store.state,
+      authUrl: `https://open.feishu.cn/open-apis/authen/v1/index?app_id=${encodeURIComponent(payload.appId ?? "")}`,
+    } as unknown as FeishuDeveloperAuthorizeResult;
+  }
+
+  async refreshDeveloperToken(): Promise<FeishuStateView> {
+    const store = await this.store.read();
+    const now = new Date().toISOString();
+    if (store.state.developer) {
+      store.state.developer.authStatus = "authorized";
+      store.state.developer.hasRefreshToken = true;
+      store.state.developer.lastRefreshedAt = now;
+    }
+    store.state.smartAssistant.authStatus = "authorized";
+    store.state.smartAssistant.hasRefreshToken = true;
+    store.state.smartAssistant.lastRefreshedAt = now;
+    await this.store.write(store);
+    return this.hydrateState(store.state as FeishuStateView);
+  }
+
+  async clearSmartAssistantConfig(): Promise<FeishuStateView> {
+    const store = await this.store.read();
+    store.state.mode = store.state.personalDocs.enabled ? "personal" : "none";
+    store.state.developer = null;
+    store.state.smartAssistant = {
+      enabled: false,
+      appId: "",
+      hasAppSecret: false,
+      redirectUri: "",
+      redirectOrigin: "",
+      authStatus: "idle",
+      authMethod: "oauth",
+      hasRefreshToken: false,
+      scopes: [],
+      allowedTools: [],
+      autoRefreshTask: {
+        enabled: false,
+      },
+      docsMcp: null,
+      runtimePolicy: {
+        controlPlane: "planned",
+        domainMounting: "lazy_by_domain",
+        actionExecution: "registry_first",
+      },
+      connectionProfiles: [],
+      domainModels: [],
+      contextTemplates: [],
+      policyItems: [],
+      domains: [],
+      actions: [],
+    };
+    await this.store.write(store);
+    return this.hydrateState(store.state as FeishuStateView);
+  }
+
+  async clearConfig(): Promise<FeishuStateView> {
+    const store = await this.store.read();
+    const next: DesktopFeishuStoreSnapshot = {
+      ...store,
+      state: {
+        ...store.state,
+        personalDocs: {
+          enabled: false,
+          discoveredTools: [],
+          docsMcp: null,
+        },
+        smartAssistant: {
+          enabled: false,
+          appId: "",
+          hasAppSecret: false,
+          redirectUri: "",
+          redirectOrigin: "",
+          authStatus: "idle",
+          authMethod: "oauth",
+          hasRefreshToken: false,
+          scopes: [],
+          allowedTools: [],
+          autoRefreshTask: {
+            enabled: false,
+          },
+          docsMcp: null,
+          runtimePolicy: {
+            controlPlane: "planned",
+            domainMounting: "lazy_by_domain",
+            actionExecution: "registry_first",
+          },
+          connectionProfiles: [],
+          domainModels: [],
+          contextTemplates: [],
+          policyItems: [],
+          domains: [],
+          actions: [],
+        },
+        mode: "none",
+        personal: null,
+        developer: null,
+        managedMcp: null,
+      },
+      bot: {
+        ...store.bot,
+        enabled: false,
+        appId: "",
+        hasAppSecret: false,
+        hasVerificationToken: false,
+        hasEncryptKey: false,
+        connectionStatus: "stopped",
+        updatedAt: new Date().toISOString(),
+      },
+    };
+    next.docs = store.docs;
+    await this.store.write(next);
+    return this.hydrateState(next.state as FeishuStateView);
+  }
+
+  async getBotState(): Promise<FeishuBotStateView> {
+    return (await this.store.read()).bot as FeishuBotStateView;
+  }
+
+  async saveBotConfig(input: FeishuBotConfigInput): Promise<FeishuBotStateView> {
+    const payload = input as any;
+    const store = await this.store.read();
+    store.bot.enabled = Boolean(payload.enabled);
+    store.bot.appId = payload.appId ?? "";
+    store.bot.hasAppSecret = Boolean(payload.appSecret);
+    store.bot.hasVerificationToken = Boolean(payload.verificationToken);
+    store.bot.hasEncryptKey = Boolean(payload.encryptKey);
+    store.bot.connectionStatus = payload.enabled ? "ready" : "stopped";
+    store.bot.updatedAt = new Date().toISOString();
+    await this.store.write(store);
+    return store.bot as FeishuBotStateView;
+  }
+
+  async clearBotConfig(): Promise<FeishuBotStateView> {
+    const store = await this.store.read();
+    store.bot = {
+      ...store.bot,
+      enabled: false,
+      appId: "",
+      hasAppSecret: false,
+      hasVerificationToken: false,
+      hasEncryptKey: false,
+      connectionStatus: "stopped",
+      updatedAt: new Date().toISOString(),
+    };
+    await this.store.write(store);
+    return store.bot as FeishuBotStateView;
+  }
+
+  async getDocsCapabilities(): Promise<FeishuDocsCapabilitiesView> {
+    return this.docRuntime.getDocsCapabilities();
+  }
+
+  async getDocTree(input: FeishuDocTreeQuery): Promise<FeishuDocTreeView> {
+    return this.docRuntime.getDocTree(input);
+  }
+
+  async getDocContent(docId: string): Promise<FeishuDocContentView> {
+    return this.docRuntime.getDocContent(docId);
+  }
+
+  async getDocMediaPreviewUrls(input: { fileTokens: string[] }): Promise<FeishuDocMediaPreviewResult> {
+    return this.docRuntime.getDocMediaPreviewUrls(input);
+  }
+
+  async getDocWhiteboardPreviewUrls(input: {
+    whiteboardTokens: string[];
+  }): Promise<FeishuDocWhiteboardPreviewResult> {
+    return this.docRuntime.getDocWhiteboardPreviewUrls(input);
+  }
+
+  async openWorkspaceDoc(input: FeishuWorkspaceDocInput): Promise<FeishuDocContentView> {
+    return this.docRuntime.openWorkspaceDoc(input);
+  }
+
+  async getWorkspaceDocLocalDraft(input: FeishuWorkspaceDocInput): Promise<FeishuDocContentView> {
+    return this.docRuntime.getWorkspaceDocLocalDraft(input);
+  }
+
+  async saveWorkspaceDocLocalDraft(input: {
+    workspaceId: string;
+    docId: string;
+    title: string;
+    markdown?: string;
+    force?: boolean;
+  }): Promise<FeishuDocContentView> {
+    return this.docRuntime.saveWorkspaceDocLocalDraft(input);
+  }
+
+  async pullWorkspaceDoc(input: FeishuWorkspaceDocInput): Promise<FeishuDocWorkspacePullResult> {
+    return this.docRuntime.pullWorkspaceDoc(input);
+  }
+
+  async pushWorkspaceDoc(input: {
+    workspaceId: string;
+    docId: string;
+    title: string;
+    markdown?: string;
+    force?: boolean;
+  }): Promise<FeishuDocWorkspacePushResult> {
+    return this.docRuntime.pushWorkspaceDoc(input);
+  }
+
+  async executeSmartAssistantAction(
+    input: FeishuSmartAssistantExecuteActionInput,
+  ): Promise<FeishuSmartAssistantActionExecuteResultView> {
+    return this.actionExecutor.executeSmartAssistantAction(input);
+  }
+
+}

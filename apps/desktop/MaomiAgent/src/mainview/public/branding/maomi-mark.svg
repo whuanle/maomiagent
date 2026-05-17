@@ -1,0 +1,28 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="maomi-bg" x1="42" y1="28" x2="212" y2="230" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1F1A23" />
+      <stop offset="1" stop-color="#141016" />
+    </linearGradient>
+    <radialGradient id="maomi-glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(72 44) rotate(46.1) scale(106 96)">
+      <stop stop-color="#E28F51" stop-opacity="0.5" />
+      <stop offset="1" stop-color="#E28F51" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+
+  <rect width="256" height="256" rx="56" fill="url(#maomi-bg)" />
+  <circle cx="72" cy="44" r="86" fill="url(#maomi-glow)" />
+  <circle cx="198" cy="204" r="48" fill="#0F7F75" fill-opacity="0.12" />
+
+  <path d="M78 80V52L106 94" stroke="#FBF1DE" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M178 80V52L150 94" stroke="#FBF1DE" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M78 80V154C86 184 113 204 128 204C143 204 170 184 178 154V80" stroke="#FBF1DE" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M94 160C98 176 113 188 128 188C143 188 158 176 162 160" fill="#FBF1DE" />
+  <path d="M92 124C101 115 113 112 126 115C121 126 112 133 98 135" stroke="#FBF1DE" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M164 124C155 115 143 112 130 115C135 126 144 133 158 135" stroke="#FBF1DE" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M122 154L128 148L134 154" stroke="#141016" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M100 162H116" stroke="#141016" stroke-width="7" stroke-linecap="round" />
+  <path d="M140 162H156" stroke="#141016" stroke-width="7" stroke-linecap="round" />
+  <path d="M82 158H106" stroke="#FBF1DE" stroke-width="6" stroke-linecap="round" opacity="0.78" />
+  <path d="M150 158H174" stroke="#FBF1DE" stroke-width="6" stroke-linecap="round" opacity="0.78" />
+</svg>

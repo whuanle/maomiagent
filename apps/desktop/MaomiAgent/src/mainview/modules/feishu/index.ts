@@ -1,0 +1,1 @@
+export { FeishuPage } from "./page";

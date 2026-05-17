@@ -1,0 +1,44 @@
+{
+  "name": "maomiagent-root",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "bun@1.3.9",
+  "scripts": {
+    "clean": "node scripts/clean-workspace.mjs",
+    "clean:all": "node scripts/clean-workspace.mjs --all",
+    "dev": "bun run --cwd apps/desktop/MaomiAgent dev",
+    "dev:reset": "bun run --cwd apps/desktop/MaomiAgent dev",
+    "ui:dev": "bun run --cwd apps/desktop/MaomiAgent web:dev",
+    "build": "bun run --cwd apps/desktop/MaomiAgent build",
+    "desktop:install": "bun install --cwd apps/desktop/MaomiAgent",
+    "desktop:dev": "bun run --cwd apps/desktop/MaomiAgent dev",
+    "desktop:dev:reset": "bun run --cwd apps/desktop/MaomiAgent dev",
+    "desktop:build": "bun run --cwd apps/desktop/MaomiAgent build",
+    "desktop:build:release": "bun run --cwd apps/desktop/MaomiAgent release:build",
+    "work:install": "bun install --cwd apps/desktop/MaomiAgent",
+    "work:dev": "bun run --cwd apps/desktop/MaomiAgent dev",
+    "work:dev:reset": "bun run --cwd apps/desktop/MaomiAgent dev",
+    "work:build": "bun run --cwd apps/desktop/MaomiAgent build",
+    "work:typecheck": "bun run --cwd apps/desktop/MaomiAgent typecheck",
+    "typecheck": "bun run --cwd apps/desktop/MaomiAgent typecheck",
+    "test:external-sdk": "bun test packages/external-sdk/tests/external-sdk.test.ts",
+    "dev:clean-ports": "node scripts/dev-clean-ports.mjs",
+    "verify:no-root-src-refs": "node scripts/verify-no-root-src-refs.mjs",
+    "verify": "bun run verify:no-root-src-refs",
+    "release:build": "bun run desktop:build:release",
+    "release:manifest": "bun run --cwd apps/desktop/MaomiAgent release:manifest",
+    "release:upload": "bun run --cwd apps/desktop/MaomiAgent release:upload",
+    "release:tag": "node scripts/create-github-release-tag.mjs",
+    "release:tag:push": "node scripts/create-github-release-tag.mjs --push",
+    "maomi": "bun run dev",
+    "maomi:dev": "bun run dev",
+    "maomi:web": "bun run ui:dev"
+  },
+  "dependencies": {
+    "@ant-design/x-skill": "^2.4.0",
+    "playwright": "^1.58.2"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}

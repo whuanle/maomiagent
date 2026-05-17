@@ -1,0 +1,198 @@
+.workspace-page {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  background: var(--resource-page-bg);
+}
+
+.workspace-page-surface {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 24px 0;
+  background: transparent;
+}
+
+.workspace-page-toolbar-shell {
+  flex: 0 0 auto;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--app-border-soft);
+}
+
+.workspace-page-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.workspace-page-toolbar .ant-input,
+.workspace-page-toolbar .ant-select-selection-item,
+.workspace-page-toolbar .ant-select-selection-placeholder,
+.workspace-page-toolbar .ant-btn {
+  font-size: 13px;
+}
+
+.workspace-page-toolbar .ant-input-affix-wrapper,
+.workspace-page-toolbar .ant-select .ant-select-selector,
+.workspace-page-toolbar .ant-btn {
+  min-height: 32px;
+  height: 32px;
+}
+
+.workspace-page-toolbar .ant-input-affix-wrapper,
+.workspace-page-toolbar .ant-select .ant-select-selector {
+  align-items: center;
+  padding-block: 0;
+  border-color: var(--app-border);
+  background: var(--app-control-bg);
+  box-shadow: none;
+}
+
+.workspace-page-toolbar .ant-input-affix-wrapper:hover,
+.workspace-page-toolbar .workspace-page-select.ant-select:hover .ant-select-selector {
+  border-color: var(--app-border-strong) !important;
+  background: var(--app-control-bg-hover) !important;
+}
+
+.workspace-page-toolbar .ant-input-affix-wrapper-focused,
+.workspace-page-toolbar .workspace-page-select.ant-select-focused .ant-select-selector,
+.workspace-page-toolbar .workspace-page-select.ant-select-open .ant-select-selector {
+  border-color: var(--app-accent-border) !important;
+  background: var(--app-control-bg-hover) !important;
+  box-shadow: 0 0 0 3px var(--app-focus-ring) !important;
+}
+
+.workspace-page-search {
+  flex: 0 1 360px;
+  width: 360px;
+  min-width: 220px;
+}
+
+.workspace-page-select {
+  flex: 0 0 160px;
+}
+
+.workspace-page-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-inline-start: auto;
+  flex-wrap: wrap;
+}
+
+.workspace-page-table-shell {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding-top: 16px;
+}
+
+.workspace-page-table-card {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.workspace-page-table-card .app-table-card-body {
+  gap: 0;
+}
+
+.workspace-page-name-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.workspace-page-note-text.ant-typography {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--app-text-secondary);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.workspace-page-path-cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: var(--app-table-support-font-size);
+}
+
+.workspace-page-tag.ant-tag,
+.workspace-page-pin-tag.ant-tag {
+  border: 0;
+  border-radius: 999px;
+  background: var(--app-accent-soft);
+  color: var(--app-accent-text);
+}
+
+.workspace-page-pin-tag.ant-tag {
+  background: var(--app-warning-soft);
+  color: var(--app-warning-text);
+}
+
+.workspace-page-action-link {
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding-inline: 0;
+}
+
+.workspace-page-action-link-danger {
+  color: var(--app-danger-solid);
+}
+
+.workspace-page-empty-state {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.workspace-page-modal .ant-modal-content {
+  border: 1px solid var(--app-popup-border);
+  background: var(--app-popup-bg);
+}
+
+.workspace-page-modal .ant-modal-header {
+  background: transparent;
+  border-bottom: 1px solid var(--app-border-soft);
+}
+
+.workspace-page-directory-field .ant-space-compact {
+  width: 100%;
+}
+
+.workspace-page-directory-field .ant-space-compact .ant-btn {
+  min-width: 104px;
+}
+
+@media (max-width: 1100px) {
+  .workspace-page-surface {
+    padding-inline: 16px;
+  }
+
+  .workspace-page-search,
+  .workspace-page-select {
+    flex: 1 1 220px;
+    width: auto;
+  }
+
+  .workspace-page-toolbar-actions {
+    margin-inline-start: 0;
+  }
+}
