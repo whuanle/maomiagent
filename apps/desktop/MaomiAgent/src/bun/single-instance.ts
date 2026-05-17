@@ -1,16 +1,19 @@
-import { createHash } from "node:crypto";
 import {
-  createConnection,
   createServer,
-  type Server,
-  type Socket,
-} from "node:net";
+  type IncomingMessage,
+  type Server as HttpServer,
+  type ServerResponse,
+} from "node:http";
 
-const ACTIVATION_HOST = "127.0.0.1";
-const ACTIVATION_PROTOCOL = "maomiagent.desktop.single-instance.v1";
-const ACTIVATION_TIMEOUT_MS = 1500;
-const INSTANCE_PORT_BASE = 42000;
-const INSTANCE_PORT_SPAN = 12000;
+import {
+  DESKTOP_LOCAL_CONTROL_HOST,
+  DESKTOP_LOCAL_CONTROL_PORT,
+  DESKTOP_LOCAL_CONTROL_PROTOCOL,
+  resolveDesktopLocalControlBaseUrl,
+} from "../shared/desktop-feishu-oauth";
+
+const ACTIVATION_TIMEOUT_MS = 1_500;
+const ACTIVATION_ROUTE_PATH = "/internal/activate";
 
 type ActivationHandler = () => void | Promise<void>;
 type Logger = Pick<typeof console, "log" | "warn" | "error">;
@@ -26,9 +29,31 @@ type ActivationResponse = {
   protocol: string;
 };
 
+export type SingleInstanceHttpRequest = {
+  method: string;
+  url: URL;
+  headers: Record<string, string>;
+  bodyText: string;
+};
+
+export type SingleInstanceHttpResponse = {
+  status: number;
+  headers?: Record<string, string>;
+  body?: string;
+};
+
+export type SingleInstanceHttpRoute = {
+  method: "GET" | "POST";
+  path: string;
+  handler: (
+    request: SingleInstanceHttpRequest,
+  ) => SingleInstanceHttpResponse | Promise<SingleInstanceHttpResponse>;
+};
+
 export type SingleInstanceController = {
   kind: "primary" | "secondary";
   setActivationHandler(handler: ActivationHandler): void;
+  registerHttpRoute(route: SingleInstanceHttpRoute): () => void;
   dispose(): Promise<void>;
 };
 
@@ -42,19 +67,29 @@ export type SingleInstanceOptions = {
 export async function activateExistingInstance(
   options: Pick<SingleInstanceOptions, "appKey" | "port">,
 ): Promise<boolean> {
-  const port = options.port ?? deriveSingleInstancePort(options.appKey);
-  return requestActivation(options.appKey, port);
+  const port = options.port ?? DESKTOP_LOCAL_CONTROL_PORT;
+  const response = await postJson<ActivationResponse>(
+    `${resolveDesktopLocalControlBaseUrl(port)}${ACTIVATION_ROUTE_PATH}`,
+    {
+      action: "activate",
+      appKey: options.appKey,
+      protocol: DESKTOP_LOCAL_CONTROL_PROTOCOL,
+    } satisfies ActivationRequest,
+  );
+
+  return response?.accepted === true
+    && response.protocol === DESKTOP_LOCAL_CONTROL_PROTOCOL;
 }
 
 export async function createSingleInstanceCoordinator(
   options: SingleInstanceOptions,
 ): Promise<SingleInstanceController> {
   const logger = options.logger ?? console;
-  const port = options.port ?? deriveSingleInstancePort(options.appKey);
+  const port = options.port ?? DESKTOP_LOCAL_CONTROL_PORT;
 
   if (await activateExistingInstance({ appKey: options.appKey, port })) {
     logger.log(
-      `Activated existing ${options.appName} instance on ${ACTIVATION_HOST}:${port}.`,
+      `Activated existing ${options.appName} instance on ${DESKTOP_LOCAL_CONTROL_HOST}:${port}.`,
     );
     return createSecondaryController();
   }
@@ -69,25 +104,23 @@ export async function createSingleInstanceCoordinator(
 
   if (await activateExistingInstance({ appKey: options.appKey, port })) {
     logger.log(
-      `Activated existing ${options.appName} instance on ${ACTIVATION_HOST}:${port}.`,
+      `Activated existing ${options.appName} instance on ${DESKTOP_LOCAL_CONTROL_HOST}:${port}.`,
     );
     return createSecondaryController();
   }
 
   throw new Error(
-    `${options.appName} could not establish a single-instance activation channel on ${ACTIVATION_HOST}:${port}.`,
+    `${options.appName} could not establish a single-instance activation channel on ${DESKTOP_LOCAL_CONTROL_HOST}:${port}.`,
   );
-}
-
-function deriveSingleInstancePort(appKey: string): number {
-  const hash = createHash("sha256").update(appKey).digest();
-  return INSTANCE_PORT_BASE + (hash.readUInt16BE(0) % INSTANCE_PORT_SPAN);
 }
 
 function createSecondaryController(): SingleInstanceController {
   return {
     kind: "secondary",
     setActivationHandler() {},
+    registerHttpRoute() {
+      return () => {};
+    },
     async dispose() {},
   };
 }
@@ -97,6 +130,7 @@ async function createPrimaryController(
 ): Promise<SingleInstanceController> {
   let activationHandler: ActivationHandler | null = null;
   let pendingActivation = false;
+  const routes = new Map<string, SingleInstanceHttpRoute["handler"]>();
 
   const activate = async () => {
     if (!activationHandler) {
@@ -114,8 +148,26 @@ async function createPrimaryController(
     }
   };
 
-  const server = createServer((socket) => {
-    void handleActivationSocket(socket, options.appKey, activate);
+  const server = createServer(async (request, response) => {
+    try {
+      await handleControlPlaneRequest({
+        request,
+        response,
+        appKey: options.appKey,
+        activate,
+        routes,
+      });
+    } catch {
+      if (response.headersSent) {
+        response.end();
+        return;
+      }
+
+      response.writeHead(500, {
+        "content-type": "text/plain; charset=utf-8",
+      });
+      response.end("internal error");
+    }
   });
 
   await listenOnPort(server, options.port);
@@ -135,168 +187,204 @@ async function createPrimaryController(
       pendingActivation = false;
       void activate();
     },
+    registerHttpRoute(route) {
+      const key = buildRouteKey(route.method, route.path);
+      routes.set(key, route.handler);
+      return () => {
+        routes.delete(key);
+      };
+    },
     async dispose() {
       if (disposed) {
         return;
       }
 
       disposed = true;
+      routes.clear();
       await closeServer(server);
     },
   };
 }
 
-async function handleActivationSocket(
-  socket: Socket,
+async function handleControlPlaneRequest(input: {
+  request: IncomingMessage;
+  response: ServerResponse<IncomingMessage>;
+  appKey: string;
+  activate: ActivationHandler;
+  routes: Map<string, SingleInstanceHttpRoute["handler"]>;
+}): Promise<void> {
+  const method = normalizeHttpMethod(input.request.method);
+  const url = new URL(
+    input.request.url ?? "/",
+    `${resolveDesktopLocalControlBaseUrl()}${input.request.url?.startsWith("/") ? "" : "/"}`,
+  );
+  const requestPayload = await toSingleInstanceHttpRequest(input.request, url, method);
+
+  if (method === "POST" && url.pathname === ACTIVATION_ROUTE_PATH) {
+    const activationResponse = await handleActivationRequest(
+      requestPayload,
+      input.appKey,
+      input.activate,
+    );
+    writeHttpResponse(input.response, activationResponse);
+    return;
+  }
+
+  const route = input.routes.get(buildRouteKey(method, url.pathname));
+  if (!route) {
+    writeHttpResponse(input.response, {
+      status: 404,
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+      },
+      body: "not found",
+    });
+    return;
+  }
+
+  const routeResponse = await route(requestPayload);
+  writeHttpResponse(input.response, routeResponse);
+}
+
+async function handleActivationRequest(
+  request: SingleInstanceHttpRequest,
   appKey: string,
   activate: ActivationHandler,
-): Promise<void> {
-  socket.setEncoding("utf8");
-
-  let settled = false;
-  let buffer = "";
-
-  const finish = (accepted: boolean) => {
-    if (settled) {
-      return;
-    }
-
-    settled = true;
-    const response: ActivationResponse = {
-      accepted,
-      protocol: ACTIVATION_PROTOCOL,
+): Promise<SingleInstanceHttpResponse> {
+  const activationRequest = parseActivationRequest(request.bodyText);
+  if (!activationRequest || activationRequest.appKey !== appKey) {
+    return {
+      status: 200,
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify({
+        accepted: false,
+        protocol: DESKTOP_LOCAL_CONTROL_PROTOCOL,
+      } satisfies ActivationResponse),
     };
-    socket.end(`${JSON.stringify(response)}\n`);
+  }
+
+  await activate();
+
+  return {
+    status: 200,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+    },
+    body: JSON.stringify({
+      accepted: true,
+      protocol: DESKTOP_LOCAL_CONTROL_PROTOCOL,
+    } satisfies ActivationResponse),
   };
-
-  socket.on("data", (chunk) => {
-    if (settled) {
-      return;
-    }
-
-    buffer += chunk;
-    const lineBreakIndex = buffer.indexOf("\n");
-    if (lineBreakIndex === -1) {
-      return;
-    }
-
-    const line = buffer.slice(0, lineBreakIndex);
-    void respond(line);
-  });
-
-  socket.on("error", () => {
-    if (!settled) {
-      socket.destroy();
-    }
-  });
-
-  async function respond(line: string) {
-    const request = parseActivationRequest(line);
-    if (!request || request.appKey !== appKey) {
-      finish(false);
-      return;
-    }
-
-    await activate();
-    finish(true);
-  }
 }
 
-async function requestActivation(appKey: string, port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    let settled = false;
-    let buffer = "";
-
-    const socket = createConnection({ host: ACTIVATION_HOST, port });
-    socket.setEncoding("utf8");
-
-    const timeout = setTimeout(() => {
-      finish(false);
-    }, ACTIVATION_TIMEOUT_MS);
-
-    const finish = (accepted: boolean) => {
-      if (settled) {
-        return;
-      }
-
-      settled = true;
-      clearTimeout(timeout);
-      socket.destroy();
-      resolve(accepted);
-    };
-
-    socket.on("connect", () => {
-      const request: ActivationRequest = {
-        action: "activate",
-        appKey,
-        protocol: ACTIVATION_PROTOCOL,
-      };
-
-      socket.write(`${JSON.stringify(request)}\n`);
-    });
-
-    socket.on("data", (chunk) => {
-      buffer += chunk;
-      const lineBreakIndex = buffer.indexOf("\n");
-      if (lineBreakIndex === -1) {
-        return;
-      }
-
-      const response = parseActivationResponse(buffer.slice(0, lineBreakIndex));
-      finish(response?.accepted === true);
-    });
-
-    socket.on("error", () => {
-      finish(false);
-    });
-
-    socket.on("close", () => {
-      finish(false);
-    });
-  });
-}
-
-function parseActivationRequest(line: string): ActivationRequest | null {
+function parseActivationRequest(value: string): ActivationRequest | null {
   try {
-    const request = JSON.parse(line) as Partial<ActivationRequest>;
+    const parsed = JSON.parse(value) as Partial<ActivationRequest>;
     if (
-      request.action !== "activate" ||
-      request.protocol !== ACTIVATION_PROTOCOL ||
-      typeof request.appKey !== "string"
+      parsed.action !== "activate"
+      || parsed.protocol !== DESKTOP_LOCAL_CONTROL_PROTOCOL
+      || typeof parsed.appKey !== "string"
     ) {
       return null;
     }
 
     return {
-      action: request.action,
-      appKey: request.appKey,
-      protocol: request.protocol,
+      action: parsed.action,
+      appKey: parsed.appKey,
+      protocol: parsed.protocol,
     };
   } catch {
     return null;
   }
 }
 
-function parseActivationResponse(line: string): ActivationResponse | null {
+function normalizeHttpMethod(value?: string | null): string {
+  return (value ?? "GET").toUpperCase();
+}
+
+function buildRouteKey(method: string, path: string): string {
+  return `${method.toUpperCase()} ${path}`;
+}
+
+async function toSingleInstanceHttpRequest(
+  request: IncomingMessage,
+  url: URL,
+  method: string,
+): Promise<SingleInstanceHttpRequest> {
+  return {
+    method,
+    url,
+    headers: normalizeHeaders(request.headers),
+    bodyText: await readRequestBody(request),
+  };
+}
+
+function normalizeHeaders(
+  headers: IncomingMessage["headers"],
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers)
+      .map(([name, value]) => [
+        name,
+        Array.isArray(value) ? value.join(", ") : (value ?? ""),
+      ])
+      .filter(([, value]) => value.length > 0),
+  );
+}
+
+async function readRequestBody(request: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+
+  for await (const chunk of request) {
+    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+  }
+
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+function writeHttpResponse(
+  response: ServerResponse<IncomingMessage>,
+  payload: SingleInstanceHttpResponse,
+): void {
+  response.writeHead(payload.status, payload.headers ?? {});
+  response.end(payload.body ?? "");
+}
+
+async function postJson<TResponse>(
+  url: string,
+  payload: Record<string, unknown>,
+): Promise<TResponse | null> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, ACTIVATION_TIMEOUT_MS);
+
   try {
-    const response = JSON.parse(line) as Partial<ActivationResponse>;
-    if (
-      response.protocol !== ACTIVATION_PROTOCOL ||
-      typeof response.accepted !== "boolean"
-    ) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!contentType.toLowerCase().includes("application/json")) {
       return null;
     }
 
-    return {
-      accepted: response.accepted,
-      protocol: response.protocol,
-    };
+    return await response.json() as TResponse;
   } catch {
     return null;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
-async function listenOnPort(server: Server, port: number): Promise<void> {
+async function listenOnPort(server: HttpServer, port: number): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const handleError = (error: Error) => {
       server.off("listening", handleListening);
@@ -310,11 +398,11 @@ async function listenOnPort(server: Server, port: number): Promise<void> {
 
     server.once("error", handleError);
     server.once("listening", handleListening);
-    server.listen(port, ACTIVATION_HOST);
+    server.listen(port, DESKTOP_LOCAL_CONTROL_HOST);
   });
 }
 
-async function closeServer(server: Server): Promise<void> {
+async function closeServer(server: HttpServer): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     server.close((error) => {
       if (error) {

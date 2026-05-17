@@ -72,6 +72,7 @@ function DirectSessionMessageListInner(props: Props) {
     const optimisticAssistantKey = props.sending && groupsToRender.length > displayGroups.length
       ? groupsToRender[groupsToRender.length - 1]?.key
       : undefined;
+    const currentSessionId = props.sessionId;
     const previewWindowCard = props.previewWindow ? (
       <div
         className="chat-direct-checkpoint-card chat-direct-preview-window-card"
@@ -87,12 +88,12 @@ function DirectSessionMessageListInner(props: Props) {
               : `已收起 ${props.previewWindow.hiddenMessageCount} 条较早消息`}
           </div>
         </div>
-        {props.sessionId && props.onLoadFullSessionDetail ? (
+        {currentSessionId && props.onLoadFullSessionDetail ? (
           <button
             type="button"
             className="chat-direct-preview-window-action"
             onClick={() => {
-              void props.onLoadFullSessionDetail?.(props.sessionId);
+              void props.onLoadFullSessionDetail?.(currentSessionId);
             }}
             disabled={props.detailLoading}
           >

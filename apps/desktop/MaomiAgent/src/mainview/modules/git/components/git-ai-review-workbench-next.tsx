@@ -548,7 +548,7 @@ function parseAiReviewFindings(input: {
   status: DesktopGitChangeStatus;
   additions: number;
   deletions: number;
-}) {
+}): GitAiReviewFinding[] {
   const payload = extractJsonPayload(input.content);
   const parsed = JSON.parse(payload) as unknown;
   const items = Array.isArray(parsed)
@@ -557,43 +557,44 @@ function parseAiReviewFindings(input: {
       ? (parsed as { findings: unknown[] }).findings
       : []);
 
-  return items
-    .slice(0, MAX_AI_REVIEW_FINDINGS_PER_FILE)
-    .map((item, index) => {
-      if (!item || typeof item !== "object") {
-        return null;
-      }
+  const findings: GitAiReviewFinding[] = [];
 
-      const raw = item as Record<string, unknown>;
-      const title = normalizeOptionalText(raw.title)
-        ?? (input.language === "en-US" ? "Potential issue in reviewed code" : "审查中发现潜在问题");
-      const summary = normalizeOptionalText(raw.summary)
-        ?? (input.language === "en-US" ? "The review found a concrete risk in this file." : "审查识别到该文件中存在明确风险。");
-      const suggestion = normalizeOptionalText(raw.suggestion)
-        ?? (input.language === "en-US" ? "Re-check the changed logic and confirm the intended behavior." : "重新检查相关变更逻辑，并确认目标行为。" );
-      const severity = normalizeAiReviewSeverity(raw.severity) ?? "medium";
-      const category = normalizeAiReviewCategory(raw.category) ?? "quality";
-      const evidence = normalizeOptionalText(raw.evidence);
-      const lineNumber = typeof raw.lineNumber === "number" && Number.isFinite(raw.lineNumber)
-        ? Math.max(1, Math.floor(raw.lineNumber))
-        : undefined;
+  for (const [index, item] of items.slice(0, MAX_AI_REVIEW_FINDINGS_PER_FILE).entries()) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
 
-      return {
-        id: buildFindingId(input.path, `ai-${index + 1}`),
-        path: input.path,
-        title,
-        summary,
-        suggestion,
-        severity,
-        category,
-        status: input.status,
-        lineNumber,
-        evidence,
-        additions: input.additions,
-        deletions: input.deletions,
-      } satisfies GitAiReviewFinding;
-    })
-    .filter((item): item is GitAiReviewFinding => item !== null);
+    const raw = item as Record<string, unknown>;
+    const title = normalizeOptionalText(raw.title)
+      ?? (input.language === "en-US" ? "Potential issue in reviewed code" : "审查中发现潜在问题");
+    const summary = normalizeOptionalText(raw.summary)
+      ?? (input.language === "en-US" ? "The review found a concrete risk in this file." : "审查识别到该文件中存在明确风险。");
+    const suggestion = normalizeOptionalText(raw.suggestion)
+      ?? (input.language === "en-US" ? "Re-check the changed logic and confirm the intended behavior." : "重新检查相关变更逻辑，并确认目标行为。" );
+    const severity = normalizeAiReviewSeverity(raw.severity) ?? "medium";
+    const category = normalizeAiReviewCategory(raw.category) ?? "quality";
+    const evidence = normalizeOptionalText(raw.evidence);
+    const lineNumber = typeof raw.lineNumber === "number" && Number.isFinite(raw.lineNumber)
+      ? Math.max(1, Math.floor(raw.lineNumber))
+      : undefined;
+
+    findings.push({
+      id: buildFindingId(input.path, `ai-${index + 1}`),
+      path: input.path,
+      title,
+      summary,
+      suggestion,
+      severity,
+      category,
+      status: input.status,
+      lineNumber,
+      evidence,
+      additions: input.additions,
+      deletions: input.deletions,
+    });
+  }
+
+  return findings;
 }
 
 async function resolveReviewModelSelection(workspaceId: string): Promise<ReviewModelSelection> {

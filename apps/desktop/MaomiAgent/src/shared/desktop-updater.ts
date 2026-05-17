@@ -4,6 +4,9 @@ export type DesktopAppUpdateAsset = {
   packageFormat: string;
   fileName: string;
   fileSize: number;
+  os?: string;
+  arch?: string;
+  fileHash?: string;
 };
 
 export type DesktopAppUpdateCheckResult = {

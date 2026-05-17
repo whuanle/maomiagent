@@ -9,6 +9,7 @@ import type {
   FeishuBotStateView,
   FeishuStateView,
 } from "../../../shared/desktop-feishu"
+import { normalizeDesktopFeishuRedirectUri } from "../../../shared/desktop-feishu-oauth"
 import type { DesktopWorkspaceItem as WorkspaceItem } from "../../../shared/desktop-workspace"
 import type { FeishuTranslate as Translate } from "./types"
 import {
@@ -66,8 +67,12 @@ function resolveAssistantAppId(state: FeishuStateView | null): string {
   return state?.smartAssistant.appId ?? state?.developer?.appId ?? ""
 }
 
-function resolveAssistantRedirectUri(state: FeishuStateView | null): string {
-  return state?.smartAssistant.redirectUri ?? state?.developer?.redirectUri ?? ""
+function resolveAssistantHasSavedSecret(state: FeishuStateView | null): boolean {
+  return Boolean(state?.smartAssistant.hasAppSecret || state?.developer?.hasAppSecret)
+}
+
+function resolveAssistantRedirectUri(_state: FeishuStateView | null): string {
+  return normalizeDesktopFeishuRedirectUri()
 }
 
 export function FeishuPage(props: Props) {
@@ -320,7 +325,7 @@ export function FeishuPage(props: Props) {
       notifier.error("请先填写飞书智能助手应用 App ID")
       return
     }
-    if (!state?.smartAssistant.hasAppSecret && !assistantAppSecret.trim()) {
+    if (!resolveAssistantHasSavedSecret(state) && !assistantAppSecret.trim()) {
       notifier.error("请先填写飞书智能助手应用 App Secret")
       return
     }
@@ -347,7 +352,7 @@ export function FeishuPage(props: Props) {
     assistantAppId,
     assistantAppSecret,
     props.t,
-    state?.smartAssistant.hasAppSecret,
+    state,
   ])
 
   const handleAuthorizeAssistant = useCallback(async () => {
@@ -356,7 +361,7 @@ export function FeishuPage(props: Props) {
     }
 
     const savedAssistant = state?.smartAssistant
-    if (!savedAssistant?.appId || !savedAssistant.hasAppSecret) {
+    if (!savedAssistant?.appId || !resolveAssistantHasSavedSecret(state)) {
       notifier.error("请先保存飞书智能助手配置，再发起 OAuth")
       return
     }
@@ -371,7 +376,6 @@ export function FeishuPage(props: Props) {
       setAuthorizing(true)
       const result = await beginFeishuDeveloperAuthorization(baseUrl, {
         appId: savedAssistant.appId,
-        redirectUri: savedAssistant.redirectUri,
       })
       setState(result.item)
 
@@ -389,7 +393,7 @@ export function FeishuPage(props: Props) {
     } finally {
       setAuthorizing(false)
     }
-  }, [baseUrl, props.t, state?.smartAssistant])
+  }, [baseUrl, props.t, state])
 
   const handleRefreshAssistantToken = useCallback(async () => {
     if (!baseUrl) {
@@ -562,6 +566,7 @@ export function FeishuPage(props: Props) {
           loadError={loadError}
           assistantAppId={assistantAppId}
           assistantAppSecret={assistantAppSecret}
+          assistantHasSavedSecret={resolveAssistantHasSavedSecret(state)}
           assistantRedirectUri={assistantRedirectUri}
           saving={savingAssistant}
           authorizing={authorizing}

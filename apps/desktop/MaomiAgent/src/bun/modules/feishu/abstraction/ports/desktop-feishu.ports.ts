@@ -11,6 +11,8 @@ import type {
   FeishuDocWorkspacePullResult,
   FeishuDocWorkspacePushResult,
   FeishuDocsCapabilitiesView,
+  FeishuOAuthCallbackInput,
+  FeishuOAuthCallbackResult,
   FeishuSmartAssistantActionExecuteResultView,
   FeishuSmartAssistantExecuteActionInput,
   FeishuStateView,
@@ -35,6 +37,7 @@ export interface DesktopFeishuCommandPort {
   beginDeveloperAuthorization(
     input: FeishuDeveloperConfigInput,
   ): Promise<FeishuDeveloperAuthorizeResult>;
+  handleOAuthCallback(input: FeishuOAuthCallbackInput): Promise<FeishuOAuthCallbackResult>;
   refreshDeveloperToken(): Promise<FeishuStateView>;
   clearSmartAssistantConfig(): Promise<FeishuStateView>;
   clearConfig(): Promise<FeishuStateView>;

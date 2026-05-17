@@ -387,10 +387,22 @@ async function computeFileDigests(filePath: string): Promise<{ md5: string; sha2
   const file = Bun.file(filePath);
   const md5 = createHash("md5");
   const sha256 = createHash("sha256");
+  const reader = file.stream().getReader();
 
-  for await (const chunk of file.stream()) {
-    md5.update(chunk);
-    sha256.update(chunk);
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+
+      if (value) {
+        md5.update(value);
+        sha256.update(value);
+      }
+    }
+  } finally {
+    reader.releaseLock();
   }
 
   return {

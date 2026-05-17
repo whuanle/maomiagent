@@ -194,6 +194,9 @@ function createRuntimeContext(input: {
     singleInstance: {
       kind: "primary",
       setActivationHandler() {},
+      registerHttpRoute() {
+        return () => {};
+      },
       async dispose() {},
     },
     logger: {

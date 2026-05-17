@@ -28,6 +28,93 @@ type Props = {
   onSave: () => void;
 };
 
+type ContentProps = Pick<
+  Props,
+  "editingUnit" | "form" | "t" | "workspaceOptions" | "onFormChange"
+>;
+
+export function MemoryEditorDialogContent(props: ContentProps) {
+  const {
+    editingUnit,
+    form,
+    t,
+    workspaceOptions,
+    onFormChange,
+  } = props;
+
+  const fieldWorkspaceOptions = form.workspaceId && !workspaceOptions.some((item) => item.value === form.workspaceId)
+    ? [{ label: form.workspaceId, value: form.workspaceId }, ...workspaceOptions]
+    : workspaceOptions;
+
+  return (
+    <div className="memory-page-modal-form">
+      <div className="memory-page-form-grid memory-page-form-grid-compact">
+        <label className="memory-page-field">
+          <span>{t("记忆页.字段.kind")}</span>
+          <Select
+            value={form.kind}
+            options={memoryKindOptions}
+            onChange={(value) => onFormChange((prev) => ({ ...prev, kind: value as MemoryKind }))}
+          />
+        </label>
+
+        <label className="memory-page-field">
+          <span>{t("记忆页.字段.scope")}</span>
+          <Select
+            disabled={!!editingUnit}
+            value={form.scope}
+            options={[
+              { label: t("记忆页.值.scope.全局"), value: "global" },
+              { label: t("记忆页.值.scope.工作区"), value: "workspace" },
+            ]}
+            onChange={(value) => onFormChange((prev) => ({
+              ...prev,
+              scope: value as "global" | "workspace",
+              workspaceId: value === "workspace" ? prev.workspaceId : "",
+            }))}
+          />
+        </label>
+      </div>
+
+      {form.scope === "workspace" ? (
+        <label className="memory-page-field">
+          <span>{t("记忆页.字段.workspaceId")}</span>
+          <Select
+            className="memory-page-workspace-select"
+            showSearch
+            optionFilterProp="label"
+            value={form.workspaceId || undefined}
+            options={fieldWorkspaceOptions}
+            placeholder={t("记忆页.输入.workspaceId占位")}
+            disabled={!!editingUnit}
+            onChange={(value) => onFormChange((prev) => ({
+              ...prev,
+              workspaceId: typeof value === "string" ? value : "",
+            }))}
+          />
+        </label>
+      ) : null}
+
+      <label className="memory-page-field">
+        <span>{t("记忆页.字段.summary")}</span>
+        <Input
+          value={form.summary}
+          onChange={(event) => onFormChange((prev) => ({ ...prev, summary: event.target.value }))}
+        />
+      </label>
+
+      <label className="memory-page-field">
+        <span>{t("记忆页.字段.content")}</span>
+        <TextArea
+          rows={8}
+          value={form.rawContent}
+          onChange={(event) => onFormChange((prev) => ({ ...prev, rawContent: event.target.value }))}
+        />
+      </label>
+    </div>
+  );
+}
+
 export function MemoryEditorDialog(props: Props) {
   const {
     editingUnit,
@@ -40,10 +127,6 @@ export function MemoryEditorDialog(props: Props) {
     onFormChange,
     onSave,
   } = props;
-
-  const fieldWorkspaceOptions = form.workspaceId && !workspaceOptions.some((item) => item.value === form.workspaceId)
-    ? [{ label: form.workspaceId, value: form.workspaceId }, ...workspaceOptions]
-    : workspaceOptions;
 
   return (
     <Modal
@@ -61,71 +144,13 @@ export function MemoryEditorDialog(props: Props) {
       onCancel={() => onClose(false)}
       onOk={onSave}
     >
-      <div className="memory-page-modal-form">
-        <div className="memory-page-form-grid memory-page-form-grid-compact">
-          <label className="memory-page-field">
-            <span>{t("记忆页.字段.kind")}</span>
-            <Select
-              value={form.kind}
-              options={memoryKindOptions}
-              onChange={(value) => onFormChange((prev) => ({ ...prev, kind: value as MemoryKind }))}
-            />
-          </label>
-
-          <label className="memory-page-field">
-            <span>{t("记忆页.字段.scope")}</span>
-            <Select
-              disabled={!!editingUnit}
-              value={form.scope}
-              options={[
-                { label: t("记忆页.值.scope.全局"), value: "global" },
-                { label: t("记忆页.值.scope.工作区"), value: "workspace" },
-              ]}
-              onChange={(value) => onFormChange((prev) => ({
-                ...prev,
-                scope: value as "global" | "workspace",
-                workspaceId: value === "workspace" ? prev.workspaceId : "",
-              }))}
-            />
-          </label>
-        </div>
-
-        {form.scope === "workspace" ? (
-          <label className="memory-page-field">
-            <span>{t("记忆页.字段.workspaceId")}</span>
-            <Select
-              className="memory-page-workspace-select"
-              showSearch
-              optionFilterProp="label"
-              value={form.workspaceId || undefined}
-              options={fieldWorkspaceOptions}
-              placeholder={t("记忆页.输入.workspaceId占位")}
-              disabled={!!editingUnit}
-              onChange={(value) => onFormChange((prev) => ({
-                ...prev,
-                workspaceId: typeof value === "string" ? value : "",
-              }))}
-            />
-          </label>
-        ) : null}
-
-        <label className="memory-page-field">
-          <span>{t("记忆页.字段.summary")}</span>
-          <Input
-            value={form.summary}
-            onChange={(event) => onFormChange((prev) => ({ ...prev, summary: event.target.value }))}
-          />
-        </label>
-
-        <label className="memory-page-field">
-          <span>{t("记忆页.字段.content")}</span>
-          <TextArea
-            rows={8}
-            value={form.rawContent}
-            onChange={(event) => onFormChange((prev) => ({ ...prev, rawContent: event.target.value }))}
-          />
-        </label>
-      </div>
+      <MemoryEditorDialogContent
+        editingUnit={editingUnit}
+        form={form}
+        t={t}
+        workspaceOptions={workspaceOptions}
+        onFormChange={onFormChange}
+      />
     </Modal>
   );
 }

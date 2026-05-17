@@ -3,8 +3,10 @@ import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { normalizeText } from "./release-common";
-import { resolveReleaseEndpoints } from "./release-endpoints";
+import {
+  DEFAULT_DESKTOP_APP_UPDATE_PUBLIC_BASE_URL,
+  normalizeDesktopAppUpdatePublicBaseUrl,
+} from "../src/bun/desktop-app-update/config";
 
 const APP_NAME = "MaomiAgent";
 const APP_IDENTIFIER = "com.maomiagent.desktop";
@@ -15,8 +17,7 @@ const artifactFolder = process.env.MAOMI_DESKTOP_ARTIFACT_FOLDER?.trim() || "art
 const buildMode = process.env.MAOMI_DESKTOP_BUILD_MODE?.trim() === "release" ? "release" : "dev";
 const releaseChannel = process.env.MAOMI_RELEASE_CHANNEL?.trim() || "stable";
 const releaseBaseUrl = process.env.MAOMI_DESKTOP_UPDATE_BASE_URL?.trim() || "";
-const releaseEndpoints = buildMode === "release" ? resolveReleaseEndpoints() : undefined;
-const explicitPublicSoftwareBaseUrl = normalizeOptionalUrl(process.env.MAOMI_DESKTOP_PUBLIC_SOFTWARE_BASE_URL);
+const packagedPublicSoftwareBaseUrl = resolvePackagedPublicSoftwareBaseUrl();
 const ELECTROBUN_PACKAGE_ROOT = resolveElectrobunPackageRoot();
 const ELECTROBUN_WINDOWS_DIST = join(ELECTROBUN_PACKAGE_ROOT, "dist-win-x64");
 const ELECTROBUN_SHARED_DIST = join(ELECTROBUN_PACKAGE_ROOT, "dist");
@@ -67,7 +68,7 @@ async function prepareWindowsBundle(): Promise<string> {
     appVersion: APP_VERSION,
     channel: "dev",
     baseUrl: "",
-    publicSoftwareBaseUrl: explicitPublicSoftwareBaseUrl,
+    publicSoftwareBaseUrl: packagedPublicSoftwareBaseUrl,
   });
 
   return bundleRoot;
@@ -85,7 +86,7 @@ async function prepareWindowsReleaseArtifacts(): Promise<{ artifactDirectory: st
     appVersion: APP_VERSION,
     channel: releaseChannel,
     baseUrl: releaseBaseUrl,
-    publicSoftwareBaseUrl: releaseEndpoints?.publicBaseUrl,
+    publicSoftwareBaseUrl: packagedPublicSoftwareBaseUrl,
   });
 
   const tarPath = join(projectRoot, buildFolder, WINDOWS_RELEASE_ENVIRONMENT, `${WINDOWS_RELEASE_APP_NAME}.tar`);
@@ -200,9 +201,12 @@ async function prepareWindowsBundleAt(input: {
   );
 }
 
-function normalizeOptionalUrl(value: string | undefined): string | undefined {
-  const normalized = normalizeText(value).replace(/\/+$/u, "");
-  return normalized || undefined;
+function resolvePackagedPublicSoftwareBaseUrl(): string {
+  if (Object.prototype.hasOwnProperty.call(process.env, "MAOMI_DESKTOP_PUBLIC_SOFTWARE_BASE_URL")) {
+    return normalizeDesktopAppUpdatePublicBaseUrl(process.env.MAOMI_DESKTOP_PUBLIC_SOFTWARE_BASE_URL);
+  }
+
+  return DEFAULT_DESKTOP_APP_UPDATE_PUBLIC_BASE_URL;
 }
 
 function resolveElectrobunPackageRoot(): string {

@@ -39,7 +39,7 @@ export function MemoryDetailDialogContent(props: ContentProps) {
     : t("记忆页.值.scope.工作区");
   const workspaceLabel = selectedUnit.scope === "workspace"
     ? (selectedUnit.workspaceId || t("记忆页.值.未设置"))
-    : t("记忆页.值.全局记忆");
+    : t("记忆页.值.scope.全局");
 
   return (
     <div className="memory-page-detail-shell">

@@ -243,8 +243,12 @@ function canMergeAdjacentMessageParts(
 
 function mergeAdjacentMessageParts(
   persisted: Extract<MessagePart, { type: "text" | "reasoning" }>,
-  incoming: Extract<MessagePart, { type: "text" | "reasoning" }>,
+  incoming: MessagePart,
 ): Extract<MessagePart, { type: "text" | "reasoning" }> {
+  if (incoming.type !== persisted.type) {
+    return persisted
+  }
+
   return {
     ...persisted,
     text: `${persisted.text}${incoming.text}`,

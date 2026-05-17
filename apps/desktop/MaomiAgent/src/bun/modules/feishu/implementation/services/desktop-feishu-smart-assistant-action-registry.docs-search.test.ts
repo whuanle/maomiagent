@@ -125,6 +125,9 @@ function createStoreSnapshot(): DesktopFeishuStoreSnapshot {
         markdown: "# 无关记录\n\n这里没有命中关键字。",
       }),
     },
+    auth: {
+      smartAssistant: {},
+    },
   };
 }
 

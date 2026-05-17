@@ -35,6 +35,7 @@ type Props = {
   searchQuery: string;
   searchTopK: string;
   statusFilter: "all" | MemoryStatus;
+  tierFilter?: string;
   t: MemoryTranslate;
   onActiveEntryChange: (value: "records" | "understand" | "organize") => void;
   onCreate: () => void;
@@ -48,6 +49,7 @@ type Props = {
   onSearchTopKChange: (value: string) => void;
   onScopeFilterChange: (value: MemoryScopeFilter) => void;
   onStatusFilterChange: (value: "all" | MemoryStatus) => void;
+  onTierFilterChange?: (value: string) => void;
   onWorkspaceIdInputChange: (value: string) => void;
 };
 

@@ -75,18 +75,21 @@ export interface SessionHostPort {
     sessionId: SessionRecord["id"]
     runId: RunRecord["id"]
     execution?: SessionHostExecutionContext
+    signal?: AbortSignal
   }): Promise<RunBoundary>
 
   startRun(input: {
     sessionId: SessionRecord["id"]
     runId: RunRecord["id"]
     execution?: SessionHostExecutionContext
+    signal?: AbortSignal
   }): Promise<RunBoundary>
 
   resumeRun(input: {
     sessionId: SessionRecord["id"]
     runId: RunRecord["id"]
     execution?: SessionHostExecutionContext
+    signal?: AbortSignal
   }): Promise<RunBoundary>
 }
 

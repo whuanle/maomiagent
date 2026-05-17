@@ -19,6 +19,7 @@ import type {
   DesktopGitHistoryResult,
   DesktopGitModuleSnapshotResult,
   DesktopGitReviewItem,
+  DesktopGitReviewResult,
 } from "../../../../shared/desktop-git";
 import type {
   DesktopWorkspaceFileContentResult,
@@ -28,6 +29,7 @@ import type { LanguageCode } from "../../../config/titlebar";
 import {
   getDesktopGitHistory,
   getDesktopGitHistoryDetail,
+  getDesktopGitReview,
   getDesktopGitReviewDetail,
 } from "../../../lib/desktop-git";
 import { getDesktopWorkspaceFileContent, getDesktopWorkspaceFileTree } from "../../../lib/desktop-workspace";
@@ -1041,8 +1043,7 @@ function appendMarkdownFinding(lines: string[], input: {
 }
 
 function buildGitMarkdownReport(input: {
-  detail: DesktopGitHistoryDetailResult;
-  itemsByPath: Record<string, DesktopGitReviewItem>;
+  review: DesktopGitReviewResult;
   findings: GitAiReviewFinding[];
   findingsByPath: Map<string, GitAiReviewFinding[]>;
   copy: GitAiReviewCopy;
@@ -1058,23 +1059,22 @@ function buildGitMarkdownReport(input: {
   lines.push(`# ${isEn ? "Git AI Review Report" : "Git AI 审查报告"}`);
   lines.push("");
   lines.push(`- ${isEn ? "Generated at" : "生成时间"}: ${new Date().toISOString()}`);
-  lines.push(`- ${isEn ? "Workspace" : "工作区"}: ${input.detail.rootPath}`);
-  lines.push(`- ${isEn ? "Commit" : "提交"}: ${input.detail.hash}`);
-  lines.push(`- ${isEn ? "Subject" : "标题"}: ${input.detail.subject}`);
-  if (input.detail.authorName) {
-    lines.push(`- ${isEn ? "Author" : "作者"}: ${input.detail.authorName}`);
+  lines.push(`- ${isEn ? "Workspace" : "工作区"}: ${input.review.rootPath}`);
+  lines.push(`- ${isEn ? "Commit" : "提交"}: ${input.review.lastCommitHash ?? "-"}`);
+  lines.push(`- ${isEn ? "Subject" : "标题"}: ${input.review.lastCommitSubject ?? "-"}`);
+  if (input.review.branch) {
+    lines.push(`- ${isEn ? "Branch" : "分支"}: ${input.review.branch}`);
   }
-  lines.push(`- ${isEn ? "Changed files" : "变更文件"}: ${input.detail.files.length}`);
+  lines.push(`- ${isEn ? "Changed files" : "变更文件"}: ${input.review.items.length}`);
   lines.push(`- ${isEn ? "Diagnostics" : "诊断总数"}: ${input.findings.length}`);
   lines.push(`- ${isEn ? "High / Medium / Low" : "高 / 中 / 低"}: ${highCount} / ${mediumCount} / ${lowCount}`);
   lines.push("");
   lines.push(`## ${isEn ? "Files" : "文件列表"}`);
   lines.push("");
 
-  for (const file of [...input.detail.files].sort((left, right) => comparePathLabels(left.path, right.path))) {
-    const item = input.itemsByPath[file.path] ?? buildCommitReviewFallbackItem(file);
-    const fileFindings = input.findingsByPath.get(file.path) ?? [];
-    lines.push(`## \`${file.path}\``);
+  for (const item of [...input.review.items].sort((left, right) => comparePathLabels(left.path, right.path))) {
+    const fileFindings = input.findingsByPath.get(item.path) ?? [];
+    lines.push(`## \`${item.path}\``);
     lines.push("");
     lines.push(`- ${isEn ? "Status" : "状态"}: ${input.statusText(item.status)}`);
     if (item.previousPath) {

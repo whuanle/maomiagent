@@ -489,6 +489,9 @@ function createRuntimeContext(tempRoot: string): DesktopRuntimeContext {
     singleInstance: {
       kind: "primary",
       setActivationHandler() {},
+      registerHttpRoute() {
+        return () => {};
+      },
       async dispose() {},
     },
     logger: {
@@ -4536,11 +4539,16 @@ describe("DesktopConversationService", () => {
       expect(rejected.detail.runs[0]?.status).toBe("failed");
       expect(rejected.detail.runs[0]?.boundary?.kind).toBe("failed");
       expect(harness.logs.query({ level: "error" }).items.some((item) =>
-        item.message === "Desktop conversation rejectInteraction failed"
-        && item.context?.sessionId === created.item.sessionId
-        && isRecord(item.context?.boundary)
-        && isRecord((item.context.boundary as Record<string, unknown>).error)
-        && (item.context.boundary as Record<string, unknown>).error.code === "tool_execution_rejected")).toBe(true);
+        {
+          const boundary = item.context?.boundary;
+          const error = isRecord(boundary) && isRecord(boundary.error)
+            ? boundary.error
+            : undefined;
+
+          return item.message === "Desktop conversation rejectInteraction failed"
+            && item.context?.sessionId === created.item.sessionId
+            && error?.code === "tool_execution_rejected";
+        })).toBe(true);
     } finally {
       harness.dispose();
     }

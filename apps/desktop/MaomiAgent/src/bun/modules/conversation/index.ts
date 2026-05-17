@@ -22,6 +22,8 @@ export type {
   DesktopConversationRuntimeEventsUpdateEvent,
   DesktopConversationSendMessageInput,
   DesktopConversationSendMessageResponse,
+  DesktopConversationStopMessageInput,
+  DesktopConversationStopMessageResponse,
   DesktopConversationSessionDetail,
   DesktopConversationSessionDetailUpdateEvent,
   DesktopConversationSessionDetailUpdateReason,

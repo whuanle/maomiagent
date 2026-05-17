@@ -5,9 +5,10 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  buildDesktopFileDownloadUrl,
+  buildDesktopLatestVersionUrl,
   loadDesktopAppUpdateConfig,
   DEFAULT_DESKTOP_APP_UPDATE_CHANNEL,
-  DEFAULT_DESKTOP_APP_UPDATE_SOFTWARE_CODE,
 } from "./desktop-app-update/config";
 import {
   parseDesktopAppPublicLatestRelease,
@@ -21,6 +22,7 @@ import type {
   DesktopAppUpdateInstallInput,
   DesktopAppUpdateInstallResult,
 } from "../shared/desktop-updater";
+import { deriveWoaiVersionCode } from "../shared/woai-version";
 
 type LocalVersionInfo = {
   version: string;
@@ -41,7 +43,6 @@ type EmbeddedUpdateInfo = {
 };
 
 const DEFAULT_VERSION = "0.1.0";
-const VERSION_RE = /^v?(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:-(?<pre>[0-9A-Za-z.-]+))?$/u;
 
 export async function checkDesktopAppUpdate(): Promise<DesktopAppUpdateCheckResult> {
   const localInfo = await resolveLocalVersionInfo();
@@ -84,20 +85,29 @@ export async function checkDesktopAppUpdate(): Promise<DesktopAppUpdateCheckResu
     };
   }
 
-  const queryUrl = new URL(joinUrl(updateConfig.publicBaseUrl, "releases", "latest"));
-  queryUrl.searchParams.set("softwareCode", updateConfig.softwareCode || DEFAULT_DESKTOP_APP_UPDATE_SOFTWARE_CODE);
-  queryUrl.searchParams.set("channel", updateConfig.channel || localInfo.channel);
-  queryUrl.searchParams.set("os", updateConfig.os || "win");
-  queryUrl.searchParams.set("arch", updateConfig.arch || "x64");
-  queryUrl.searchParams.set("currentVersionCode", String(localInfo.versionCode));
-
-  const response = await fetch(queryUrl);
+  const targetOs = updateConfig.os || "win";
+  const targetArch = updateConfig.arch || "x64";
+  const latestVersionUrl = buildDesktopLatestVersionUrl(updateConfig);
+  const response = await fetch(latestVersionUrl);
+  if (response.status === 404) {
+    return {
+      configured: true,
+      supported: true,
+      hasUpdate: false,
+      currentVersion: localInfo.version,
+      currentVersionCode: localInfo.versionCode,
+      currentChannel: localInfo.channel,
+      message: "No published desktop version is available yet.",
+    };
+  }
   if (!response.ok) {
     throw new Error(`Update check failed (${response.status}).`);
   }
 
   const payload = parseDesktopAppPublicLatestRelease(await response.json());
-  if (!payload.hasUpdate || !payload.releaseId || !payload.version) {
+  const remoteVersion = payload.version;
+  const remoteVersionCode = payload.versionCode ?? resolveVersionCode(remoteVersion || "");
+  if (!payload.versionId || !remoteVersion || remoteVersionCode <= localInfo.versionCode) {
     return {
       configured: true,
       supported: true,
@@ -113,7 +123,10 @@ export async function checkDesktopAppUpdate(): Promise<DesktopAppUpdateCheckResu
     bundleAsset,
     updateInfoAsset,
     installerAsset,
-  } = selectDesktopAppPublicReleaseAssets(payload.assets);
+  } = selectDesktopAppPublicReleaseAssets(payload.assets, {
+    os: targetOs,
+    arch: targetArch,
+  });
   if (!bundleAsset) {
     return {
       configured: true,
@@ -134,9 +147,9 @@ export async function checkDesktopAppUpdate(): Promise<DesktopAppUpdateCheckResu
     currentVersionCode: localInfo.versionCode,
     currentChannel: localInfo.channel,
     message: "A newer desktop version is available.",
-    releaseId: payload.releaseId,
-    releaseVersion: payload.version,
-    releaseVersionCode: payload.versionCode,
+    releaseId: payload.versionId,
+    releaseVersion: remoteVersion,
+    releaseVersionCode: remoteVersionCode,
     title: payload.title,
     releaseNotes: payload.releaseNotes,
     isForceUpdate: payload.isForceUpdate,
@@ -166,10 +179,10 @@ export async function installDesktopAppUpdate(
   }
 
   const stagingRoot = await createUpdateStagingRoot();
-  const bundleDownload = await requestDownloadUrl(updateConfig.publicBaseUrl, input.releaseId, input.bundleAssetId);
+  const bundleDownload = await requestDownloadUrl(updateConfig.publicBaseUrl, input.bundleAssetId);
   const archivePath = path.join(stagingRoot, sanitizeFileName(bundleDownload.fileName || `${input.targetVersion}.tar.zst`));
   const expectedBundleHash = input.updateInfoAssetId
-    ? await fetchExpectedBundleHash(updateConfig.publicBaseUrl, input.releaseId, input.updateInfoAssetId)
+    ? await fetchExpectedBundleHash(updateConfig.publicBaseUrl, input.updateInfoAssetId)
     : "";
 
   try {
@@ -263,16 +276,9 @@ function resolveResourcesRoot(): string | undefined {
 
 async function requestDownloadUrl(
   publicBaseUrl: string,
-  releaseId: number,
-  assetId: number,
+  versionFileId: number,
 ): Promise<FrontDownloadUrlResponse> {
-  const response = await fetch(joinUrl(publicBaseUrl, "releases", String(releaseId), "download-url"), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json; charset=utf-8",
-    },
-    body: JSON.stringify({ assetId }),
-  });
+  const response = await fetch(buildDesktopFileDownloadUrl(publicBaseUrl, versionFileId));
 
   if (!response.ok) {
     throw new Error(`Failed to request download URL (${response.status}).`);
@@ -292,10 +298,9 @@ async function requestDownloadUrl(
 
 async function fetchExpectedBundleHash(
   publicBaseUrl: string,
-  releaseId: number,
   updateInfoAssetId: number,
 ): Promise<string> {
-  const download = await requestDownloadUrl(publicBaseUrl, releaseId, updateInfoAssetId);
+  const download = await requestDownloadUrl(publicBaseUrl, updateInfoAssetId);
   const response = await fetch(download.downloadUrl);
   if (!response.ok) {
     throw new Error(`Failed to download update metadata (${response.status}).`);
@@ -448,41 +453,7 @@ async function updateHashFromFile(hash: Hash, filePath: string): Promise<void> {
 }
 
 function resolveVersionCode(version: string): number {
-  const match = VERSION_RE.exec(version);
-  if (!match?.groups) {
-    return 0;
-  }
-
-  const major = Number.parseInt(match.groups.major, 10);
-  const minor = Number.parseInt(match.groups.minor, 10);
-  const patch = Number.parseInt(match.groups.patch, 10);
-  const prereleaseWeight = derivePrereleaseWeight(match.groups.pre);
-  return (major * 1_000_000_000) + (minor * 1_000_000) + (patch * 1_000) + prereleaseWeight;
-}
-
-function derivePrereleaseWeight(prerelease: string | undefined): number {
-  if (!prerelease) {
-    return 900;
-  }
-
-  const parts = prerelease
-    .split(/[.-]/u)
-    .map((part) => part.trim().toLowerCase())
-    .filter(Boolean);
-  const label = parts[0] || "pre";
-  const sequence = Number.parseInt(parts[1] || "0", 10);
-  const base = label === "dev"
-    ? 100
-    : label === "alpha"
-      ? 200
-      : label === "beta"
-        ? 300
-        : label === "rc"
-          ? 400
-          : label === "canary"
-            ? 500
-            : 600;
-  return Math.min(base + Math.max(sequence, 0), 899);
+  return deriveWoaiVersionCode(version) ?? 0;
 }
 
 function normalizeText(value: unknown): string {
@@ -491,12 +462,6 @@ function normalizeText(value: unknown): string {
 
 function sanitizeFileName(value: string): string {
   return value.replace(/[\\/:*?"<>|]/gu, "-");
-}
-
-function joinUrl(base: string, ...segments: string[]): string {
-  const normalizedBase = base.replace(/\/+$/u, "");
-  const normalizedSegments = segments.map((segment) => segment.replace(/^\/+|\/+$/gu, ""));
-  return [normalizedBase, ...normalizedSegments].join("/");
 }
 
 function escapePowerShellSingleQuoted(value: string): string {
@@ -512,4 +477,3 @@ function readText(value: Record<string, unknown>, keys: string[]): string {
   }
   return "";
 }
-

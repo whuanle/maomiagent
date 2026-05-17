@@ -1,4 +1,7 @@
-import type { ConversationMessagePartView } from "#maomiagent/kernel/src/host/application";
+import type {
+  ConversationMessagePartView,
+  ConversationMessageToolPart,
+} from "#maomiagent/kernel/src/host/application";
 
 export type DirectSessionModifiedMessageFileAction = "create" | "delete" | "modify" | "read";
 
@@ -6,6 +9,16 @@ export type DirectSessionModifiedMessageFile = {
   path: string;
   action: DirectSessionModifiedMessageFileAction;
   affectedLines?: number;
+  additions?: number;
+  deletions?: number;
+};
+
+type ConversationMessageToolResultPart = ConversationMessageToolPart & {
+  type: "tool_result";
+};
+
+type DirectSessionModifiedMessageFileStats = {
+  affectedLines: number;
   additions?: number;
   deletions?: number;
 };
@@ -75,11 +88,11 @@ function parsePatchLineStats(value: unknown) {
   };
 }
 
-function resolveToolCallRecord(part: Extract<ConversationMessagePartView, { type: "tool_result" }>) {
+function resolveToolCallRecord(part: ConversationMessageToolResultPart) {
   return isRecord(part.toolCall) ? part.toolCall : undefined;
 }
 
-function resolveModifiedFileAction(part: Extract<ConversationMessagePartView, { type: "tool_result" }>): DirectSessionModifiedMessageFileAction {
+function resolveModifiedFileAction(part: ConversationMessageToolResultPart): DirectSessionModifiedMessageFileAction {
   const toolName = trimText(part.toolName).toLowerCase();
   const output = resolveToolCallRecord(part)?.output;
   const outputRecord = isRecord(output) ? output : undefined;
@@ -99,9 +112,9 @@ function resolveModifiedFileAction(part: Extract<ConversationMessagePartView, { 
 }
 
 function resolveModifiedFileStats(
-  part: Extract<ConversationMessagePartView, { type: "tool_result" }>,
+  part: ConversationMessageToolResultPart,
   action: DirectSessionModifiedMessageFileAction,
-) {
+): DirectSessionModifiedMessageFileStats | undefined {
   const toolCall = resolveToolCallRecord(part);
   const output = isRecord(toolCall?.output) ? toolCall.output : undefined;
   const input = isRecord(toolCall?.input) ? toolCall.input : isRecord(part.input) ? part.input : undefined;
@@ -154,7 +167,7 @@ function resolveModifiedFileStats(
   };
 }
 
-function isWriteLikeToolPart(part: Extract<ConversationMessagePartView, { type: "tool_result" }>) {
+function isWriteLikeToolPart(part: ConversationMessageToolResultPart) {
   const operationKind = trimText(part.toolCall?.operation.kind);
   if (operationKind === "file_write") {
     return true;
@@ -170,11 +183,15 @@ function isWriteLikeToolPart(part: Extract<ConversationMessagePartView, { type: 
 
 function isSuccessfulWriteResultPart(
   part: ConversationMessagePartView,
-): part is Extract<ConversationMessagePartView, { type: "tool_result" }> {
-  return part.type === "tool_result"
-    && part.toolCall?.status === "completed"
-    && !part.toolCall?.error
-    && isWriteLikeToolPart(part);
+): part is ConversationMessageToolResultPart {
+  if (part.type !== "tool_result") {
+    return false;
+  }
+
+  const toolResultPart = part as ConversationMessageToolResultPart;
+  return toolResultPart.toolCall?.status === "completed"
+    && !toolResultPart.toolCall?.error
+    && isWriteLikeToolPart(toolResultPart);
 }
 
 export function resolveModifiedMessageFiles(
@@ -196,12 +213,14 @@ export function resolveModifiedMessageFiles(
       const action = resolveModifiedFileAction(part);
       const stats = resolveModifiedFileStats(part, action);
       const current = files.get(normalizedPath);
+      const additions = stats?.additions;
+      const deletions = stats?.deletions;
 
       files.set(normalizedPath, {
         path: normalizedPath,
         action,
-        additions: combineCount(current?.additions, stats?.additions),
-        deletions: combineCount(current?.deletions, stats?.deletions),
+        additions: combineCount(current?.additions, additions),
+        deletions: combineCount(current?.deletions, deletions),
         affectedLines: combineCount(current?.affectedLines, stats?.affectedLines),
       });
     }

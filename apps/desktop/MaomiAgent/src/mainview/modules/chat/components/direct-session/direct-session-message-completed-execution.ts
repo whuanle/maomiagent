@@ -200,7 +200,7 @@ export function resolveDirectSessionCompletedExecutionDigest(input: {
   if (!visibleTailParts.some((part) => (
     part.type === "attachment"
       ? true
-      : Boolean(trimText(part.text))
+      : part.type === "text" && Boolean(trimText(part.text))
   ))) {
     return undefined;
   }

@@ -617,6 +617,7 @@ export type FeishuOAuthCallbackInput = {
   code?: string
   state?: string
   error?: string
+  errorDescription?: string
 }
 
 export type FeishuOAuthCallbackResult = {

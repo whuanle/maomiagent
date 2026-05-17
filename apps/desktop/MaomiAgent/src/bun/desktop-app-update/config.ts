@@ -10,7 +10,7 @@ export type DesktopAppUpdateConfig = {
   arch: string;
 };
 
-export const DEFAULT_DESKTOP_APP_UPDATE_PUBLIC_BASE_URL = "https://downloads.example.com/maomiagent/public";
+export const DEFAULT_DESKTOP_APP_UPDATE_PUBLIC_BASE_URL = "https://api.anyai.wiki";
 export const DEFAULT_DESKTOP_APP_UPDATE_SOFTWARE_CODE = "maomiagent";
 export const DEFAULT_DESKTOP_APP_UPDATE_CHANNEL = "stable";
 
@@ -24,8 +24,9 @@ export function resolveDesktopAppUpdateConfig(input: {
 
   return {
     publicBaseUrl: packagedPublicBaseUrl.found
-      ? packagedPublicBaseUrl.value
-      : normalizeText(env.MAOMI_DESKTOP_PUBLIC_SOFTWARE_BASE_URL) || DEFAULT_DESKTOP_APP_UPDATE_PUBLIC_BASE_URL,
+      ? normalizeDesktopAppUpdatePublicBaseUrl(packagedPublicBaseUrl.value)
+      : normalizeDesktopAppUpdatePublicBaseUrl(env.MAOMI_DESKTOP_PUBLIC_SOFTWARE_BASE_URL)
+        || DEFAULT_DESKTOP_APP_UPDATE_PUBLIC_BASE_URL,
     softwareCode:
       readText(packagedConfig, ["softwareCode"]) ||
       normalizeText(env.MAOMI_RELEASE_APP_CODE) ||
@@ -53,6 +54,61 @@ export async function loadDesktopAppUpdateConfig(
   }
 
   return resolveDesktopAppUpdateConfig({ env });
+}
+
+export function normalizeDesktopAppUpdatePublicBaseUrl(value: unknown): string {
+  const normalized = normalizeText(value).replace(/\/+$/u, "");
+  if (!normalized) {
+    return "";
+  }
+
+  const withScheme = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//u.test(normalized)
+    ? normalized
+    : `https://${normalized.replace(/^\/+/u, "")}`;
+
+  return withScheme.replace(/(?:\/api)?\/software$/iu, "");
+}
+
+export function buildDesktopAppUpdateApiUrl(base: string, ...segments: string[]): string {
+  const normalizedBase = normalizeDesktopAppUpdatePublicBaseUrl(base);
+  return joinUrl(normalizedBase, "api", "software", ...segments);
+}
+
+export function buildDesktopLatestVersionUrl(
+  config: Pick<DesktopAppUpdateConfig, "publicBaseUrl" | "softwareCode" | "channel">,
+): string {
+  const url = new URL(
+    buildDesktopAppUpdateApiUrl(
+      config.publicBaseUrl,
+      "apps",
+      config.softwareCode || DEFAULT_DESKTOP_APP_UPDATE_SOFTWARE_CODE,
+      "latest",
+    ),
+  );
+  url.searchParams.set(
+    "channel",
+    normalizeDesktopAppUpdateRequestChannel(config.channel),
+  );
+  return url.toString();
+}
+
+export function buildDesktopFileDownloadUrl(publicBaseUrl: string, versionFileId: number): string {
+  return buildDesktopAppUpdateApiUrl(publicBaseUrl, "files", String(versionFileId), "download-url");
+}
+
+function normalizeDesktopAppUpdateRequestChannel(value: unknown): string {
+  return normalizeText(value).toLowerCase() === "preview"
+    ? "preview"
+    : DEFAULT_DESKTOP_APP_UPDATE_CHANNEL;
+}
+
+function joinUrl(base: string, ...segments: string[]): string {
+  const normalizedBase = base.replace(/\/+$/u, "");
+  const normalizedSegments = segments
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .map((segment) => segment.replace(/^\/+|\/+$/gu, ""));
+  return [normalizedBase, ...normalizedSegments].join("/");
 }
 
 type ConfiguredTextResult = {

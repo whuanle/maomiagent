@@ -123,4 +123,5 @@ export type {
   TokenUsage,
   ToolCallRecord,
   ToolDescriptor,
+  TurnRecord,
 } from "#maomiagent/kernel/core";

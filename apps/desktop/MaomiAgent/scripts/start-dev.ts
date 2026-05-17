@@ -3,6 +3,10 @@ import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEV_SERVER_HOST, resolveAvailablePort } from "./dev-server-port";
+import {
+  DEFAULT_DESKTOP_APP_UPDATE_PUBLIC_BASE_URL,
+  normalizeDesktopAppUpdatePublicBaseUrl,
+} from "../src/bun/desktop-app-update/config";
 import { activateExistingInstance } from "../src/bun/single-instance";
 
 const APP_NAME = "MaomiAgent";
@@ -139,6 +143,16 @@ async function prepareWindowsDevBundle(): Promise<{
       bunVersion: resolveEmbeddedBunVersion(join(bundleBinDir, "bun.exe")),
     }),
   );
+  writeFileSync(
+    join(bundleAppDir, "update-config.json"),
+    `${JSON.stringify({
+      publicBaseUrl: resolvePackagedPublicSoftwareBaseUrl(),
+      softwareCode: process.env.MAOMI_RELEASE_APP_CODE?.trim() || "maomiagent",
+      channel: "dev",
+      os: "win",
+      arch: "x64",
+    }, null, 2)}\n`,
+  );
   return {
     buildFolder,
     launcherPath: join(bundleBinDir, "launcher.exe"),
@@ -237,6 +251,14 @@ function resolveElectrobunPackageRoot(): string {
   }
 
   throw new Error("Could not resolve the installed electrobun package.");
+}
+
+function resolvePackagedPublicSoftwareBaseUrl(): string {
+  if (Object.prototype.hasOwnProperty.call(process.env, "MAOMI_DESKTOP_PUBLIC_SOFTWARE_BASE_URL")) {
+    return normalizeDesktopAppUpdatePublicBaseUrl(process.env.MAOMI_DESKTOP_PUBLIC_SOFTWARE_BASE_URL);
+  }
+
+  return DEFAULT_DESKTOP_APP_UPDATE_PUBLIC_BASE_URL;
 }
 
 function buildDevEnvironment(

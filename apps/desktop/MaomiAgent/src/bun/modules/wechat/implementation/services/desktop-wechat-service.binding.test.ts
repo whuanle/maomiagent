@@ -101,9 +101,11 @@ function createMockConfiguration(storagePath: string): DesktopConfigurationPort 
   };
 }
 
-function createMockConversationCommand(calls: DesktopConversationCreateSessionInput[]): DesktopConversationCommandPort {
+function createConversationDetail(
+  overrides: Partial<DesktopConversationSessionDetail> = {},
+): DesktopConversationSessionDetail {
   const now = new Date().toISOString();
-  const detail: DesktopConversationSessionDetail = {
+  return {
     sessionId: "session-test",
     workspaceId: "workspace-test",
     title: "test",
@@ -117,7 +119,12 @@ function createMockConversationCommand(calls: DesktopConversationCreateSessionIn
     pendingInteractions: [],
     checkpoints: [],
     timeline: [],
+    ...overrides,
   };
+}
+
+function createMockConversationCommand(calls: DesktopConversationCreateSessionInput[]): DesktopConversationCommandPort {
+  const detail = createConversationDetail();
 
   return {
     createSession: async (
@@ -174,23 +181,9 @@ function createMockConversationCommand(calls: DesktopConversationCreateSessionIn
 function createTrackingConversationCommand(input: {
   createSessionCalls?: DesktopConversationCreateSessionInput[];
   sendMessageCalls?: DesktopConversationSendMessageInput[];
+  detail?: DesktopConversationSessionDetail;
 }): DesktopConversationCommandPort {
-  const now = new Date().toISOString();
-  const detail: DesktopConversationSessionDetail = {
-    sessionId: "session-test",
-    workspaceId: "workspace-test",
-    title: "test",
-    status: "idle",
-    createdAt: now,
-    updatedAt: now,
-    runs: [],
-    messages: [],
-    toolCalls: [],
-    interactions: [],
-    pendingInteractions: [],
-    checkpoints: [],
-    timeline: [],
-  };
+  const detail = input.detail ?? createConversationDetail();
 
   return {
     createSession: async (
@@ -422,6 +415,190 @@ test("desktop wechat routes inbound messages through the managed agent for exist
     workspaceId: "workspace-fallback",
     selectedAgentId: FULLY_MANAGED_AGENT_ID,
   });
+});
+
+test("desktop wechat strips assistant reasoning before sending outbound text", async () => {
+  const storagePath = join(
+    tmpdir(),
+    `maomi-desktop-wechat-binding-reasoning-${Date.now()}-${Math.random().toString(16).slice(2)}.json`,
+  );
+  const outboundTexts: string[] = [];
+  const detail = createConversationDetail({
+    sessionId: "existing-session",
+    workspaceId: "workspace-fallback",
+    messages: [{
+      messageId: "message-user-1",
+      sessionId: "existing-session",
+      role: "user",
+      createdAt: 1,
+      parts: [{
+        type: "text",
+        partId: "part-user-1",
+        text: "请截图",
+      }],
+    }, {
+      messageId: "message-assistant-1",
+      sessionId: "existing-session",
+      role: "assistant",
+      createdAt: 2,
+      parts: [{
+        type: "reasoning",
+        partId: "part-reasoning-1",
+        text: "这段内部推理不应该发到微信。",
+      }, {
+        type: "text",
+        partId: "part-text-1",
+        text: "截图已发送。",
+      }],
+    }],
+  });
+  const service = new DesktopWechatService(
+    createMockConfiguration(storagePath),
+    createMockLogger(),
+    createTrackingConversationCommand({ detail }),
+    createMockWorkspaceQuery("workspace-fallback"),
+    createMockModelsQuery(),
+  );
+
+  await service.getState();
+  (service as any).sendTextChunks = async (input: { text: string }) => {
+    outboundTexts.push(input.text);
+    return undefined;
+  };
+  (service as any).storage.accounts.push({
+    accountId: "wechat-account",
+    token: "wechat-token",
+    enabled: true,
+    updatedAt: "2026-05-07T00:00:00.000Z",
+  });
+  (service as any).storage.bindings.push({
+    key: "wechat-account:peer-1",
+    accountId: "wechat-account",
+    peerId: "peer-1",
+    homeWorkspaceId: "workspace-fallback",
+    workspaceId: "workspace-fallback",
+    sessionId: "existing-session",
+    createdAt: "2026-05-07T00:00:00.000Z",
+    updatedAt: "2026-05-07T00:00:00.000Z",
+    runtimeSessionVersion: "wechat-capabilities-v1",
+  });
+  (service as any).storage.processedMessages.push({
+    accountId: "wechat-account",
+    peerId: "peer-1",
+    messageId: "message-5",
+    conversationKey: "wechat-account:peer-1",
+    status: "pending",
+    queryPreview: "请截图",
+    responsePreview: "处理中",
+    createdAt: "2026-05-07T00:00:00.000Z",
+    updatedAt: "2026-05-07T00:00:00.000Z",
+  });
+
+  await (service as any).processQueuedMessage({
+    accountId: "wechat-account",
+    peerId: "peer-1",
+    conversationKey: "wechat-account:peer-1",
+    messageId: "message-5",
+    text: "请截图",
+    createdAt: "2026-05-07T00:00:00.000Z",
+  });
+
+  expect(outboundTexts).toEqual(["截图已发送。"]);
+});
+
+test("desktop wechat does not reuse an older assistant reply when the current turn has no visible text", async () => {
+  const storagePath = join(
+    tmpdir(),
+    `maomi-desktop-wechat-binding-stale-${Date.now()}-${Math.random().toString(16).slice(2)}.json`,
+  );
+  const outboundTexts: string[] = [];
+  const detail = createConversationDetail({
+    sessionId: "existing-session",
+    workspaceId: "workspace-fallback",
+    messages: [{
+      messageId: "message-user-1",
+      sessionId: "existing-session",
+      role: "user",
+      createdAt: 1,
+      parts: [{
+        type: "text",
+        partId: "part-user-1",
+        text: "上一轮问题",
+      }],
+    }, {
+      messageId: "message-assistant-1",
+      sessionId: "existing-session",
+      role: "assistant",
+      createdAt: 2,
+      parts: [{
+        type: "text",
+        partId: "part-text-1",
+        text: "上一轮答案",
+      }],
+    }, {
+      messageId: "message-user-2",
+      sessionId: "existing-session",
+      role: "user",
+      createdAt: 3,
+      parts: [{
+        type: "text",
+        partId: "part-user-2",
+        text: "这一轮问题",
+      }],
+    }],
+  });
+  const service = new DesktopWechatService(
+    createMockConfiguration(storagePath),
+    createMockLogger(),
+    createTrackingConversationCommand({ detail }),
+    createMockWorkspaceQuery("workspace-fallback"),
+    createMockModelsQuery(),
+  );
+
+  await service.getState();
+  (service as any).sendTextChunks = async (input: { text: string }) => {
+    outboundTexts.push(input.text);
+    return undefined;
+  };
+  (service as any).storage.accounts.push({
+    accountId: "wechat-account",
+    token: "wechat-token",
+    enabled: true,
+    updatedAt: "2026-05-07T00:00:00.000Z",
+  });
+  (service as any).storage.bindings.push({
+    key: "wechat-account:peer-1",
+    accountId: "wechat-account",
+    peerId: "peer-1",
+    homeWorkspaceId: "workspace-fallback",
+    workspaceId: "workspace-fallback",
+    sessionId: "existing-session",
+    createdAt: "2026-05-07T00:00:00.000Z",
+    updatedAt: "2026-05-07T00:00:00.000Z",
+    runtimeSessionVersion: "wechat-capabilities-v1",
+  });
+  (service as any).storage.processedMessages.push({
+    accountId: "wechat-account",
+    peerId: "peer-1",
+    messageId: "message-6",
+    conversationKey: "wechat-account:peer-1",
+    status: "pending",
+    queryPreview: "这一轮问题",
+    responsePreview: "处理中",
+    createdAt: "2026-05-07T00:00:00.000Z",
+    updatedAt: "2026-05-07T00:00:00.000Z",
+  });
+
+  await (service as any).processQueuedMessage({
+    accountId: "wechat-account",
+    peerId: "peer-1",
+    conversationKey: "wechat-account:peer-1",
+    messageId: "message-6",
+    text: "这一轮问题",
+    createdAt: "2026-05-07T00:00:00.000Z",
+  });
+
+  expect(outboundTexts).toEqual(["已收到消息，正在处理中"]);
 });
 
 test("desktop wechat forwards inbound media as conversation attachments", async () => {

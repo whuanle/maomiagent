@@ -161,7 +161,7 @@ test("desktop wechat capability provider resolves wechat service lazily", async 
   });
 
   expect(resolveCount).toBe(0);
-  await provider.listCapabilities({ workspaceId: "workspace-1" });
+  await provider.listCapabilities();
   expect(resolveCount).toBe(0);
 
   await provider.resolveRuntimeContribution({

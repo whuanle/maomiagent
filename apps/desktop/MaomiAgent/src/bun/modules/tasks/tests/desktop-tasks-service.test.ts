@@ -22,6 +22,9 @@ function createRuntimeContext(tempRoot: string): DesktopRuntimeContext {
     singleInstance: {
       kind: "primary",
       setActivationHandler() {},
+      registerHttpRoute() {
+        return () => {};
+      },
       async dispose() {},
     },
     logger: {

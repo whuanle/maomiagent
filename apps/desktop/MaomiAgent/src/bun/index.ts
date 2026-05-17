@@ -76,11 +76,11 @@ const APP_IDENTIFIER = "com.maomiagent.desktop";
 const DEFAULT_MAIN_VIEW_URL = "views://mainview/index.html";
 
 function resolveSingleInstanceAppKey(channel: string): string {
-  if (channel === "dev" && process.env.MAOMI_DESKTOP_DEV_APP_KEY) {
-    return process.env.MAOMI_DESKTOP_DEV_APP_KEY;
+  if (channel === "dev" && process.env.MAOMI_DESKTOP_DEV_APP_KEY?.trim()) {
+    return process.env.MAOMI_DESKTOP_DEV_APP_KEY.trim();
   }
 
-  return `${APP_IDENTIFIER}:${channel}`;
+  return APP_IDENTIFIER;
 }
 
 async function resolveMainViewUrl(channel: string): Promise<string> {

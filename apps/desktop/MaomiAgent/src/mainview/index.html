@@ -6,9 +6,220 @@
     <meta name="theme-color" content="#17131a" />
     <link rel="icon" type="image/svg+xml" href="./branding/maomi-mark.svg" />
     <title>MaomiAgent Desktop</title>
+    <script>
+      (() => {
+        const DARK_THEME_MODES = new Set(["dark", "tomorrow-night-blue"]);
+        let startupTheme = "light";
+        let startupLanguage = "zh-CN";
+
+        try {
+          const shellPreferences = window.localStorage.getItem("maomiagent.shell-preferences");
+          if (shellPreferences) {
+            const parsed = JSON.parse(shellPreferences);
+            if (parsed && typeof parsed === "object") {
+              if (typeof parsed.themeMode === "string") {
+                startupTheme = DARK_THEME_MODES.has(parsed.themeMode) ? "dark" : "light";
+              }
+              if (parsed.language === "en-US") {
+                startupLanguage = "en-US";
+              }
+            }
+          } else {
+            const themeMode = window.localStorage.getItem("maomiagent.theme");
+            if (typeof themeMode === "string") {
+              startupTheme = DARK_THEME_MODES.has(themeMode) ? "dark" : "light";
+            }
+            if (window.localStorage.getItem("maomiagent.language") === "en-US") {
+              startupLanguage = "en-US";
+            }
+          }
+        } catch {
+          startupTheme = "light";
+          startupLanguage = "zh-CN";
+        }
+
+        document.documentElement.dataset.startupTheme = startupTheme;
+        document.documentElement.dataset.startupLanguage = startupLanguage;
+      })();
+    </script>
+    <style>
+      :root {
+        color-scheme: light;
+        --startup-bg:
+          radial-gradient(circle at top, rgba(91, 156, 255, 0.18) 0%, transparent 38%),
+          linear-gradient(180deg, #f7fbff 0%, #eef3f9 100%);
+        --startup-panel-glow: rgba(91, 156, 255, 0.18);
+        --startup-ray: rgba(91, 156, 255, 0.94);
+        --startup-core: #5b9cff;
+        --startup-text: #1f1f1f;
+      }
+
+      html[data-startup-theme="dark"] {
+        color-scheme: dark;
+        --startup-bg:
+          radial-gradient(circle at top, rgba(122, 184, 255, 0.16) 0%, transparent 40%),
+          linear-gradient(180deg, #11161d 0%, #0b0f14 100%);
+        --startup-panel-glow: rgba(122, 184, 255, 0.16);
+        --startup-ray: rgba(145, 202, 255, 0.96);
+        --startup-core: #7ab8ff;
+        --startup-text: #f3f6fb;
+      }
+
+      html,
+      body,
+      #root {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+      }
+
+      html,
+      body {
+        overflow: hidden;
+        background: var(--startup-bg);
+      }
+
+      body {
+        color: var(--startup-text);
+        font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+      }
+
+      .startup-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483647;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--startup-bg);
+        opacity: 1;
+        visibility: visible;
+        transition: opacity 180ms ease, visibility 180ms linear;
+      }
+
+      .startup-splash.is-hidden {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+
+      .startup-splash__panel {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        transform: translateY(-8px);
+      }
+
+      .startup-splash__rays {
+        position: relative;
+        width: 88px;
+        height: 88px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+        background: radial-gradient(circle, var(--startup-panel-glow) 0%, transparent 68%);
+        animation: startup-splash-rotate 2.4s linear infinite;
+      }
+
+      .startup-splash__ray {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 8px;
+        height: 32px;
+        margin-left: -4px;
+        margin-top: -16px;
+        border-radius: 999px;
+        background:
+          linear-gradient(
+            180deg,
+            transparent 0%,
+            rgba(255, 255, 255, 0.24) 18%,
+            var(--startup-ray) 52%,
+            transparent 100%
+          );
+        transform: translate(-50%, -50%) rotate(var(--angle)) translateY(-28px);
+        opacity: 0.22;
+        animation: startup-splash-pulse 1.2s ease-in-out infinite;
+        animation-delay: var(--delay);
+        filter: drop-shadow(0 0 12px color-mix(in srgb, var(--startup-ray) 42%, transparent));
+      }
+
+      .startup-splash__core {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: var(--startup-core);
+        box-shadow:
+          0 0 0 8px color-mix(in srgb, var(--startup-core) 16%, transparent),
+          0 0 24px color-mix(in srgb, var(--startup-core) 32%, transparent);
+        animation: startup-splash-core 1.2s ease-in-out infinite;
+      }
+      @keyframes startup-splash-rotate {
+        from {
+          transform: rotate(0deg);
+        }
+
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      @keyframes startup-splash-pulse {
+        0%,
+        100% {
+          opacity: 0.2;
+          transform: translate(-50%, -50%) rotate(var(--angle)) translateY(-24px) scaleY(0.72);
+        }
+
+        45% {
+          opacity: 0.95;
+          transform: translate(-50%, -50%) rotate(var(--angle)) translateY(-30px) scaleY(1);
+        }
+      }
+
+      @keyframes startup-splash-core {
+        0%,
+        100% {
+          transform: scale(0.92);
+        }
+
+        45% {
+          transform: scale(1);
+        }
+      }
+    </style>
     <script type="module" src="./main.tsx"></script>
   </head>
   <body>
     <div id="root"></div>
+    <div id="app-startup-splash" class="startup-splash" aria-live="polite" aria-label="正在加载">
+      <div class="startup-splash__panel">
+        <div class="startup-splash__rays" aria-hidden="true">
+          <span class="startup-splash__ray" style="--angle: 0deg; --delay: 0s"></span>
+          <span class="startup-splash__ray" style="--angle: 45deg; --delay: 0.08s"></span>
+          <span class="startup-splash__ray" style="--angle: 90deg; --delay: 0.16s"></span>
+          <span class="startup-splash__ray" style="--angle: 135deg; --delay: 0.24s"></span>
+          <span class="startup-splash__ray" style="--angle: 180deg; --delay: 0.32s"></span>
+          <span class="startup-splash__ray" style="--angle: 225deg; --delay: 0.4s"></span>
+          <span class="startup-splash__ray" style="--angle: 270deg; --delay: 0.48s"></span>
+          <span class="startup-splash__ray" style="--angle: 315deg; --delay: 0.56s"></span>
+          <span class="startup-splash__core"></span>
+        </div>
+      </div>
+    </div>
+    <script>
+      (() => {
+        const splash = document.getElementById("app-startup-splash");
+        const isEnglish = document.documentElement.dataset.startupLanguage === "en-US";
+        const text = isEnglish ? "Loading" : "正在加载";
+
+        if (splash) {
+          splash.setAttribute("aria-label", text);
+        }
+      })();
+    </script>
   </body>
 </html>

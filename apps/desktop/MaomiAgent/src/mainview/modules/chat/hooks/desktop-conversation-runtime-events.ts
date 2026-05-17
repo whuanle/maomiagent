@@ -135,7 +135,7 @@ function upsertOrdered<TItem>(
   nextItem: TItem,
   matches: (item: TItem) => boolean,
   compare: (left: TItem, right: TItem) => number,
-) {
+): TItem[] {
   const index = items.findIndex(matches);
   if (index < 0) {
     const insertAt = findInsertIndex(items, nextItem, compare);
@@ -162,7 +162,7 @@ function upsertOrdered<TItem>(
   nextItems.splice(insertAt, 0, nextItem);
 
   if (currentItem === nextItem && insertAt === index) {
-    return items;
+    return items.slice();
   }
 
   return nextItems;
@@ -171,7 +171,7 @@ function upsertOrdered<TItem>(
 function enrichMessageParts(
   parts: readonly ConversationMessagePartView[],
   toolCallsById: ReadonlyMap<string, DesktopConversationToolCallEntry>,
-) {
+): ConversationMessagePartView[] {
   let changed = false;
   const nextParts = parts.map((part) => {
     if ((part.type !== "tool_call" && part.type !== "tool_result") || !part.toolCallId) {
@@ -187,7 +187,7 @@ function enrichMessageParts(
     return { ...part, toolCall };
   });
 
-  return changed ? nextParts : parts;
+  return changed ? nextParts : parts.slice();
 }
 
 function appendMessageParts(
@@ -244,7 +244,7 @@ function patchMessageWithToolCall(
 function patchMessagesWithToolCall(
   messages: readonly DesktopConversationMessageEntry[],
   toolCall: DesktopConversationToolCallEntry,
-) {
+): DesktopConversationMessageEntry[] {
   let changed = false;
   const nextMessages = messages.map((message) => {
     const nextMessage = patchMessageWithToolCall(message, toolCall);
@@ -254,13 +254,13 @@ function patchMessagesWithToolCall(
     return nextMessage;
   });
 
-  return changed ? nextMessages : messages;
+  return changed ? nextMessages : messages.slice();
 }
 
 function patchTimelineMessagesWithToolCall(
   timeline: readonly DesktopConversationTimelineEntry[],
   toolCall: DesktopConversationToolCallEntry,
-) {
+): DesktopConversationTimelineEntry[] {
   let changed = false;
   const nextTimeline = timeline.map((entry) => {
     if (entry.type !== "message") {
@@ -279,12 +279,12 @@ function patchTimelineMessagesWithToolCall(
     };
   });
 
-  return changed ? nextTimeline : timeline;
+  return changed ? nextTimeline : timeline.slice();
 }
 
 function buildPendingInteractions(
   interactions: readonly DesktopConversationInteractionEntry[],
-) {
+): DesktopConversationInteractionEntry[] {
   return interactions.filter((interaction) => interaction.status === "pending");
 }
 

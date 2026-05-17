@@ -59,7 +59,7 @@ function installDomWindow() {
   const requestAnimationFrame = testWindow.requestAnimationFrame?.bind(testWindow)
     ?? ((callback: FrameRequestCallback) => testWindow.setTimeout(() => callback(Date.now()), 0));
   const cancelAnimationFrame = testWindow.cancelAnimationFrame?.bind(testWindow)
-    ?? ((handle: number) => testWindow.clearTimeout(handle));
+    ?? ((handle: ReturnType<typeof testWindow.setTimeout>) => testWindow.clearTimeout(handle));
 
   Object.assign(testWindow, {
     SyntaxError: globalThis.SyntaxError,
@@ -142,14 +142,46 @@ function installDesktopBridges() {
     listDesktopWorkspaces: async (query: Record<string, unknown> = {}) => {
       workspaceListCalls.push(query);
       return {
-        items: [{ workspaceId: "workspace-a", name: "Workspace A" }],
-        meta: { total: 1, limit: 200, offset: 0 },
+        items: [{
+          workspaceId: "workspace-a",
+          name: "Workspace A",
+          directoryPath: "C:/workspace-a",
+          isPinned: false,
+          tags: [],
+          createdAt: "2026-05-16T00:00:00.000Z",
+          updatedAt: "2026-05-16T00:00:00.000Z",
+        }],
+        meta: { total: 1, limit: 200, offset: 0, hasMore: false },
       };
     },
     getDesktopWorkspace: async () => null,
-    getDesktopWorkspaceFileTree: async () => ({ items: [] }),
-    getDesktopWorkspaceFileContent: async () => ({ path: "", content: "", encoding: "utf-8" }),
-    createDesktopWorkspace: async () => ({ item: null }),
+    getDesktopWorkspaceFileTree: async () => ({
+      workspaceId: "workspace-a",
+      rootPath: "C:/workspace-a",
+      path: "",
+      nodes: [],
+    }),
+    getDesktopWorkspaceFileContent: async () => ({
+      workspaceId: "workspace-a",
+      rootPath: "C:/workspace-a",
+      path: "",
+      absolutePath: "C:/workspace-a",
+      content: "",
+      binary: false,
+      truncated: false,
+    }),
+    createDesktopWorkspace: async () => ({
+      item: {
+        workspaceId: "workspace-a",
+        name: "Workspace A",
+        directoryPath: "C:/workspace-a",
+        isPinned: false,
+        tags: [],
+        createdAt: "2026-05-16T00:00:00.000Z",
+        updatedAt: "2026-05-16T00:00:00.000Z",
+      },
+      created: true,
+    }),
     updateDesktopWorkspace: async () => null,
     removeDesktopWorkspace: async () => ({ removed: false }),
   };
@@ -324,7 +356,7 @@ function getReactProps(node: HTMLElement): Record<string, unknown> | null {
     return null;
   }
 
-  return (node as Record<string, unknown>)[reactPropsKey] as Record<string, unknown>;
+  return (node as unknown as Record<string, unknown>)[reactPropsKey] as Record<string, unknown>;
 }
 
 async function typeIntoInput(input: HTMLInputElement, value: string) {

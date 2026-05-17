@@ -23,6 +23,7 @@ type Input = {
   t: MemoryTranslate;
   onDelete: (row: MemoryUnit) => void;
   onEdit: (row: MemoryUnit) => void;
+  onView?: (row: MemoryUnit) => void;
 };
 
 function getStatusClassName(status: MemoryUnit["status"]) {

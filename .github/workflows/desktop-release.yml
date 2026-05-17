@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     tags:
-      - "v*"
+      - "*"
 
 permissions:
   contents: write
@@ -21,13 +21,15 @@ env:
   MAOMI_RELEASE_ADMIN_RELEASES_URL: ${{ vars.MAOMI_RELEASE_ADMIN_RELEASES_URL }}
   MAOMI_RELEASE_AUTO_PUBLISH: ${{ vars.MAOMI_RELEASE_AUTO_PUBLISH || 'false' }}
   MAOMI_RELEASE_UPLOAD_AUTH_HEADER: ${{ vars.MAOMI_RELEASE_UPLOAD_AUTH_HEADER }}
-  MAOMI_RELEASE_UPLOAD_AUTH_TOKEN: ${{ secrets.MAOMI_RELEASE_UPLOAD_AUTH_TOKEN }}
   MAOMI_RELEASE_ADMIN_AUTH_HEADER: ${{ vars.MAOMI_RELEASE_ADMIN_AUTH_HEADER }}
-  MAOMI_RELEASE_ADMIN_AUTH_TOKEN: ${{ secrets.MAOMI_RELEASE_ADMIN_AUTH_TOKEN }}
 
 jobs:
   build-windows-x64:
     runs-on: windows-latest
+    environment: build
+    env:
+      MAOMI_RELEASE_UPLOAD_AUTH_TOKEN: ${{ secrets.PUBLISH_KEY }}
+      MAOMI_RELEASE_ADMIN_AUTH_TOKEN: ${{ secrets.MAOMI_RELEASE_ADMIN_AUTH_TOKEN }}
 
     steps:
       - name: Checkout repository
@@ -48,40 +50,48 @@ jobs:
         id: release
         shell: pwsh
         run: |
-          $refName = "${{ github.ref_name }}"
-          $version = $refName -replace '^[vV]', ''
-          if ([string]::IsNullOrWhiteSpace($version)) {
-            throw "Failed to resolve release version from ref name: $refName"
+          $refName = "${{ github.ref_name }}".Trim()
+          if ($refName -match '^[vV]?(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:\.(?<build>\d+))?(?<preview>_preview)?$') {
+            $build = if ($Matches.build) { $Matches.build } else { '0' }
+            $preview = if ($Matches.preview) { '_preview' } else { '' }
+            $version = "$($Matches.major).$($Matches.minor).$($Matches.patch).$build$preview"
+            "should_publish=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          } else {
+            Write-Host "Ignoring ref '$refName' because it does not match the WoAI release version format."
+            "should_publish=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           }
-          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Build desktop release artifacts
+        if: steps.release.outputs.should_publish == 'true'
         env:
           MAOMI_DESKTOP_VERSION: ${{ steps.release.outputs.version }}
           MAOMI_RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: bun run release:build
 
       - name: Generate desktop release manifest
+        if: steps.release.outputs.should_publish == 'true'
         env:
           MAOMI_DESKTOP_VERSION: ${{ steps.release.outputs.version }}
           MAOMI_RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: bun run release:manifest
 
       - name: Upload desktop release artifacts to object storage
-        if: env.MAOMI_RELEASE_UPLOAD_AUTH_TOKEN != ''
+        if: steps.release.outputs.should_publish == 'true' && env.MAOMI_RELEASE_UPLOAD_AUTH_TOKEN != ''
         env:
           MAOMI_DESKTOP_VERSION: ${{ steps.release.outputs.version }}
           MAOMI_RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: bun run release:upload
 
       - name: Upload workflow artifact
+        if: steps.release.outputs.should_publish == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: MaomiAgent-release-v${{ steps.release.outputs.version }}-windows-x64
           path: apps/desktop/MaomiAgent/artifacts/*
 
       - name: Publish GitHub Release asset
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: steps.release.outputs.should_publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true

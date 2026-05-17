@@ -32,7 +32,7 @@ function getDesktopAppUpdateBridge(): DesktopAppUpdateBridge {
 }
 
 function isPositiveInteger(value: unknown): value is number {
-  return Number.isInteger(value) && value > 0;
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
 
 export function canInstallDesktopAppUpdate(

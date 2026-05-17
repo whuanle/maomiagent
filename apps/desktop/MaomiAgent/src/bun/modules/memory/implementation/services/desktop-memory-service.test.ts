@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { RuntimeLogExtra, RuntimeLogLevel, RuntimeLogRecord, RuntimeLogger } from "../../../../shared/runtime-logs";
+import type { RuntimeLogExtra, RuntimeLogLevel, RuntimeLogRecord, RuntimeLogger } from "../../../../../shared/runtime-logs";
 import { DesktopMemoryService } from "./desktop-memory-service";
 
 function createRuntimeLoggerStub(): RuntimeLogger {

@@ -217,6 +217,9 @@ function readRunCompactionSummary(run: RunRecord): DesktopConversationCompaction
   const compaction = isRecord(run.metadata?.compaction)
     ? run.metadata.compaction as Record<string, unknown>
     : undefined;
+  if (!compaction) {
+    return undefined;
+  }
   const status = compaction?.status;
   if (status !== "running" && status !== "completed" && status !== "failed") {
     return undefined;
@@ -3008,7 +3011,7 @@ function buildPlanToolFailure(
 async function patchSessionMetadata(
   sessionStore: Pick<SqliteSessionStoreAdapter, "get" | "save">,
   sessionId: SessionRecord["id"],
-  patch: Record<string, unknown>,
+  patch: Record<string, unknown> | undefined,
 ): Promise<SessionRecord> {
   const current = await sessionStore.get(sessionId);
   const nextSession: SessionRecord = {
@@ -3425,7 +3428,7 @@ function createPlanWriteToolHandler(
       context.session.metadata = nextSession.metadata;
       context.session.updatedAt = nextSession.updatedAt;
       const planState = readPlanStateMetadata(nextSession.metadata);
-      const truncated = truncateText(content);
+      const truncatedContent = truncateText(content, 4_000);
 
       return {
         kind: "completed",
@@ -3433,8 +3436,8 @@ function createPlanWriteToolHandler(
           ok: true,
           status: planState?.status ?? "draft",
           updatedAt: planState?.updatedAt ?? updatedAt,
-          content: truncated.text,
-          truncated: truncated.truncated,
+          content: truncatedContent,
+          truncated: truncatedContent !== content,
         },
       };
     },

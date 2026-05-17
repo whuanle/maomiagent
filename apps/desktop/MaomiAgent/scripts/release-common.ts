@@ -3,6 +3,11 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  deriveWoaiVersionCode,
+  normalizeWoaiVersion,
+} from "../src/shared/woai-version";
+
 export type ReleasePlatformOs = "win" | "macos" | "linux";
 export type ReleasePlatformArch = "x64" | "arm64";
 export type ReleaseAssetKind = "update-info" | "bundle" | "installer" | "patch";
@@ -75,7 +80,6 @@ const DEFAULT_OBJECT_PREFIX = "software";
 const DEFAULT_RELEASE_CHANNEL = "stable";
 const DEFAULT_APP_CODE = "maomiagent";
 const PLATFORM_FILE_NAME_RE = /^(?<channel>.+)-(?<os>win|macos|linux)-(?<arch>x64|arm64)-(?<artifactName>.+)$/u;
-const VERSION_RE = /^v?(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:-(?<pre>[0-9A-Za-z.-]+))?$/u;
 
 export const projectRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 export const desktopPackageJsonPath = resolve(projectRoot, "package.json");
@@ -100,9 +104,22 @@ export async function resolveReleaseVersion(): Promise<string> {
     process.env.MAOMI_RELEASE_VERSION ?? process.env.MAOMI_DESKTOP_VERSION,
   );
   if (requested) {
-    return requested.replace(/^[vV]/u, "");
+    const normalized = normalizeWoaiVersion(requested);
+    if (!normalized) {
+      throw new Error(`Invalid release version: ${requested}`);
+    }
+    return normalized;
   }
-  return readDesktopPackageVersion();
+
+  const packageVersion = await readDesktopPackageVersion();
+  const normalizedPackageVersion = normalizeWoaiVersion(packageVersion);
+  if (!normalizedPackageVersion) {
+    throw new Error(
+      `Could not normalize desktop package version ${packageVersion} from ${desktopPackageJsonPath}`,
+    );
+  }
+
+  return normalizedPackageVersion;
 }
 
 export function resolveReleaseAppCode(): string {
@@ -159,50 +176,19 @@ export function resolveReleaseVersionCode(version: string): number {
     return numeric;
   }
 
-  const match = VERSION_RE.exec(version);
-  if (!match?.groups) {
+  const normalized = normalizeWoaiVersion(version);
+  if (!normalized) {
     throw new Error(
       `Could not derive versionCode from version ${version}. Set MAOMI_RELEASE_VERSION_CODE explicitly.`,
     );
   }
 
-  const major = Number.parseInt(match.groups.major, 10);
-  const minor = Number.parseInt(match.groups.minor, 10);
-  const patch = Number.parseInt(match.groups.patch, 10);
-  const prereleaseWeight = derivePrereleaseWeight(match.groups.pre);
-  const versionCode = (major * 1_000_000_000) + (minor * 1_000_000) + (patch * 1_000) + prereleaseWeight;
-
-  if (!Number.isSafeInteger(versionCode) || versionCode <= 0) {
-    throw new Error(`Derived versionCode is invalid for version ${version}`);
+  const versionCode = deriveWoaiVersionCode(normalized);
+  if (!versionCode) {
+    throw new Error(`Derived versionCode is invalid for version ${normalized}`);
   }
 
   return versionCode;
-}
-
-function derivePrereleaseWeight(prerelease: string | undefined): number {
-  if (!prerelease) {
-    return 900;
-  }
-
-  const parts = prerelease
-    .split(/[.-]/u)
-    .map((part) => normalizeText(part).toLowerCase())
-    .filter(Boolean);
-
-  const label = parts[0] || "pre";
-  const sequence = Number.parseInt(parts[1] || "0", 10);
-  const base = label === "dev"
-    ? 100
-    : label === "alpha"
-      ? 200
-      : label === "beta"
-        ? 300
-        : label === "rc"
-          ? 400
-          : label === "canary"
-            ? 500
-            : 600;
-  return Math.min(base + Math.max(sequence, 0), 899);
 }
 
 export function parseArtifactFileName(fileName: string): ParsedArtifactFileName {

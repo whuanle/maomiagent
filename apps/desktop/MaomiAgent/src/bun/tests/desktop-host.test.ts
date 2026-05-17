@@ -32,6 +32,9 @@ function createFakeSingleInstanceController(): FakeSingleInstanceController {
     setActivationHandler(handler) {
       activationHandler = handler;
     },
+    registerHttpRoute() {
+      return () => {};
+    },
     async dispose() {
       disposed = true;
     },
@@ -85,7 +88,13 @@ describe("startDesktopApplication", () => {
   test("boots a kernel IOC module host and wires single-instance activation", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "maomi-desktop-logs-"));
     const previousLogDbPath = process.env.MAOMI_DESKTOP_LOG_DB_PATH;
+    const previousWorkspaceDbPath = process.env.MAOMI_DESKTOP_WORKSPACE_DB_PATH;
+    const previousConversationDbPath = process.env.MAOMI_DESKTOP_CONVERSATION_DB_PATH;
+    const previousConfigDir = process.env.MAOMI_CONFIG_DIR;
     process.env.MAOMI_DESKTOP_LOG_DB_PATH = join(tempRoot, "logs.sqlite");
+    process.env.MAOMI_DESKTOP_WORKSPACE_DB_PATH = join(tempRoot, "workspace.sqlite");
+    process.env.MAOMI_DESKTOP_CONVERSATION_DB_PATH = join(tempRoot, "conversation.sqlite");
+    process.env.MAOMI_CONFIG_DIR = tempRoot;
 
     const singleInstance = createFakeSingleInstanceController();
     const createdWindowOptions: DesktopWindowOptions[] = [];
@@ -128,6 +137,18 @@ describe("startDesktopApplication", () => {
         "desktop.observability",
         "desktop.window",
         "desktop.workspace",
+        "desktop.git",
+        "desktop.models",
+        "desktop.agents",
+        "desktop.ai",
+        "desktop.terminals",
+        "desktop.tasks",
+        "desktop.conversation",
+        "desktop.memory",
+        "desktop.skills",
+        "desktop.mcp",
+        "desktop.wechat",
+        "desktop.feishu",
         "desktop.shell",
       ]);
       expect(createdWindowOptions).toEqual([
@@ -241,6 +262,21 @@ describe("startDesktopApplication", () => {
         delete process.env.MAOMI_DESKTOP_LOG_DB_PATH;
       } else {
         process.env.MAOMI_DESKTOP_LOG_DB_PATH = previousLogDbPath;
+      }
+      if (previousWorkspaceDbPath === undefined) {
+        delete process.env.MAOMI_DESKTOP_WORKSPACE_DB_PATH;
+      } else {
+        process.env.MAOMI_DESKTOP_WORKSPACE_DB_PATH = previousWorkspaceDbPath;
+      }
+      if (previousConversationDbPath === undefined) {
+        delete process.env.MAOMI_DESKTOP_CONVERSATION_DB_PATH;
+      } else {
+        process.env.MAOMI_DESKTOP_CONVERSATION_DB_PATH = previousConversationDbPath;
+      }
+      if (previousConfigDir === undefined) {
+        delete process.env.MAOMI_CONFIG_DIR;
+      } else {
+        process.env.MAOMI_CONFIG_DIR = previousConfigDir;
       }
       await rm(tempRoot, { recursive: true, force: true });
     }

@@ -5,6 +5,10 @@ import type {
   FeishuDocContentView,
   FeishuStateView,
 } from "../../../../../shared/desktop-feishu";
+import {
+  resolveDesktopFeishuOAuthCallbackOrigin,
+  resolveDesktopFeishuOAuthCallbackUrl,
+} from "../../../../../shared/desktop-feishu-oauth";
 import type { DesktopFeishuStoreSnapshot } from "../../abstraction/ports/desktop-feishu-store.ports";
 import { DesktopFeishuService } from "./desktop-feishu-service";
 
@@ -87,6 +91,9 @@ function createStoreSnapshot(): DesktopFeishuStoreSnapshot {
     state: createState(),
     bot: createBotState(),
     docs: {} as Record<string, FeishuDocContentView>,
+    auth: {
+      smartAssistant: {},
+    },
   };
 }
 
@@ -189,6 +196,7 @@ describe("DesktopFeishuService smart assistant catalog hydration", () => {
     const state = await service.saveDeveloperConfig({
       appId: "cli_test_app",
       appSecret: "secret-1",
+      redirectUri: "https://example.com/should-not-win",
     });
 
     expect(state.mode).toBe("developer");
@@ -209,5 +217,25 @@ describe("DesktopFeishuService smart assistant catalog hydration", () => {
     expect(state.smartAssistant.runtimePolicy.controlPlane).toBe("ready");
     expect(state.catalog.developerScopes).toContain("search:message");
     expect(state.developer?.allowedTools).toContain("create-doc");
+    expect(state.smartAssistant.hasAppSecret).toBe(true);
+    expect(state.smartAssistant.redirectUri).toBe(resolveDesktopFeishuOAuthCallbackUrl());
+    expect(state.smartAssistant.redirectOrigin).toBe(
+      resolveDesktopFeishuOAuthCallbackOrigin(),
+    );
+    expect(state.developer?.redirectUri).toBe(resolveDesktopFeishuOAuthCallbackUrl());
+  });
+
+  test("migrates legacy loopback callback metadata to the fixed callback address", async () => {
+    const snapshot = createStoreSnapshot();
+    snapshot.state.smartAssistant.redirectUri = "http://127.0.0.1/desktop/feishu/oauth/callback";
+    snapshot.state.smartAssistant.redirectOrigin = "http://127.0.0.1";
+
+    const service = createService(snapshot);
+    const state = await service.getState();
+
+    expect(state.smartAssistant.redirectUri).toBe(resolveDesktopFeishuOAuthCallbackUrl());
+    expect(state.smartAssistant.redirectOrigin).toBe(
+      resolveDesktopFeishuOAuthCallbackOrigin(),
+    );
   });
 });
