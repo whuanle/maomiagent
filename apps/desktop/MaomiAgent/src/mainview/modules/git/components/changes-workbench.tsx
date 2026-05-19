@@ -3,7 +3,6 @@ import {
   ArrowUpOutlined,
   DownloadOutlined,
   RobotOutlined,
-  TagOutlined,
 } from "@ant-design/icons";
 import {
   App as AntdApp,
@@ -34,7 +33,6 @@ import {
   pullDesktopGitRemote,
   pushDesktopGitRemote,
   saveDesktopGitIgnore,
-  createDesktopGitTag,
   stageDesktopGitChanges,
   unstageDesktopGitChanges,
 } from "../../../lib/desktop-git";
@@ -42,7 +40,6 @@ import type { LanguageCode } from "../../../config/titlebar";
 import type { GitPageCopy } from "../i18n";
 import { GitChangesTree } from "./changes-tree";
 import { GitDiffPreview } from "./diff-preview";
-import { GitTagEditorModal } from "./git-tag-editor-modal";
 import { GitIgnoreEditorModal } from "./gitignore-editor-modal";
 import { buildGitSectionEntries, type GitSectionKey } from "./view-model";
 
@@ -100,8 +97,6 @@ export function GitChangesWorkbench(props: Props) {
   const [gitIgnoreSaving, setGitIgnoreSaving] = useState(false);
   const [gitIgnoreContent, setGitIgnoreContent] = useState("");
   const [messageGenerating, setMessageGenerating] = useState(false);
-  const [tagModalOpen, setTagModalOpen] = useState(false);
-  const [tagMessageSeed, setTagMessageSeed] = useState("");
 
   const stagedEntries = useMemo(
     () => buildGitSectionEntries(props.changes?.items ?? [], "staged"),
@@ -133,7 +128,6 @@ export function GitChangesWorkbench(props: Props) {
     && hasChanges
     && (stageAllBeforeCommit || stagedEntries.length > 0),
   );
-  const canCreateTag = Boolean(props.changes?.isGitRepo && props.changes.lastCommitHash);
   const compactFetchLabel = prefersChineseUi ? "抓取" : "Fetch";
   const compactPullLabel = formatCompactSyncActionLabel({
     action: prefersChineseUi ? "拉取" : "Pull",
@@ -308,11 +302,6 @@ export function GitChangesWorkbench(props: Props) {
     }
   }
 
-  function openCreateTagModal() {
-    setTagMessageSeed(commitMessage.trim() || props.changes?.lastCommitSubject || "");
-    setTagModalOpen(true);
-  }
-
   function confirmDiscard(paths?: string[]) {
     const title = paths && paths.length === 1
       ? props.copy.discardChangesTitle(paths[0] ?? "")
@@ -476,18 +465,6 @@ export function GitChangesWorkbench(props: Props) {
                     {compactPushLabel}
                   </Button>
                 </Tooltip>
-                <Tooltip title={props.copy.createTagModalTitle}>
-                  <Button
-                    size="small"
-                    type="text"
-                    icon={<TagOutlined />}
-                    disabled={Boolean(busyAction) || !canCreateTag}
-                    loading={busyAction === "tag"}
-                    onClick={() => openCreateTagModal()}
-                  >
-                    {props.copy.createTagButton}
-                  </Button>
-                </Tooltip>
               </div>
               <div className="git-page-changes-commit-footer-actions">
                 <Button disabled={Boolean(busyAction)} onClick={() => void openGitIgnore()}>
@@ -608,25 +585,6 @@ export function GitChangesWorkbench(props: Props) {
         onCancel={() => setGitIgnoreOpen(false)}
         onSave={(value) => {
           void saveGitIgnore(value);
-        }}
-      />
-      <GitTagEditorModal
-        copy={props.copy}
-        open={tagModalOpen}
-        initialMessage={tagMessageSeed}
-        initialPush={true}
-        saving={busyAction === "tag"}
-        onCancel={() => setTagModalOpen(false)}
-        onSubmit={(draft) => {
-          void runMutation("tag", async () => {
-            const result = await createDesktopGitTag(props.workspaceId, {
-              name: draft.name.trim(),
-              message: draft.message.trim(),
-              push: draft.push,
-            });
-            setTagModalOpen(false);
-            return result;
-          });
         }}
       />
     </>

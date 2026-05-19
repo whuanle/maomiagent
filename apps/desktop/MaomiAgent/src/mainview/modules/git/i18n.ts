@@ -57,14 +57,6 @@ export type GitPageCopy = {
   commitMessagePlaceholder: string;
   stageAllBeforeCommit: string;
   amendLatestCommit: string;
-  createTagButton: string;
-  createTagModalTitle: string;
-  createTagNameLabel: string;
-  createTagNamePlaceholder: string;
-  createTagMessageLabel: string;
-  createTagMessagePlaceholder: string;
-  createTagPushLabel: string;
-  createTagConfirmButton: (push: boolean) => string;
   stagedSectionTitle: string;
   unstagedSectionTitle: string;
   stageAction: string;
@@ -154,14 +146,6 @@ const ZH_CN: GitPageCopy = {
   commitMessagePlaceholder: "输入提交消息，必填",
   stageAllBeforeCommit: "提交前暂存全部更改",
   amendLatestCommit: "修订最新提交",
-  createTagButton: "生成标签",
-  createTagModalTitle: "创建并推送标签",
-  createTagNameLabel: "标签名",
-  createTagNamePlaceholder: "例如 v1.2.3",
-  createTagMessageLabel: "标签说明",
-  createTagMessagePlaceholder: "标签说明，可选",
-  createTagPushLabel: "创建后立即推送",
-  createTagConfirmButton: (push: boolean) => push ? "创建并推送" : "仅创建标签",
   stagedSectionTitle: "已暂存",
   unstagedSectionTitle: "未暂存",
   stageAction: "暂存",
@@ -265,14 +249,6 @@ const EN_US: GitPageCopy = {
   commitMessagePlaceholder: "Enter a commit message",
   stageAllBeforeCommit: "Stage all changes before commit",
   amendLatestCommit: "Amend latest commit",
-  createTagButton: "Generate tag",
-  createTagModalTitle: "Create and push tag",
-  createTagNameLabel: "Tag name",
-  createTagNamePlaceholder: "For example v1.2.3",
-  createTagMessageLabel: "Tag message",
-  createTagMessagePlaceholder: "Optional tag message",
-  createTagPushLabel: "Push after create",
-  createTagConfirmButton: (push: boolean) => push ? "Create & Push" : "Create Tag",
   stagedSectionTitle: "Staged",
   unstagedSectionTitle: "Unstaged",
   stageAction: "Stage",

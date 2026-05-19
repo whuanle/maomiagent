@@ -27,7 +27,7 @@ export function GitIgnoreEditorModal(props: Props) {
       open={props.open}
       title={props.copy.gitIgnoreModalTitle}
       onCancel={props.onCancel}
-      className="git-page-modal git-page-gitignore-modal"
+      className="git-page-gitignore-modal"
       footer={[
         <Button key="cancel" onClick={props.onCancel}>
           {props.copy.confirmCancel}

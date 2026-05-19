@@ -1838,20 +1838,20 @@
   color: #7c3aed;
 }
 
-.git-page-modal .ant-modal-content {
+.git-page-gitignore-modal .ant-modal-content {
   padding: 0;
   overflow: hidden;
   background: var(--resource-page-bg);
 }
 
-.git-page-modal .ant-modal-header {
+.git-page-gitignore-modal .ant-modal-header {
   margin-bottom: 0;
   padding: 14px 16px 12px;
   border-bottom: 1px solid var(--app-border-soft);
   background: transparent;
 }
 
-.git-page-modal .ant-modal-body {
+.git-page-gitignore-modal .ant-modal-body {
   max-height: min(80vh, calc(100vh - 88px));
   overflow: auto;
   padding: 0;
@@ -1876,32 +1876,6 @@
   padding: 12px;
   background: var(--app-surface);
   font-family: var(--app-font-family-mono, "Cascadia Code", Consolas, monospace);
-  font-size: 12px;
-  line-height: 1.65;
-}
-
-.git-page-git-tag-editor {
-  display: grid;
-  gap: 12px;
-  padding: 14px 16px 16px;
-}
-
-.git-page-git-tag-field {
-  display: grid;
-  gap: 8px;
-}
-
-.git-page-git-tag-field-label {
-  color: var(--app-text-secondary);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.2;
-}
-
-.git-page-git-tag-textarea.ant-input-textarea textarea {
-  min-height: 112px;
-  padding: 12px;
-  background: var(--app-surface);
   font-size: 12px;
   line-height: 1.65;
 }
