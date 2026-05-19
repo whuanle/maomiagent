@@ -83,6 +83,7 @@ describe("buildConversationSessionDefaultMetadata", () => {
       selectedChannelId: "kimi",
       selectedModelId: "moonshot-v1-8k",
       managedExecutionEnabled: true,
+      thinkingEnabled: true,
     });
 
     expect(buildConversationSessionDefaultMetadata("workspace-1")).toEqual({
@@ -94,6 +95,7 @@ describe("buildConversationSessionDefaultMetadata", () => {
       conversationSettings: {
         contextCompressionThresholdPercent: 85,
         managedExecutionEnabled: true,
+        thinkingEnabled: true,
       },
     });
   });

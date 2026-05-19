@@ -1,8 +1,31 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  applyConversationThinkingPreferenceToServiceConfig,
   shouldRestrictDesktopConversationBuiltinToolsForLatestUserTurn,
 } from "../implementation/services/desktop-ai-conversation-runtime";
+
+describe("applyConversationThinkingPreferenceToServiceConfig", () => {
+  test("drops reasoning service config when thinking is disabled", () => {
+    expect(applyConversationThinkingPreferenceToServiceConfig({
+      executionProfile: {
+        id: "profile-1" as never,
+        modelId: "gpt-5" as never,
+        metadata: {
+          thinkingEnabled: false,
+        },
+      },
+      serviceConfig: {
+        apiKey: "test-key",
+        reasoning: {
+          effort: "medium",
+        },
+      },
+    })).toEqual({
+      apiKey: "test-key",
+    });
+  });
+});
 
 describe("shouldRestrictDesktopConversationBuiltinToolsForLatestUserTurn", () => {
   test("restricts standalone code example requests", () => {

@@ -183,6 +183,22 @@ describe("conversation workspace settings storage", () => {
     });
   });
 
+  test("reads and writes the workspace thinking default", () => {
+    installTestWindow(createMemoryLocalStorage());
+
+    expect(writeConversationWorkspaceSettings("workspace-1", {
+      thinkingEnabled: false,
+    })).toEqual({
+      defaultFilePreviewMode: "preview",
+      thinkingEnabled: false,
+    });
+
+    expect(readConversationWorkspaceSettings("workspace-1")).toEqual({
+      defaultFilePreviewMode: "preview",
+      thinkingEnabled: false,
+    });
+  });
+
   test("skips writing and dispatching workspace setting events for no-op updates", () => {
     installTestWindow(createMemoryLocalStorage({
       "maomiagent.chat.workspace.settings.v1:workspace-1": JSON.stringify({

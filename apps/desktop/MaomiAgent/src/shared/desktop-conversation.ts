@@ -109,6 +109,7 @@ export type DesktopConversationSessionSettings = {
   permissionRules?: DesktopConversationPermissionRule[];
   contextCompressionThresholdPercent?: number;
   managedExecutionEnabled?: boolean;
+  thinkingEnabled?: boolean;
   memoryEnabled?: boolean;
   sandboxEnabled?: boolean;
   feishuSmartAssistantEnabled?: boolean;

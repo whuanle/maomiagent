@@ -291,6 +291,11 @@ function normalizeConversationSessionSettings(
     normalized.managedExecutionEnabled = managedExecutionEnabled;
   }
 
+  const thinkingEnabled = normalizeBooleanFlag(value?.thinkingEnabled);
+  if (thinkingEnabled !== undefined) {
+    normalized.thinkingEnabled = thinkingEnabled;
+  }
+
   const memoryEnabled = normalizeBooleanFlag(value?.memoryEnabled);
   if (memoryEnabled !== undefined) {
     normalized.memoryEnabled = memoryEnabled;
@@ -331,6 +336,7 @@ function readConversationSessionSettings(
       conversationSettings?.contextCompressionThresholdPercent,
     ),
     managedExecutionEnabled: normalizeBooleanFlag(conversationSettings?.managedExecutionEnabled),
+    thinkingEnabled: normalizeBooleanFlag(conversationSettings?.thinkingEnabled),
     memoryEnabled: normalizeBooleanFlag(conversationSettings?.memoryEnabled),
     sandboxEnabled: normalizeBooleanFlag(conversationSettings?.sandboxEnabled),
     feishuSmartAssistantEnabled: normalizeBooleanFlag(conversationSettings?.feishuSmartAssistantEnabled),
@@ -355,6 +361,7 @@ function hasConversationSessionSettingsChange(
       settings.managedExecutionEnabled !== undefined
       && current.managedExecutionEnabled !== settings.managedExecutionEnabled
     )
+    || (settings.thinkingEnabled !== undefined && current.thinkingEnabled !== settings.thinkingEnabled)
     || (settings.memoryEnabled !== undefined && current.memoryEnabled !== settings.memoryEnabled)
     || (settings.sandboxEnabled !== undefined && current.sandboxEnabled !== settings.sandboxEnabled)
     || (
@@ -416,6 +423,9 @@ function applyConversationSessionSettings(
       : {}),
     ...(settings.managedExecutionEnabled !== undefined
       ? { managedExecutionEnabled: settings.managedExecutionEnabled }
+      : {}),
+    ...(settings.thinkingEnabled !== undefined
+      ? { thinkingEnabled: settings.thinkingEnabled }
       : {}),
     ...(settings.memoryEnabled !== undefined
       ? { memoryEnabled: settings.memoryEnabled }

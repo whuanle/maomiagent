@@ -56,6 +56,8 @@ function resolveCopy(language: LanguageCode) {
       compressionHint: "Saved as the default threshold and injected into conversation runtime preferences.",
       workspaceSectionTitle: "Workspace settings",
       workspaceSectionMeta: "Saved as defaults for the current workspace.",
+      thinkingLabel: "Enable thinking",
+      thinkingHint: "Save the default reasoning preference for new conversations in this workspace.",
       managedExecutionLabel: "Managed execution",
       managedExecutionEnabledHint: "New conversations in this workspace start through the managed execution path.",
       managedExecutionDisabledHint: "New conversations in this workspace stay in the regular chat flow.",
@@ -88,6 +90,8 @@ function resolveCopy(language: LanguageCode) {
     compressionHint: "保存为当前设备默认阈值，并写入对话运行时偏好。",
     workspaceSectionTitle: "工作区设置",
     workspaceSectionMeta: "作为当前工作区默认偏好保存。",
+    thinkingLabel: "启用 Thinking",
+    thinkingHint: "将 Thinking 保存为当前工作区默认偏好，并同步到对话运行时偏好。",
     managedExecutionLabel: "全自动托管",
     managedExecutionEnabledHint: "当前工作区新建会话会优先按托管执行入口组织。",
     managedExecutionDisabledHint: "当前工作区新建会话保持普通对话入口。",
@@ -282,6 +286,17 @@ export function ConversationWorkspaceSettingsPanel(props: Props) {
       },
       nextGlobalSettings: {
         approvalAutoEnabled: value,
+      },
+    });
+  }, [applySessionSettings]);
+
+  const handleThinkingEnabledChange = useCallback((value: boolean) => {
+    void applySessionSettings({
+      sessionSettings: {
+        thinkingEnabled: value,
+      },
+      nextWorkspaceSettings: {
+        thinkingEnabled: value,
       },
     });
   }, [applySessionSettings]);
@@ -508,6 +523,23 @@ export function ConversationWorkspaceSettingsPanel(props: Props) {
             </Typography.Title>
             <Typography.Paragraph className="chat-session-settings-section-meta">
               {copy.workspaceSectionMeta}
+            </Typography.Paragraph>
+          </div>
+
+          <div className="chat-session-settings-field">
+            <Typography.Text strong className="chat-session-settings-field-label">
+              {copy.thinkingLabel}
+            </Typography.Text>
+            <div className="chat-session-settings-field-control">
+              <Switch
+                checked={workspaceSettings.thinkingEnabled !== false}
+                loading={savingSettings}
+                onChange={handleThinkingEnabledChange}
+                aria-label={copy.thinkingLabel}
+              />
+            </div>
+            <Typography.Paragraph className="chat-session-settings-hint">
+              {copy.thinkingHint}
             </Typography.Paragraph>
           </div>
 

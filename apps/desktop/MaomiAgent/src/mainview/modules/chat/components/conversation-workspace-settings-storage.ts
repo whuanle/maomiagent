@@ -31,6 +31,7 @@ export type ConversationWorkspaceSettings = {
   selectedChannelId?: string;
   selectedModelId?: string;
   managedExecutionEnabled?: boolean;
+  thinkingEnabled?: boolean;
   permissionRules?: DesktopConversationPermissionRule[];
   memoryEnabled?: boolean;
   sandboxEnabled?: boolean;
@@ -175,6 +176,7 @@ function normalizeConversationWorkspaceSettings(
     selectedChannelId: selectedChannelId && selectedModelId ? selectedChannelId : undefined,
     selectedModelId: selectedChannelId && selectedModelId ? selectedModelId : undefined,
     managedExecutionEnabled: normalizeBooleanSetting(value?.managedExecutionEnabled),
+    thinkingEnabled: normalizeBooleanSetting(value?.thinkingEnabled),
     permissionRules: normalizePermissionRules(value?.permissionRules),
     memoryEnabled: normalizeBooleanSetting(value?.memoryEnabled),
     sandboxEnabled: normalizeBooleanSetting(value?.sandboxEnabled),

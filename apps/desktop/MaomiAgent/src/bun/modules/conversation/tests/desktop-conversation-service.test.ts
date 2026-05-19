@@ -710,6 +710,7 @@ describe("DesktopConversationService", () => {
           }],
           contextCompressionThresholdPercent: 83,
           managedExecutionEnabled: true,
+          thinkingEnabled: false,
           memoryEnabled: true,
           sandboxEnabled: false,
           feishuSmartAssistantEnabled: true,
@@ -746,6 +747,7 @@ describe("DesktopConversationService", () => {
         conversationSettings: {
           contextCompressionThresholdPercent: 85,
           managedExecutionEnabled: true,
+          thinkingEnabled: false,
           memoryEnabled: true,
           sandboxEnabled: false,
           feishuSmartAssistantEnabled: true,
@@ -770,6 +772,7 @@ describe("DesktopConversationService", () => {
         conversationSettings: {
           contextCompressionThresholdPercent: 85,
           managedExecutionEnabled: true,
+          thinkingEnabled: false,
           memoryEnabled: true,
           sandboxEnabled: false,
           feishuSmartAssistantEnabled: true,

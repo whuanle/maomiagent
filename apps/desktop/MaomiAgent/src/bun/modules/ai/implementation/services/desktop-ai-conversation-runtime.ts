@@ -100,6 +100,7 @@ import type {
   DesktopAiExecutionMaterialization,
   DesktopAiExecutionProfileMaterializationInput,
 } from "../../abstraction/models/desktop-ai-one-shot.models";
+import type { DesktopAiProviderServiceConfig } from "../../abstraction/models/desktop-ai-runtime.models";
 import type {
   DesktopAiConversationRuntimeCreateInput,
   DesktopAiConversationContinueTurnInput,
@@ -197,6 +198,14 @@ function readExecutionProfileNumericMetadata(
   );
 }
 
+function readExecutionProfileBooleanMetadata(
+  executionProfile: AiExecutionProfileRef,
+  key: string,
+): boolean | undefined {
+  const metadata = isRecord(executionProfile.metadata) ? executionProfile.metadata : undefined;
+  return typeof metadata?.[key] === "boolean" ? metadata[key] as boolean : undefined;
+}
+
 function readExecutionProfileCompressionThresholdPercent(
   executionProfile: AiExecutionProfileRef,
 ): number {
@@ -211,6 +220,20 @@ function shouldSkipExecutionProfileBudgetPrecheck(executionProfile: AiExecutionP
   const metadata = isRecord(executionProfile.metadata) ? executionProfile.metadata : undefined;
   return metadata?.compactionStatus === "completed"
     && normalizeOptionalPositiveFiniteNumber(metadata.compactionAttempt) !== undefined;
+}
+
+export function applyConversationThinkingPreferenceToServiceConfig(input: {
+  executionProfile: AiExecutionProfileRef;
+  serviceConfig: DesktopAiProviderServiceConfig;
+}): DesktopAiProviderServiceConfig {
+  if (readExecutionProfileBooleanMetadata(input.executionProfile, "thinkingEnabled") !== false) {
+    return input.serviceConfig;
+  }
+
+  return {
+    ...input.serviceConfig,
+    reasoning: undefined,
+  };
 }
 
 function readRunCompactionSummary(run: RunRecord): DesktopConversationCompactionStatusSummary | undefined {
@@ -1597,12 +1620,21 @@ function readExecutionProfile(run: RunRecord, session: SessionRecord): AiExecuti
       : (typeof sessionSettings?.contextCompressionThresholdPercent === "number"
           ? sessionSettings.contextCompressionThresholdPercent
           : undefined);
+  const thinkingEnabled =
+    typeof runSettings?.thinkingEnabled === "boolean"
+      ? runSettings.thinkingEnabled
+      : (typeof sessionSettings?.thinkingEnabled === "boolean"
+          ? sessionSettings.thinkingEnabled
+          : undefined);
   const compaction = isRecord(run.metadata?.compaction)
     ? run.metadata.compaction as Record<string, unknown>
     : undefined;
 
   if (typeof contextCompressionThresholdPercent === "number") {
     metadata.contextCompressionThresholdPercent = contextCompressionThresholdPercent;
+  }
+  if (typeof thinkingEnabled === "boolean") {
+    metadata.thinkingEnabled = thinkingEnabled;
   }
   if (typeof compaction?.status === "string" && compaction.status.trim()) {
     metadata.compactionStatus = compaction.status.trim();
@@ -2713,7 +2745,13 @@ class DesktopConversationTurnPort implements AiTurnPort {
       const turnPort = this.aiRuntime.createTurnPort(
         materialized.runtimeSelector,
         {
-          resolveServiceConfig: materialized.resolveServiceConfig,
+          resolveServiceConfig: async (executionProfile) => {
+            const base = await materialized.resolveServiceConfig(executionProfile);
+            return applyConversationThinkingPreferenceToServiceConfig({
+              executionProfile,
+              serviceConfig: base,
+            });
+          },
         },
       );
 

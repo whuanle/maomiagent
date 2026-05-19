@@ -115,6 +115,9 @@ export function buildConversationSessionDefaultMetadata(workspaceId: string): Re
       ...(workspaceSettings.managedExecutionEnabled !== undefined
         ? { managedExecutionEnabled: workspaceSettings.managedExecutionEnabled }
         : {}),
+      ...(workspaceSettings.thinkingEnabled !== undefined
+        ? { thinkingEnabled: workspaceSettings.thinkingEnabled }
+        : {}),
       ...(workspaceSettings.memoryEnabled !== undefined
         ? { memoryEnabled: workspaceSettings.memoryEnabled }
         : {}),
