@@ -242,7 +242,7 @@ function patchMessageWithToolCall(
 }
 
 function patchMessagesWithToolCall(
-  messages: readonly DesktopConversationMessageEntry[],
+  messages: DesktopConversationSessionDetail["messages"],
   toolCall: DesktopConversationToolCallEntry,
 ): DesktopConversationMessageEntry[] {
   let changed = false;
@@ -254,11 +254,11 @@ function patchMessagesWithToolCall(
     return nextMessage;
   });
 
-  return changed ? nextMessages : messages.slice();
+  return changed ? nextMessages : messages;
 }
 
 function patchTimelineMessagesWithToolCall(
-  timeline: readonly DesktopConversationTimelineEntry[],
+  timeline: DesktopConversationSessionDetail["timeline"],
   toolCall: DesktopConversationToolCallEntry,
 ): DesktopConversationTimelineEntry[] {
   let changed = false;
@@ -279,7 +279,7 @@ function patchTimelineMessagesWithToolCall(
     };
   });
 
-  return changed ? nextTimeline : timeline.slice();
+  return changed ? nextTimeline : timeline;
 }
 
 function buildPendingInteractions(
