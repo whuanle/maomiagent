@@ -332,9 +332,15 @@ function extractFeishuWhiteboardTokens(markdown: string): string[] {
 }
 
 function getDocsMcp(state: FeishuStateView | null) {
-  return state?.smartAssistant.docsMcp
-    ?? state?.managedMcp
-    ?? null
+  const smartAssistantActive = state?.smartAssistant.enabled === true || state?.mode === "developer"
+  if (smartAssistantActive) {
+    return state?.smartAssistant.docsMcp
+      ?? state?.managedMcp
+      ?? null
+  }
+
+  return state?.personalDocs.docsMcp
+    ?? (state?.mode === "personal" ? state.managedMcp : null)
 }
 
 function isRemoteDocsReady(state: FeishuStateView | null): boolean {
@@ -343,17 +349,22 @@ function isRemoteDocsReady(state: FeishuStateView | null): boolean {
 
 function resolveRemoteDocsBlockedMessage(input: {
   state: FeishuStateView | null
+  t: Translate
 }): string {
-  const smartAssistantAuthorized =
-    input.state?.smartAssistant.authStatus === "authorized"
-    || input.state?.developer?.authStatus === "authorized"
-
-  if (!smartAssistantAuthorized) {
+  const smartAssistantActive =
+    input.state?.smartAssistant.enabled === true || input.state?.mode === "developer"
+  if (
+    smartAssistantActive
+    && input.state?.smartAssistant.authStatus !== "authorized"
+    && input.state?.developer?.authStatus !== "authorized"
+  ) {
     return "请先完成飞书智能助手授权。"
   }
 
   if (!getDocsMcp(input.state)?.mcpId?.trim()) {
-    return "飞书文档工作区未就绪，请先完成飞书智能助手配置。"
+    return smartAssistantActive
+      ? "飞书文档工作区正在等待智能助手文档能力就绪，请刷新授权状态后重试。"
+      : "飞书文档工作区未找到可用的文档接入，请先完成飞书接入。"
   }
 
   return ""
@@ -365,6 +376,7 @@ export function FeishuDocsWorkbench(props: Props) {
   const remoteDocsReady = isRemoteDocsReady(props.state)
   const remoteDocsBlockedMessage = resolveRemoteDocsBlockedMessage({
     state: props.state,
+    t: props.t,
   })
   const statePending = Boolean(props.baseUrl.trim()) && !props.state && !props.loadError.trim()
   const [treeQuery, setTreeQuery] = useState(props.initialTreeRootDocId ?? "")

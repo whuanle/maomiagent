@@ -9,6 +9,7 @@ import type {
   FeishuDocTreeView,
   FeishuDocWhiteboardPreviewResult,
   FeishuDocsCapabilitiesView,
+  FeishuPersonalConfigInput,
   FeishuSmartAssistantActionExecuteResultView,
   FeishuSmartAssistantExecuteActionInput,
   FeishuStateView,
@@ -17,6 +18,7 @@ import {
   beginDesktopFeishuDeveloperAuthorization,
   clearDesktopFeishuBotConfig,
   clearDesktopFeishuConfig,
+  clearDesktopFeishuPersonalConfig,
   clearDesktopFeishuSmartAssistantConfig,
   executeDesktopFeishuSmartAssistantAction,
   fetchDesktopFeishuBotState,
@@ -33,6 +35,7 @@ import {
   refreshDesktopFeishuDeveloperToken,
   saveDesktopFeishuBotConfig,
   saveDesktopFeishuDeveloperConfig,
+  saveDesktopFeishuPersonalConfig,
   saveDesktopFeishuWorkspaceDocLocalDraft,
 } from "./desktop-feishu";
 
@@ -44,6 +47,21 @@ function notifyMutation(): void {
 
 export async function fetchFeishuState(_baseUrl: string): Promise<FeishuStateView> {
   return fetchDesktopFeishuState();
+}
+
+export async function saveFeishuPersonalConfig(
+  _baseUrl: string,
+  input: FeishuPersonalConfigInput,
+): Promise<FeishuStateView> {
+  const result = await saveDesktopFeishuPersonalConfig(input);
+  notifyMutation();
+  return result;
+}
+
+export async function clearFeishuPersonalConfig(_baseUrl: string): Promise<FeishuStateView> {
+  const result = await clearDesktopFeishuPersonalConfig();
+  notifyMutation();
+  return result;
 }
 
 export async function saveFeishuDeveloperConfig(

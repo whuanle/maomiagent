@@ -1,10 +1,7 @@
-import { randomUUID } from "node:crypto";
-
 import type { DesktopFeishuPort } from "../../abstraction/ports/desktop-feishu.ports";
 import type { DesktopFeishuActionExecutorPort } from "../../abstraction/ports/desktop-feishu-action-executor.ports";
 import type { DesktopFeishuDocRuntimePort } from "../../abstraction/ports/desktop-feishu-doc-runtime.ports";
 import type {
-  DesktopFeishuSmartAssistantAuthSnapshot,
   DesktopFeishuStorePort,
   DesktopFeishuStoreSnapshot,
 } from "../../abstraction/ports/desktop-feishu-store.ports";
@@ -21,8 +18,6 @@ import type {
   FeishuDocWorkspacePullResult,
   FeishuDocWorkspacePushResult,
   FeishuDocsCapabilitiesView,
-  FeishuOAuthCallbackInput,
-  FeishuOAuthCallbackResult,
   FeishuPersonalConfigInput,
   FeishuSmartAssistantActionExecuteResultView,
   FeishuSmartAssistantExecuteActionInput,
@@ -30,159 +25,41 @@ import type {
   FeishuWorkspaceDocInput,
 } from "../../../../../shared/desktop-feishu";
 import {
-  mergeDesktopFeishuOAuthScopes,
   normalizeDesktopFeishuRedirectUri,
   resolveDesktopFeishuOAuthCallbackOrigin,
 } from "../../../../../shared/desktop-feishu-oauth";
-import {
-  buildDesktopFeishuAuthorizationUrl,
-  DesktopFeishuOAuthError,
-  exchangeDesktopFeishuAuthorizationCode,
-  refreshDesktopFeishuAuthorization,
-  renderDesktopFeishuOAuthCallbackHtml,
-} from "./desktop-feishu-oauth-flow";
 import { hydrateDesktopFeishuStateView } from "./desktop-feishu-state-hydrator";
 
-const PENDING_STATE_MAX_AGE_MS = 10 * 60_000;
-
-function normalizeText(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
+function resolveNormalizedDeveloperRedirect(redirectUri?: string | null) {
+  const nextRedirectUri = normalizeDesktopFeishuRedirectUri(redirectUri);
+  return {
+    redirectUri: nextRedirectUri,
+    redirectOrigin: resolveDesktopFeishuOAuthCallbackOrigin(nextRedirectUri),
+  };
 }
 
-function normalizeUniqueStrings(values?: readonly string[]): string[] {
-  return [...new Set((values ?? [])
-    .map((item) => item.trim())
-    .filter(Boolean))];
+function applyNormalizedDeveloperRedirect(target: {
+  redirectUri: string;
+  redirectOrigin: string;
+}) {
+  const nextRedirect = resolveNormalizedDeveloperRedirect(target.redirectUri);
+  if (
+    target.redirectUri === nextRedirect.redirectUri
+    && target.redirectOrigin === nextRedirect.redirectOrigin
+  ) {
+    return false;
+  }
+
+  target.redirectUri = nextRedirect.redirectUri;
+  target.redirectOrigin = nextRedirect.redirectOrigin;
+  return true;
 }
 
-function clearStoredSmartAssistantTokens(auth: DesktopFeishuSmartAssistantAuthSnapshot): void {
-  delete auth.accessToken;
-  delete auth.refreshToken;
-  delete auth.tokenType;
-  delete auth.scopes;
-}
-
-function clearPendingSmartAssistantAuthorization(
-  auth: DesktopFeishuSmartAssistantAuthSnapshot,
-): void {
-  delete auth.pendingState;
-  delete auth.pendingStateIssuedAt;
-  delete auth.pendingRedirectUri;
-  delete auth.pendingAppId;
-}
-
-function clearSmartAssistantAuthorizationState(state: FeishuStateView): void {
-  state.smartAssistant.authStatus = "idle";
-  state.smartAssistant.hasRefreshToken = false;
-  state.smartAssistant.scopes = [];
-  state.smartAssistant.accessTokenExpiresAt = undefined;
-  state.smartAssistant.refreshTokenExpiresAt = undefined;
-  state.smartAssistant.lastAuthorizedAt = undefined;
-  state.smartAssistant.lastRefreshedAt = undefined;
-  state.smartAssistant.lastError = undefined;
-  state.smartAssistant.statusNotice = undefined;
-
-  if (!state.developer) {
-    return;
-  }
-
-  state.developer.authStatus = "idle";
-  state.developer.hasRefreshToken = false;
-  state.developer.scopes = [];
-  state.developer.accessTokenExpiresAt = undefined;
-  state.developer.refreshTokenExpiresAt = undefined;
-  state.developer.lastAuthorizedAt = undefined;
-  state.developer.lastRefreshedAt = undefined;
-  state.developer.lastError = undefined;
-  state.developer.statusNotice = undefined;
-}
-
-function applyFixedSmartAssistantRedirects(state: FeishuStateView): boolean {
-  const nextRedirectUri = normalizeDesktopFeishuRedirectUri();
-  const nextRedirectOrigin = resolveDesktopFeishuOAuthCallbackOrigin();
-
-  let changed = false;
-
-  if (state.smartAssistant.redirectUri !== nextRedirectUri) {
-    state.smartAssistant.redirectUri = nextRedirectUri;
-    changed = true;
-  }
-
-  if (state.smartAssistant.redirectOrigin !== nextRedirectOrigin) {
-    state.smartAssistant.redirectOrigin = nextRedirectOrigin;
-    changed = true;
-  }
-
-  if (state.developer) {
-    if (state.developer.redirectUri !== nextRedirectUri) {
-      state.developer.redirectUri = nextRedirectUri;
-      changed = true;
-    }
-
-    if (state.developer.redirectOrigin !== nextRedirectOrigin) {
-      state.developer.redirectOrigin = nextRedirectOrigin;
-      changed = true;
-    }
-  }
-
-  return changed;
-}
-
-function applyStoredSmartAssistantPublicState(store: DesktopFeishuStoreSnapshot): boolean {
-  const auth = store.auth.smartAssistant;
-  const hasAppSecret = Boolean(normalizeText(auth.appSecret));
-  const hasRefreshToken = Boolean(normalizeText(auth.refreshToken));
-  const scopes = normalizeUniqueStrings(auth.scopes);
-  const currentSmartAssistantScopes = normalizeUniqueStrings(store.state.smartAssistant.scopes);
-
-  let changed = false;
-
-  if (store.state.smartAssistant.hasAppSecret !== hasAppSecret) {
-    store.state.smartAssistant.hasAppSecret = hasAppSecret;
-    changed = true;
-  }
-
-  if (store.state.smartAssistant.hasRefreshToken !== hasRefreshToken) {
-    store.state.smartAssistant.hasRefreshToken = hasRefreshToken;
-    changed = true;
-  }
-
-  if (scopes.length > 0 && scopes.join(" ") !== currentSmartAssistantScopes.join(" ")) {
-    store.state.smartAssistant.scopes = scopes;
-    changed = true;
-  }
-
-  if (store.state.developer) {
-    const currentDeveloperScopes = normalizeUniqueStrings(store.state.developer.scopes);
-
-    if (store.state.developer.hasAppSecret !== hasAppSecret) {
-      store.state.developer.hasAppSecret = hasAppSecret;
-      changed = true;
-    }
-
-    if (store.state.developer.hasRefreshToken !== hasRefreshToken) {
-      store.state.developer.hasRefreshToken = hasRefreshToken;
-      changed = true;
-    }
-
-    if (scopes.length > 0 && scopes.join(" ") !== currentDeveloperScopes.join(" ")) {
-      store.state.developer.scopes = scopes;
-      changed = true;
-    }
-  }
-
-  return changed;
-}
-
-function applyFeishuSmartAssistantPublicShape(store: DesktopFeishuStoreSnapshot): boolean {
-  const redirectsChanged = applyFixedSmartAssistantRedirects(store.state);
-  const authChanged = applyStoredSmartAssistantPublicState(store);
-  return redirectsChanged || authChanged;
-}
-
-function deriveAuthorizationScopes(store: DesktopFeishuStoreSnapshot): string[] {
-  const hydrated = hydrateDesktopFeishuStateView(store.state);
-  return mergeDesktopFeishuOAuthScopes(hydrated.catalog.developerScopes);
+function shouldNormalizeSmartAssistantRedirect(state: FeishuStateView["smartAssistant"]) {
+  return state.enabled
+    || Boolean(state.appId?.trim())
+    || Boolean(state.redirectUri.trim())
+    || Boolean(state.redirectOrigin.trim());
 }
 
 export class DesktopFeishuService implements DesktopFeishuPort {
@@ -192,22 +69,40 @@ export class DesktopFeishuService implements DesktopFeishuPort {
     private readonly docRuntime: DesktopFeishuDocRuntimePort,
   ) {}
 
-  private hydrateStoreState(store: DesktopFeishuStoreSnapshot): FeishuStateView {
-    applyFeishuSmartAssistantPublicShape(store);
-    return hydrateDesktopFeishuStateView(store.state);
+  private normalizeStoredDeveloperRedirects(state: FeishuStateView) {
+    let changed = false;
+
+    if (state.developer) {
+      changed = applyNormalizedDeveloperRedirect(state.developer) || changed;
+    }
+
+    if (shouldNormalizeSmartAssistantRedirect(state.smartAssistant)) {
+      changed = applyNormalizedDeveloperRedirect(state.smartAssistant) || changed;
+    }
+
+    return changed;
+  }
+
+  private async readStateStore(): Promise<DesktopFeishuStoreSnapshot> {
+    const store = await this.store.read();
+    if (this.normalizeStoredDeveloperRedirects(store.state as FeishuStateView)) {
+      await this.store.write(store);
+    }
+    return store;
+  }
+
+  private hydrateState(state: FeishuStateView): FeishuStateView {
+    return hydrateDesktopFeishuStateView(state);
   }
 
   async getState(): Promise<FeishuStateView> {
-    const store = await this.store.read();
-    if (applyFeishuSmartAssistantPublicShape(store)) {
-      await this.store.write(store);
-    }
-    return this.hydrateStoreState(store);
+    const store = await this.readStateStore();
+    return this.hydrateState(store.state as FeishuStateView);
   }
 
   async savePersonalConfig(input: FeishuPersonalConfigInput): Promise<FeishuStateView> {
     const payload = input as any;
-    const store = await this.store.read();
+    const store = await this.readStateStore();
     store.state.mode = "personal";
     store.state.personalDocs.enabled = true;
     store.state.personalDocs.serverUrl = payload.serverUrl ?? "";
@@ -226,11 +121,11 @@ export class DesktopFeishuService implements DesktopFeishuPort {
       discoveredTools: [],
     };
     await this.store.write(store);
-    return this.hydrateStoreState(store);
+    return this.hydrateState(store.state as FeishuStateView);
   }
 
   async clearPersonalConfig(): Promise<FeishuStateView> {
-    const store = await this.store.read();
+    const store = await this.readStateStore();
     store.state.mode = "none";
     store.state.personal = null;
     store.state.personalDocs = {
@@ -239,56 +134,37 @@ export class DesktopFeishuService implements DesktopFeishuPort {
       docsMcp: null,
     };
     await this.store.write(store);
-    return this.hydrateStoreState(store);
+    return this.hydrateState(store.state as FeishuStateView);
   }
 
   async saveDeveloperConfig(input: FeishuDeveloperConfigInput): Promise<FeishuStateView> {
     const payload = input as any;
-    const store = await this.store.read();
+    const store = await this.readStateStore();
     const now = new Date().toISOString();
-    const nextAppId = normalizeText(payload.appId);
-    const providedAppSecret = normalizeText(payload.appSecret);
-    if (providedAppSecret) {
-      store.auth.smartAssistant.appSecret = providedAppSecret;
-    }
-
-    const previousAppId = normalizeText(store.state.smartAssistant.appId);
-    const configurationChanged = previousAppId !== nextAppId || Boolean(providedAppSecret);
-
-    if (configurationChanged) {
-      clearStoredSmartAssistantTokens(store.auth.smartAssistant);
-      clearPendingSmartAssistantAuthorization(store.auth.smartAssistant);
-      clearSmartAssistantAuthorizationState(store.state);
-    }
-
+    const nextRedirect = resolveNormalizedDeveloperRedirect(payload.redirectUri);
     store.state.mode = "developer";
     store.state.developer = {
-      appId: nextAppId,
-      hasAppSecret: false,
-      redirectUri: normalizeDesktopFeishuRedirectUri(),
-      redirectOrigin: resolveDesktopFeishuOAuthCallbackOrigin(),
-      authStatus: store.state.developer?.authStatus ?? "idle",
+      appId: payload.appId ?? "",
+      hasAppSecret: Boolean(payload.appSecret),
+      redirectUri: nextRedirect.redirectUri,
+      redirectOrigin: nextRedirect.redirectOrigin,
+      authStatus: "idle",
       authMethod: "oauth",
       hasRefreshToken: false,
-      scopes: store.state.developer?.scopes ?? [],
-      allowedTools: store.state.developer?.allowedTools ?? [],
-      accessTokenExpiresAt: store.state.developer?.accessTokenExpiresAt,
-      refreshTokenExpiresAt: store.state.developer?.refreshTokenExpiresAt,
-      lastAuthorizedAt: store.state.developer?.lastAuthorizedAt,
-      lastRefreshedAt: store.state.developer?.lastRefreshedAt,
-      lastError: store.state.developer?.lastError,
-      statusNotice: store.state.developer?.statusNotice,
-      autoRefreshTask: store.state.developer?.autoRefreshTask ?? {
+      scopes: [],
+      allowedTools: [],
+      autoRefreshTask: {
         enabled: false,
       },
     };
     store.state.smartAssistant = {
       ...store.state.smartAssistant,
       enabled: true,
-      appId: nextAppId,
-      hasAppSecret: false,
-      redirectUri: normalizeDesktopFeishuRedirectUri(),
-      redirectOrigin: resolveDesktopFeishuOAuthCallbackOrigin(),
+      appId: payload.appId ?? "",
+      hasAppSecret: Boolean(payload.appSecret),
+      redirectUri: nextRedirect.redirectUri,
+      redirectOrigin: nextRedirect.redirectOrigin,
+      authStatus: "idle",
       hasRefreshToken: false,
       docsMcp: {
         mcpId: "desktop.feishu.smart-assistant",
@@ -299,268 +175,52 @@ export class DesktopFeishuService implements DesktopFeishuPort {
         updatedAt: now,
       },
     };
-    applyFeishuSmartAssistantPublicShape(store);
     await this.store.write(store);
-    return this.hydrateStoreState(store);
+    return this.hydrateState(store.state as FeishuStateView);
   }
 
   async beginDeveloperAuthorization(
     input: FeishuDeveloperConfigInput,
   ): Promise<FeishuDeveloperAuthorizeResult> {
     const payload = input as any;
-    const store = await this.store.read();
-    const appId = normalizeText(store.state.smartAssistant.appId) || normalizeText(payload.appId);
-    const appSecret = normalizeText(store.auth.smartAssistant.appSecret);
-
-    if (!appId) {
-      throw new Error("Please save the Feishu App ID before starting authorization.");
-    }
-    if (!appSecret) {
-      throw new Error("Please save the Feishu App Secret before starting authorization.");
-    }
-
-    const redirectUri = normalizeDesktopFeishuRedirectUri();
-    const oauthState = randomUUID();
-    const scopes = deriveAuthorizationScopes(store);
-
-    store.auth.smartAssistant.pendingState = oauthState;
-    store.auth.smartAssistant.pendingStateIssuedAt = new Date().toISOString();
-    store.auth.smartAssistant.pendingRedirectUri = redirectUri;
-    store.auth.smartAssistant.pendingAppId = appId;
-
+    const store = await this.readStateStore();
     if (store.state.developer) {
       store.state.developer.authStatus = "pending";
-      store.state.developer.lastError = undefined;
-      store.state.developer.statusNotice = "等待授权回调";
     }
     store.state.smartAssistant.authStatus = "pending";
-    store.state.smartAssistant.lastError = undefined;
-    store.state.smartAssistant.statusNotice = "等待授权回调";
-
-    applyFeishuSmartAssistantPublicShape(store);
     await this.store.write(store);
 
     return {
-      item: this.hydrateStoreState(store),
-      authUrl: buildDesktopFeishuAuthorizationUrl({
-        appId,
-        redirectUri,
-        state: oauthState,
-        scopes,
-      }),
-    };
-  }
-
-  async handleOAuthCallback(input: FeishuOAuthCallbackInput): Promise<FeishuOAuthCallbackResult> {
-    const store = await this.store.read();
-    const pendingState = normalizeText(store.auth.smartAssistant.pendingState);
-    const pendingIssuedAt = normalizeText(store.auth.smartAssistant.pendingStateIssuedAt);
-    const redirectUri =
-      normalizeText(store.auth.smartAssistant.pendingRedirectUri)
-      || normalizeDesktopFeishuRedirectUri();
-    const appId =
-      normalizeText(store.auth.smartAssistant.pendingAppId)
-      || normalizeText(store.state.smartAssistant.appId)
-      || normalizeText(store.state.developer?.appId);
-    const appSecret = normalizeText(store.auth.smartAssistant.appSecret);
-
-    const fail = async (
-      message: string,
-      authStatus: FeishuStateView["smartAssistant"]["authStatus"] = "error",
-    ): Promise<FeishuOAuthCallbackResult> => {
-      clearPendingSmartAssistantAuthorization(store.auth.smartAssistant);
-      store.state.smartAssistant.authStatus = authStatus;
-      store.state.smartAssistant.lastError = message;
-      store.state.smartAssistant.statusNotice = "授权失败，请返回应用重试";
-
-      if (store.state.developer) {
-        store.state.developer.authStatus = authStatus;
-        store.state.developer.lastError = message;
-        store.state.developer.statusNotice = "授权失败，请返回应用重试";
-      }
-
-      applyFeishuSmartAssistantPublicShape(store);
-      await this.store.write(store);
-
-      return {
-        success: false,
-        html: renderDesktopFeishuOAuthCallbackHtml({
-          success: false,
-          message: "授权失败，请返回应用重试",
-        }),
-      };
-    };
-
-    const returnedError = normalizeText(input.error);
-    if (returnedError) {
-      const description = normalizeText(input.errorDescription);
-      return fail(
-        description
-          ? `Feishu OAuth returned error: ${returnedError} (${description})`
-          : `Feishu OAuth returned error: ${returnedError}`,
-      );
-    }
-
-    if (!pendingState || normalizeText(input.state) !== pendingState) {
-      return fail("Feishu OAuth state mismatch.");
-    }
-
-    if (!pendingIssuedAt) {
-      return fail("Feishu OAuth state is missing.");
-    }
-
-    const issuedAtMs = Date.parse(pendingIssuedAt);
-    if (!Number.isFinite(issuedAtMs) || Date.now() - issuedAtMs > PENDING_STATE_MAX_AGE_MS) {
-      return fail("Feishu OAuth state expired.");
-    }
-
-    const code = normalizeText(input.code);
-    if (!code) {
-      return fail("Feishu OAuth callback did not include a code.");
-    }
-
-    if (!appId || !appSecret) {
-      return fail("Desktop Feishu app credentials are incomplete.");
-    }
-
-    let token;
-    try {
-      token = await exchangeDesktopFeishuAuthorizationCode({
-        appId,
-        appSecret,
-        code,
-        redirectUri,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return fail(message);
-    }
-
-    store.auth.smartAssistant.accessToken = token.accessToken;
-    if (token.refreshToken) {
-      store.auth.smartAssistant.refreshToken = token.refreshToken;
-    } else {
-      delete store.auth.smartAssistant.refreshToken;
-    }
-    store.auth.smartAssistant.tokenType = token.tokenType;
-    store.auth.smartAssistant.scopes = token.scopes;
-    clearPendingSmartAssistantAuthorization(store.auth.smartAssistant);
-
-    const now = new Date().toISOString();
-    store.state.smartAssistant.authStatus = "authorized";
-    store.state.smartAssistant.accessTokenExpiresAt = token.accessTokenExpiresAt;
-    store.state.smartAssistant.refreshTokenExpiresAt = token.refreshTokenExpiresAt;
-    store.state.smartAssistant.lastAuthorizedAt = now;
-    store.state.smartAssistant.lastRefreshedAt = now;
-    store.state.smartAssistant.lastError = undefined;
-    store.state.smartAssistant.statusNotice = "授权成功，即将关闭";
-
-    if (store.state.developer) {
-      store.state.developer.authStatus = "authorized";
-      store.state.developer.accessTokenExpiresAt = token.accessTokenExpiresAt;
-      store.state.developer.refreshTokenExpiresAt = token.refreshTokenExpiresAt;
-      store.state.developer.lastAuthorizedAt = now;
-      store.state.developer.lastRefreshedAt = now;
-      store.state.developer.lastError = undefined;
-      store.state.developer.statusNotice = "授权成功，即将关闭";
-    }
-
-    applyFeishuSmartAssistantPublicShape(store);
-    await this.store.write(store);
-
-    return {
-      success: true,
-      html: renderDesktopFeishuOAuthCallbackHtml({
-        success: true,
-        message: "授权成功，即将关闭",
-      }),
-    };
+      item: store.state,
+      authUrl: `https://open.feishu.cn/open-apis/authen/v1/index?app_id=${encodeURIComponent(payload.appId ?? "")}`,
+    } as unknown as FeishuDeveloperAuthorizeResult;
   }
 
   async refreshDeveloperToken(): Promise<FeishuStateView> {
-    const store = await this.store.read();
-    const appId = normalizeText(store.state.smartAssistant.appId) || normalizeText(store.state.developer?.appId);
-    const appSecret = normalizeText(store.auth.smartAssistant.appSecret);
-    const refreshToken = normalizeText(store.auth.smartAssistant.refreshToken);
-
-    if (!appId || !appSecret || !refreshToken) {
-      throw new Error("Refresh token is missing. Please authorize again.");
-    }
-
-    let token;
-    try {
-      token = await refreshDesktopFeishuAuthorization({
-        appId,
-        appSecret,
-        refreshToken,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const authStatus =
-        error instanceof DesktopFeishuOAuthError
-        && error.kind === "provider_rejected"
-        && [20026, 20037, 20064, 20073, 20074].includes(error.code ?? 0)
-          ? "expired"
-          : "error";
-
-      store.state.smartAssistant.authStatus = authStatus;
-      store.state.smartAssistant.lastError = message;
-      store.state.smartAssistant.statusNotice = authStatus === "expired"
-        ? "授权已过期，请重新授权"
-        : "授权刷新失败，请稍后重试";
-
-      if (store.state.developer) {
-        store.state.developer.authStatus = authStatus;
-        store.state.developer.lastError = message;
-        store.state.developer.statusNotice = store.state.smartAssistant.statusNotice;
-      }
-
-      applyFeishuSmartAssistantPublicShape(store);
-      await this.store.write(store);
-      throw error;
-    }
-
-    store.auth.smartAssistant.accessToken = token.accessToken;
-    if (token.refreshToken) {
-      store.auth.smartAssistant.refreshToken = token.refreshToken;
-    } else {
-      delete store.auth.smartAssistant.refreshToken;
-    }
-    store.auth.smartAssistant.tokenType = token.tokenType;
-    store.auth.smartAssistant.scopes = token.scopes;
-
+    const store = await this.readStateStore();
     const now = new Date().toISOString();
-    store.state.smartAssistant.authStatus = "authorized";
-    store.state.smartAssistant.accessTokenExpiresAt = token.accessTokenExpiresAt;
-    store.state.smartAssistant.refreshTokenExpiresAt = token.refreshTokenExpiresAt;
-    store.state.smartAssistant.lastRefreshedAt = now;
-    store.state.smartAssistant.lastError = undefined;
-    store.state.smartAssistant.statusNotice = "授权已刷新";
-
     if (store.state.developer) {
       store.state.developer.authStatus = "authorized";
-      store.state.developer.accessTokenExpiresAt = token.accessTokenExpiresAt;
-      store.state.developer.refreshTokenExpiresAt = token.refreshTokenExpiresAt;
+      store.state.developer.hasRefreshToken = true;
       store.state.developer.lastRefreshedAt = now;
-      store.state.developer.lastError = undefined;
-      store.state.developer.statusNotice = "授权已刷新";
     }
-
-    applyFeishuSmartAssistantPublicShape(store);
+    store.state.smartAssistant.authStatus = "authorized";
+    store.state.smartAssistant.hasRefreshToken = true;
+    store.state.smartAssistant.lastRefreshedAt = now;
     await this.store.write(store);
-    return this.hydrateStoreState(store);
+    return this.hydrateState(store.state as FeishuStateView);
   }
 
   async clearSmartAssistantConfig(): Promise<FeishuStateView> {
-    const store = await this.store.read();
+    const store = await this.readStateStore();
     store.state.mode = store.state.personalDocs.enabled ? "personal" : "none";
     store.state.developer = null;
     store.state.smartAssistant = {
       enabled: false,
       appId: "",
       hasAppSecret: false,
-      redirectUri: normalizeDesktopFeishuRedirectUri(),
-      redirectOrigin: resolveDesktopFeishuOAuthCallbackOrigin(),
+      redirectUri: "",
+      redirectOrigin: "",
       authStatus: "idle",
       authMethod: "oauth",
       hasRefreshToken: false,
@@ -582,16 +242,12 @@ export class DesktopFeishuService implements DesktopFeishuPort {
       domains: [],
       actions: [],
     };
-    delete store.auth.smartAssistant.appSecret;
-    clearStoredSmartAssistantTokens(store.auth.smartAssistant);
-    clearPendingSmartAssistantAuthorization(store.auth.smartAssistant);
-    applyFeishuSmartAssistantPublicShape(store);
     await this.store.write(store);
-    return this.hydrateStoreState(store);
+    return this.hydrateState(store.state as FeishuStateView);
   }
 
   async clearConfig(): Promise<FeishuStateView> {
-    const store = await this.store.read();
+    const store = await this.readStateStore();
     const next: DesktopFeishuStoreSnapshot = {
       ...store,
       state: {
@@ -605,8 +261,8 @@ export class DesktopFeishuService implements DesktopFeishuPort {
           enabled: false,
           appId: "",
           hasAppSecret: false,
-          redirectUri: normalizeDesktopFeishuRedirectUri(),
-          redirectOrigin: resolveDesktopFeishuOAuthCallbackOrigin(),
+          redirectUri: "",
+          redirectOrigin: "",
           authStatus: "idle",
           authMethod: "oauth",
           hasRefreshToken: false,
@@ -643,14 +299,10 @@ export class DesktopFeishuService implements DesktopFeishuPort {
         connectionStatus: "stopped",
         updatedAt: new Date().toISOString(),
       },
-      auth: {
-        smartAssistant: {},
-      },
     };
     next.docs = store.docs;
-    applyFeishuSmartAssistantPublicShape(next);
     await this.store.write(next);
-    return this.hydrateStoreState(next);
+    return this.hydrateState(next.state as FeishuStateView);
   }
 
   async getBotState(): Promise<FeishuBotStateView> {
@@ -746,4 +398,5 @@ export class DesktopFeishuService implements DesktopFeishuPort {
   ): Promise<FeishuSmartAssistantActionExecuteResultView> {
     return this.actionExecutor.executeSmartAssistantAction(input);
   }
+
 }

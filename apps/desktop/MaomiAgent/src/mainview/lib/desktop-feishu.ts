@@ -11,6 +11,7 @@ import type {
   FeishuDocWorkspacePullResult,
   FeishuDocWorkspacePushResult,
   FeishuDocsCapabilitiesView,
+  FeishuPersonalConfigInput,
   FeishuSmartAssistantActionExecuteResultView,
   FeishuSmartAssistantExecuteActionInput,
   FeishuStateView,
@@ -19,6 +20,8 @@ import { DESKTOP_WINDOW_BRIDGE_READY_EVENT } from "./desktop-window";
 
 type DesktopFeishuBridge = {
   getDesktopFeishuState: () => Promise<FeishuStateView>;
+  saveDesktopFeishuPersonalConfig: (input: FeishuPersonalConfigInput) => Promise<FeishuStateView>;
+  clearDesktopFeishuPersonalConfig: () => Promise<FeishuStateView>;
   saveDesktopFeishuDeveloperConfig: (input: FeishuDeveloperConfigInput) => Promise<FeishuStateView>;
   beginDesktopFeishuDeveloperAuthorization: (
     input: FeishuDeveloperConfigInput,
@@ -92,6 +95,14 @@ export function hasDesktopFeishuBridge(): boolean {
 
 export function fetchDesktopFeishuState(): Promise<FeishuStateView> {
   return getDesktopFeishuBridge().getDesktopFeishuState();
+}
+
+export function saveDesktopFeishuPersonalConfig(input: FeishuPersonalConfigInput): Promise<FeishuStateView> {
+  return getDesktopFeishuBridge().saveDesktopFeishuPersonalConfig(input);
+}
+
+export function clearDesktopFeishuPersonalConfig(): Promise<FeishuStateView> {
+  return getDesktopFeishuBridge().clearDesktopFeishuPersonalConfig();
 }
 
 export function saveDesktopFeishuDeveloperConfig(input: FeishuDeveloperConfigInput): Promise<FeishuStateView> {

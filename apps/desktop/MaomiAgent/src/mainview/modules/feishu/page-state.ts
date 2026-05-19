@@ -2,8 +2,9 @@ import type { WorkspaceRestoreState } from "../../lib/workspace"
 import type { FeishuDocsWorkbenchUiState } from "./components/docs-workbench"
 
 export type FeishuPageView =
+  | "personal-docs"
+  | "personal-docs-workspace"
   | "bot"
-  | "docs-workspace"
   | "smart-assistant"
 
 export type FeishuPagePersistentState = {
@@ -64,7 +65,7 @@ export function getFeishuPageStorageKey(workspaceId?: string): string {
 export function readFeishuPagePersistentState(workspaceId?: string): FeishuPagePersistentState {
   if (typeof window === "undefined") {
     return {
-      pageView: "bot",
+      pageView: "personal-docs",
       docs: DEFAULT_FEISHU_DOCS_UI_STATE,
     }
   }
@@ -73,7 +74,7 @@ export function readFeishuPagePersistentState(workspaceId?: string): FeishuPageP
     const rawValue = window.localStorage.getItem(getFeishuPageStorageKey(workspaceId))
     if (!rawValue) {
       return {
-        pageView: "bot",
+        pageView: "personal-docs",
         docs: DEFAULT_FEISHU_DOCS_UI_STATE,
       }
     }
@@ -87,11 +88,11 @@ export function readFeishuPagePersistentState(workspaceId?: string): FeishuPageP
       pageView:
         parsed.pageView === "smart-assistant"
           ? "smart-assistant"
-          : parsed.pageView === "docs-workspace" || parsed.pageView === "personal-docs-workspace"
-          ? "docs-workspace"
+          : parsed.pageView === "personal-docs-workspace"
+          ? "personal-docs-workspace"
           : parsed.pageView === "bot"
             ? "bot"
-            : "bot",
+            : "personal-docs",
       docs: {
         activeDocId: typeof parsed.docs?.activeDocId === "string" ? parsed.docs.activeDocId : undefined,
         treeRootDocId: typeof parsed.docs?.treeRootDocId === "string" ? parsed.docs.treeRootDocId : "",
@@ -100,7 +101,7 @@ export function readFeishuPagePersistentState(workspaceId?: string): FeishuPageP
     }
   } catch {
     return {
-      pageView: "bot",
+      pageView: "personal-docs",
       docs: DEFAULT_FEISHU_DOCS_UI_STATE,
     }
   }

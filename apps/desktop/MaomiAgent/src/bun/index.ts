@@ -666,6 +666,10 @@ try {
             removeDesktopWechatAccount: ({ accountId }) =>
               resolveDesktopWechatCommandPort(host).removeAccount(accountId),
             getDesktopFeishuState: () => resolveDesktopFeishuQueryPort(host).getState(),
+            saveDesktopFeishuPersonalConfig: (input) =>
+              resolveDesktopFeishuCommandPort(host).savePersonalConfig(input),
+            clearDesktopFeishuPersonalConfig: () =>
+              resolveDesktopFeishuCommandPort(host).clearPersonalConfig(),
             saveDesktopFeishuDeveloperConfig: (input) =>
               resolveDesktopFeishuCommandPort(host).saveDeveloperConfig(input),
             beginDesktopFeishuDeveloperAuthorization: (input) =>

@@ -51,7 +51,6 @@ type Props = {
   loadError: string
   assistantAppId: string
   assistantAppSecret: string
-  assistantHasSavedSecret: boolean
   assistantRedirectUri: string
   saving: boolean
   authorizing: boolean
@@ -174,7 +173,10 @@ function renderCredentialTag(value: FeishuSmartAssistantDomainView["credentialKi
   return <Tag variant="filled">Mixed</Tag>
 }
 
-function renderConnectionKindTag(_value: FeishuSmartAssistantConnectionProfileView["kind"]) {
+function renderConnectionKindTag(value: FeishuSmartAssistantConnectionProfileView["kind"]) {
+  if (value === "personal_docs_mcp") {
+    return <Tag color="blue" variant="filled">个人文档 MCP</Tag>
+  }
   return <Tag color="green" variant="filled">智能助手 OAuth</Tag>
 }
 
@@ -1672,25 +1674,15 @@ export function FeishuSmartAssistantPanel(props: Props) {
                   />
                 </div>
                 <div className="feishu-assistant-access-field">
-                  <Space size={8} align="center">
-                    <Text strong>智能助手应用 App Secret</Text>
-                    {props.assistantHasSavedSecret ? (
-                      <Tag color="green" variant="filled">已保存</Tag>
-                    ) : null}
-                  </Space>
+                  <Text strong>智能助手应用 App Secret</Text>
                   <Input.Password
                     size="large"
                     className="feishu-assistant-access-input"
                     value={props.assistantAppSecret}
-                    placeholder={props.assistantHasSavedSecret
-                      ? "当前密钥已保存在本地，重新输入才会覆盖"
-                      : "输入飞书智能助手应用 App Secret"}
+                    placeholder={assistant?.hasAppSecret ? "已保存，如需更新请重新输入" : "输入飞书智能助手应用 App Secret"}
                     autoComplete="new-password"
                     onChange={(event) => props.onAssistantAppSecretChange(event.target.value)}
                   />
-                  {props.assistantHasSavedSecret && !props.assistantAppSecret.trim() ? (
-                    <Text type="secondary">当前密钥已保存在本地；留空表示保持现有密钥。</Text>
-                  ) : null}
                 </div>
                 <div className="feishu-assistant-access-field">
                   <Text strong>OAuth 回调地址</Text>
@@ -1721,7 +1713,7 @@ export function FeishuSmartAssistantPanel(props: Props) {
                     className="feishu-assistant-access-action-button is-third-row"
                     icon={<LinkOutlined />}
                     loading={props.authorizing}
-                    disabled={!assistant?.appId || !props.assistantHasSavedSecret}
+                    disabled={!assistant?.appId || !assistant.hasAppSecret}
                     onClick={props.onAuthorize}
                   >
                     发起授权

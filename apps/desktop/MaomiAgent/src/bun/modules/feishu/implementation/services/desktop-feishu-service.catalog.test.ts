@@ -91,9 +91,6 @@ function createStoreSnapshot(): DesktopFeishuStoreSnapshot {
     state: createState(),
     bot: createBotState(),
     docs: {} as Record<string, FeishuDocContentView>,
-    auth: {
-      smartAssistant: {},
-    },
   };
 }
 
@@ -149,6 +146,68 @@ function createService(snapshot = createStoreSnapshot()) {
   return new DesktopFeishuService(store, actionExecutor, docRuntime);
 }
 
+function createServiceHarness(snapshot = createStoreSnapshot()) {
+  let current = snapshot;
+  let writeCount = 0;
+
+  const store = {
+    read: async () => current,
+    write: async (next: DesktopFeishuStoreSnapshot) => {
+      writeCount += 1;
+      current = next;
+    },
+  };
+
+  const actionExecutor = {
+    executeSmartAssistantAction: async () => {
+      throw new Error("not used in catalog test");
+    },
+  };
+
+  const docRuntime = {
+    getDocsCapabilities: async () => {
+      throw new Error("not used in catalog test");
+    },
+    getDocTree: async () => {
+      throw new Error("not used in catalog test");
+    },
+    getDocContent: async () => {
+      throw new Error("not used in catalog test");
+    },
+    getDocMediaPreviewUrls: async () => {
+      throw new Error("not used in catalog test");
+    },
+    getDocWhiteboardPreviewUrls: async () => {
+      throw new Error("not used in catalog test");
+    },
+    openWorkspaceDoc: async () => {
+      throw new Error("not used in catalog test");
+    },
+    getWorkspaceDocLocalDraft: async () => {
+      throw new Error("not used in catalog test");
+    },
+    saveWorkspaceDocLocalDraft: async () => {
+      throw new Error("not used in catalog test");
+    },
+    pullWorkspaceDoc: async () => {
+      throw new Error("not used in catalog test");
+    },
+    pushWorkspaceDoc: async () => {
+      throw new Error("not used in catalog test");
+    },
+  };
+
+  return {
+    service: new DesktopFeishuService(store, actionExecutor, docRuntime),
+    readSnapshot() {
+      return current;
+    },
+    getWriteCount() {
+      return writeCount;
+    },
+  };
+}
+
 describe("DesktopFeishuService smart assistant catalog hydration", () => {
   test("hydrates smart assistant directory data for an unconfigured state", async () => {
     const service = createService();
@@ -159,6 +218,7 @@ describe("DesktopFeishuService smart assistant catalog hydration", () => {
     expect(state.smartAssistant.actions.length).toBeGreaterThan(0);
     expect(state.smartAssistant.connectionProfiles).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({ kind: "personal_docs_mcp" }),
         expect.objectContaining({ kind: "developer_oauth" }),
       ]),
     );
@@ -196,11 +256,14 @@ describe("DesktopFeishuService smart assistant catalog hydration", () => {
     const state = await service.saveDeveloperConfig({
       appId: "cli_test_app",
       appSecret: "secret-1",
-      redirectUri: "https://example.com/should-not-win",
     });
 
     expect(state.mode).toBe("developer");
     expect(state.smartAssistant.enabled).toBe(true);
+    expect(state.developer?.redirectUri).toBe(resolveDesktopFeishuOAuthCallbackUrl());
+    expect(state.developer?.redirectOrigin).toBe(resolveDesktopFeishuOAuthCallbackOrigin());
+    expect(state.smartAssistant.redirectUri).toBe(resolveDesktopFeishuOAuthCallbackUrl());
+    expect(state.smartAssistant.redirectOrigin).toBe(resolveDesktopFeishuOAuthCallbackOrigin());
     expect(state.smartAssistant.actions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ actionId: "docs.search", status: "ready" }),
@@ -217,25 +280,46 @@ describe("DesktopFeishuService smart assistant catalog hydration", () => {
     expect(state.smartAssistant.runtimePolicy.controlPlane).toBe("ready");
     expect(state.catalog.developerScopes).toContain("search:message");
     expect(state.developer?.allowedTools).toContain("create-doc");
-    expect(state.smartAssistant.hasAppSecret).toBe(true);
-    expect(state.smartAssistant.redirectUri).toBe(resolveDesktopFeishuOAuthCallbackUrl());
-    expect(state.smartAssistant.redirectOrigin).toBe(
-      resolveDesktopFeishuOAuthCallbackOrigin(),
-    );
-    expect(state.developer?.redirectUri).toBe(resolveDesktopFeishuOAuthCallbackUrl());
   });
 
-  test("migrates legacy loopback callback metadata to the fixed callback address", async () => {
+  test("normalizes legacy callback values on read and rewrites the store", async () => {
     const snapshot = createStoreSnapshot();
-    snapshot.state.smartAssistant.redirectUri = "http://127.0.0.1/desktop/feishu/oauth/callback";
-    snapshot.state.smartAssistant.redirectOrigin = "http://127.0.0.1";
+    snapshot.state.mode = "developer";
+    snapshot.state.developer = {
+      appId: "cli_test_app",
+      hasAppSecret: true,
+      redirectUri: "http://127.0.0.1/desktop/feishu/oauth/callback",
+      redirectOrigin: "http://127.0.0.1",
+      authStatus: "idle",
+      authMethod: "oauth",
+      hasRefreshToken: false,
+      scopes: [],
+      allowedTools: [],
+      autoRefreshTask: {
+        enabled: false,
+      },
+    };
+    snapshot.state.smartAssistant = {
+      ...snapshot.state.smartAssistant,
+      enabled: true,
+      appId: "cli_test_app",
+      hasAppSecret: true,
+      redirectUri: "http://localhost:39091/desktop/feishu/oauth/callback",
+      redirectOrigin: "http://localhost:39091",
+    };
 
-    const service = createService(snapshot);
-    const state = await service.getState();
+    const harness = createServiceHarness(snapshot);
 
+    const state = await harness.service.getState();
+
+    expect(state.developer?.redirectUri).toBe(resolveDesktopFeishuOAuthCallbackUrl());
+    expect(state.developer?.redirectOrigin).toBe(resolveDesktopFeishuOAuthCallbackOrigin());
     expect(state.smartAssistant.redirectUri).toBe(resolveDesktopFeishuOAuthCallbackUrl());
-    expect(state.smartAssistant.redirectOrigin).toBe(
-      resolveDesktopFeishuOAuthCallbackOrigin(),
-    );
+    expect(state.smartAssistant.redirectOrigin).toBe(resolveDesktopFeishuOAuthCallbackOrigin());
+    expect(harness.readSnapshot().state.developer?.redirectUri).toBe(resolveDesktopFeishuOAuthCallbackUrl());
+    expect(harness.readSnapshot().state.developer?.redirectOrigin).toBe(resolveDesktopFeishuOAuthCallbackOrigin());
+    expect(harness.readSnapshot().state.smartAssistant.redirectUri).toBe(resolveDesktopFeishuOAuthCallbackUrl());
+    expect(harness.readSnapshot().state.smartAssistant.redirectOrigin).toBe(resolveDesktopFeishuOAuthCallbackOrigin());
+    expect(harness.getWriteCount()).toBe(1);
   });
 });

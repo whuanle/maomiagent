@@ -22,7 +22,6 @@ import type {
   FeishuDeveloperAuthStatus,
   FeishuStateView,
 } from "../../../../shared/desktop-feishu"
-import { normalizeDesktopFeishuRedirectUri } from "../../../../shared/desktop-feishu-oauth"
 import type { FeishuTranslate as Translate } from "../types"
 
 const { Paragraph, Text } = Typography
@@ -239,7 +238,7 @@ export function FeishuDetailPanel(props: Props) {
       user: userScopes,
     },
   }, null, 2)
-  const redirectUri = normalizeDesktopFeishuRedirectUri()
+  const redirectUri = developer?.redirectUri ?? ""
 
   return (
     <Card className="panel-card feishu-detail-card" bordered>

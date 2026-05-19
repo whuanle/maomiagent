@@ -1,5 +1,6 @@
 import type {
   FeishuConnectionProfileKind,
+  FeishuDocsAccessKind,
   FeishuSmartAssistantActionRiskLevel,
   FeishuSmartAssistantActionStatus,
   FeishuSmartAssistantActionTransport,
@@ -114,7 +115,7 @@ const DOMAIN_CATALOG: readonly DomainCatalogDefinition[] = [
     transport: "remote_mcp",
     credentialKind: "user_access_token",
     primaryConnectionKind: "developer_oauth",
-    supportedConnectionKinds: ["developer_oauth"],
+    supportedConnectionKinds: ["personal_docs_mcp", "developer_oauth"],
     contextKind: "resource_anchor",
     associationLabel: "docId / 文档树节点 / 可选本地草稿缓存",
     workbenchKind: "docs_workspace",
@@ -139,7 +140,7 @@ const DOMAIN_CATALOG: readonly DomainCatalogDefinition[] = [
         placeholder: "doccnxxxxxxxx",
       },
     ],
-    contextNotes: ["文档能力通过智能助手 OAuth 接入。"],
+    contextNotes: ["个人文档 MCP 也可以承接 docs 域。"],
   },
   {
     key: "calendar",
@@ -526,12 +527,23 @@ function cloneConnectionProfile(profile: FeishuSmartAssistantConnectionProfileVi
 }
 
 function buildConnectionProfiles(state: FeishuStateView): FeishuSmartAssistantConnectionProfileView[] {
+  const personalConfigured = state.personalDocs.enabled && Boolean(state.personalDocs.docsMcp?.mcpId);
   const oauthConfigured = Boolean(
     state.smartAssistant.appId?.trim()
       || state.developer?.appId?.trim(),
   );
 
   const profiles: FeishuSmartAssistantConnectionProfileView[] = [
+    {
+      kind: "personal_docs_mcp",
+      title: "个人文档 MCP",
+      summary: "只填个人远程 MCP 地址，不走 OAuth，只覆盖 docs 域。",
+      status: "ready",
+      authMode: "url_only",
+      configured: personalConfigured,
+      supportedDomains: ["docs"],
+      notes: ["适合个人云文档读写。"],
+    },
     {
       kind: "developer_oauth",
       title: "智能助手 OAuth",
@@ -630,9 +642,13 @@ function buildStatusNotice(
 
 function mergeDocsCapabilities(
   state: FeishuStateView,
+  accessKind: FeishuDocsAccessKind,
 ) {
   if (state.smartAssistant.docsMcp) {
     return state.smartAssistant.docsMcp;
+  }
+  if (accessKind === "personal_mcp") {
+    return state.personalDocs.docsMcp;
   }
   return null;
 }
@@ -707,6 +723,8 @@ export function hydrateDesktopFeishuStateView(state: FeishuStateView): FeishuSta
           : {}),
       }
     : null;
+  const accessKind: FeishuDocsAccessKind = state.personalDocs.enabled ? "personal_mcp" : "developer_oauth";
+
   return {
     ...state,
     smartAssistant: {
@@ -724,7 +742,7 @@ export function hydrateDesktopFeishuStateView(state: FeishuStateView): FeishuSta
         domainMounting: "lazy_by_domain",
         actionExecution: "registry_first",
       },
-      docsMcp: mergeDocsCapabilities(state),
+      docsMcp: mergeDocsCapabilities(state, accessKind),
       connectionProfiles: buildConnectionProfiles(state),
       domainModels,
       contextTemplates,

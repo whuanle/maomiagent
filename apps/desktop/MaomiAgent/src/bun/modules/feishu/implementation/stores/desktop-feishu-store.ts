@@ -5,7 +5,6 @@ import { dirname, join } from "node:path";
 import type { DesktopConfigurationPort } from "../../../configuration";
 import type { RuntimeLogger } from "../../../logs";
 import type {
-  DesktopFeishuAuthSnapshot,
   DesktopFeishuStorePort,
   DesktopFeishuStoreSnapshot,
 } from "../../abstraction/ports/desktop-feishu-store.ports";
@@ -14,14 +13,8 @@ import type {
   FeishuDocContentView,
   FeishuStateView,
 } from "../../../../../shared/desktop-feishu";
-import {
-  resolveDesktopFeishuOAuthCallbackOrigin,
-  resolveDesktopFeishuOAuthCallbackUrl,
-} from "../../../../../shared/desktop-feishu-oauth";
 
 function createInitialStateView(): FeishuStateView {
-  const redirectUri = resolveDesktopFeishuOAuthCallbackUrl();
-  const redirectOrigin = resolveDesktopFeishuOAuthCallbackOrigin(redirectUri);
   return {
     personalDocs: {
       enabled: false,
@@ -32,8 +25,8 @@ function createInitialStateView(): FeishuStateView {
       enabled: false,
       appId: "",
       hasAppSecret: false,
-      redirectUri,
-      redirectOrigin,
+      redirectUri: "",
+      redirectOrigin: "",
       authStatus: "idle",
       authMethod: "oauth",
       hasRefreshToken: false,
@@ -100,13 +93,6 @@ function createInitialSnapshot(): DesktopFeishuStoreSnapshot {
     state: createInitialStateView(),
     bot: createInitialBotState(),
     docs: {},
-    auth: createInitialAuthSnapshot(),
-  };
-}
-
-function createInitialAuthSnapshot(): DesktopFeishuAuthSnapshot {
-  return {
-    smartAssistant: {},
   };
 }
 
@@ -136,14 +122,6 @@ export class DesktopFeishuStore implements DesktopFeishuStorePort {
           ...(parsed.bot ?? {}),
         },
         docs: (parsed.docs ?? {}) as Record<string, FeishuDocContentView>,
-        auth: {
-          ...initial.auth,
-          ...(parsed.auth ?? {}),
-          smartAssistant: {
-            ...initial.auth.smartAssistant,
-            ...((parsed.auth as DesktopFeishuAuthSnapshot | undefined)?.smartAssistant ?? {}),
-          },
-        },
       };
     } catch {
       return createInitialSnapshot();

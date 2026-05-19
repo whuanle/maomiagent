@@ -193,6 +193,7 @@ import type {
   FeishuDocWorkspacePullResult,
   FeishuDocWorkspacePushResult,
   FeishuDocsCapabilitiesView,
+  FeishuPersonalConfigInput,
   FeishuSmartAssistantActionExecuteResultView,
   FeishuSmartAssistantExecuteActionInput,
   FeishuStateView,
@@ -417,6 +418,14 @@ export type DesktopRendererRPC = {
         response: WechatStateView;
       };
       getDesktopFeishuState: {
+        params: undefined;
+        response: FeishuStateView;
+      };
+      saveDesktopFeishuPersonalConfig: {
+        params: FeishuPersonalConfigInput;
+        response: FeishuStateView;
+      };
+      clearDesktopFeishuPersonalConfig: {
         params: undefined;
         response: FeishuStateView;
       };

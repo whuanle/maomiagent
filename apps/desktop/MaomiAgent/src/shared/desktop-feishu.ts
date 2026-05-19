@@ -50,6 +50,11 @@ export const FEISHU_SMART_ASSISTANT_ACTION_RISK_LEVEL_VALUES = [
   "high",
 ] as const
 export const FEISHU_CONNECTION_PROFILE_KIND_VALUES = [
+  "personal_docs_mcp",
+  "developer_oauth",
+] as const
+export const FEISHU_DOCS_ACCESS_KIND_VALUES = [
+  "personal_mcp",
   "developer_oauth",
 ] as const
 export const FEISHU_SMART_ASSISTANT_CONTEXT_KIND_VALUES = [
@@ -159,6 +164,7 @@ export type FeishuSmartAssistantActionRiskLevel =
   (typeof FEISHU_SMART_ASSISTANT_ACTION_RISK_LEVEL_VALUES)[number]
 export type FeishuConnectionProfileKind =
   (typeof FEISHU_CONNECTION_PROFILE_KIND_VALUES)[number]
+export type FeishuDocsAccessKind = (typeof FEISHU_DOCS_ACCESS_KIND_VALUES)[number]
 export type FeishuSmartAssistantContextKind =
   (typeof FEISHU_SMART_ASSISTANT_CONTEXT_KIND_VALUES)[number]
 export type FeishuSmartAssistantWorkbenchKind =
@@ -804,7 +810,7 @@ export type FeishuBotSendCardResult = {
 
 export type FeishuDocsCapabilitiesView = {
   mode: Extract<FeishuMode, "personal" | "developer">
-  accessKind: "developer_oauth"
+  accessKind: FeishuDocsAccessKind
   accessLabel: string
   managedMcpId: string
   endpoint: string

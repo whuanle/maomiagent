@@ -9,21 +9,23 @@ import type {
   FeishuBotStateView,
   FeishuStateView,
 } from "../../../shared/desktop-feishu"
-import { normalizeDesktopFeishuRedirectUri } from "../../../shared/desktop-feishu-oauth"
 import type { DesktopWorkspaceItem as WorkspaceItem } from "../../../shared/desktop-workspace"
 import type { FeishuTranslate as Translate } from "./types"
 import {
   beginFeishuDeveloperAuthorization,
   clearFeishuBotConfig,
+  clearFeishuPersonalConfig,
   clearFeishuSmartAssistantConfig,
   fetchFeishuBotState,
   fetchFeishuState,
   refreshFeishuDeveloperToken,
   saveFeishuBotConfig,
   saveFeishuDeveloperConfig,
+  saveFeishuPersonalConfig,
   subscribeFeishuMutations,
 } from "../../lib/feishu"
 import { reserveFeishuAuthorizationWindow } from "../../lib/feishu-auth-window"
+import { fetchMcpCapabilities } from "../../lib/mcp"
 import { notifier } from "../../lib/notifications"
 import {
   fetchActiveWorkspace,
@@ -36,6 +38,7 @@ import {
   FeishuDocsWorkbench,
   type FeishuDocsWorkbenchUiState,
 } from "./components/docs-workbench"
+import { FeishuPersonalDocsPanel } from "./components/personal-docs-panel"
 import { FeishuSmartAssistantPanel } from "./components/smart-assistant-panel"
 import {
   FEISHU_DOCS_WORKSPACE_UI_KEY,
@@ -53,7 +56,53 @@ type Props = {
   t: Translate
 }
 
-type FeishuPageTabKey = Exclude<FeishuPageView, "docs-workspace">
+type FeishuPageTabKey = Exclude<FeishuPageView, "personal-docs-workspace">
+
+async function hydratePersonalDiscoveredTools(
+  baseUrl: string,
+  state: FeishuStateView,
+): Promise<FeishuStateView> {
+  if (state.smartAssistant.enabled) {
+    return state
+  }
+  if (!state.personalDocs.enabled) {
+    return state
+  }
+  if ((state.personalDocs.discoveredTools.length ?? 0) > 0) {
+    return state
+  }
+  if (!state.personalDocs.docsMcp?.mcpId) {
+    return state
+  }
+
+  try {
+    const capabilities = await fetchMcpCapabilities(baseUrl, state.personalDocs.docsMcp.mcpId)
+    if (capabilities.toolDetails.length === 0) {
+      return state
+    }
+
+    const discoveredTools = capabilities.toolDetails.map((item) => ({
+      name: item.name,
+      ...(item.description ? { description: item.description } : {}),
+    }))
+
+    return {
+      ...state,
+      personalDocs: {
+        ...state.personalDocs,
+        discoveredTools,
+      },
+      personal: state.personal
+        ? {
+            ...state.personal,
+            discoveredTools,
+          }
+        : state.personal,
+    }
+  } catch {
+    return state
+  }
+}
 
 function readResolvedFeishuPagePersistentState(activeWorkspaceId?: string) {
   const persistedState = readFeishuPagePersistentState(activeWorkspaceId)
@@ -63,16 +112,16 @@ function readResolvedFeishuPagePersistentState(activeWorkspaceId?: string) {
   }
 }
 
+function resolvePersonalUrl(state: FeishuStateView | null): string {
+  return state?.personalDocs.serverUrl ?? state?.personal?.serverUrl ?? ""
+}
+
 function resolveAssistantAppId(state: FeishuStateView | null): string {
   return state?.smartAssistant.appId ?? state?.developer?.appId ?? ""
 }
 
-function resolveAssistantHasSavedSecret(state: FeishuStateView | null): boolean {
-  return Boolean(state?.smartAssistant.hasAppSecret || state?.developer?.hasAppSecret)
-}
-
-function resolveAssistantRedirectUri(_state: FeishuStateView | null): string {
-  return normalizeDesktopFeishuRedirectUri()
+function resolveAssistantRedirectUri(state: FeishuStateView | null): string {
+  return state?.smartAssistant.redirectUri ?? state?.developer?.redirectUri ?? ""
 }
 
 export function FeishuPage(props: Props) {
@@ -87,7 +136,7 @@ export function FeishuPage(props: Props) {
     () => readResolvedFeishuPagePersistentState().docs,
   )
   const [docsWorkspaceReturnView, setDocsWorkspaceReturnView] =
-    useState<FeishuPageTabKey>("bot")
+    useState<FeishuPageTabKey>("personal-docs")
   const [docsUiStateReady, setDocsUiStateReady] = useState(false)
   const [hydratedPageStateStorageKey, setHydratedPageStateStorageKey] = useState("")
   const [state, setState] = useState<FeishuStateView | null>(null)
@@ -95,10 +144,14 @@ export function FeishuPage(props: Props) {
   const [workspaces, setWorkspaces] = useState<WorkspaceItem[]>([])
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState("")
+  const [personalUrl, setPersonalUrl] = useState("")
+  const [personalDraftDirty, setPersonalDraftDirty] = useState(false)
   const [assistantAppId, setAssistantAppId] = useState("")
   const [assistantAppSecret, setAssistantAppSecret] = useState("")
   const [assistantRedirectUri, setAssistantRedirectUri] = useState("")
   const [assistantDraftDirty, setAssistantDraftDirty] = useState(false)
+  const [savingPersonal, setSavingPersonal] = useState(false)
+  const [clearingPersonal, setClearingPersonal] = useState(false)
   const [savingAssistant, setSavingAssistant] = useState(false)
   const [authorizing, setAuthorizing] = useState(false)
   const [refreshingToken, setRefreshingToken] = useState(false)
@@ -107,11 +160,21 @@ export function FeishuPage(props: Props) {
   const [clearingBot, setClearingBot] = useState(false)
   const pageStateStorageKey = getFeishuPageStorageKey(activeWorkspaceId)
 
+  const syncPersonalDraftFromState = useCallback((nextState: FeishuStateView | null) => {
+    setPersonalUrl(resolvePersonalUrl(nextState))
+    setPersonalDraftDirty(false)
+  }, [])
+
   const syncAssistantDraftFromState = useCallback((nextState: FeishuStateView | null) => {
     setAssistantAppId(resolveAssistantAppId(nextState))
     setAssistantAppSecret("")
     setAssistantRedirectUri(resolveAssistantRedirectUri(nextState))
     setAssistantDraftDirty(false)
+  }, [])
+
+  const handlePersonalUrlChange = useCallback((value: string) => {
+    setPersonalDraftDirty(true)
+    setPersonalUrl(value)
   }, [])
 
   const handleAssistantAppIdChange = useCallback((value: string) => {
@@ -166,7 +229,8 @@ export function FeishuPage(props: Props) {
         throw botResult.reason
       }
 
-      setState(stateResult.value)
+      const hydratedState = await hydratePersonalDiscoveredTools(baseUrl, stateResult.value)
+      setState(hydratedState)
       setBotState(botResult.value)
       setWorkspaces(
         workspaceResult.status === "fulfilled"
@@ -211,14 +275,18 @@ export function FeishuPage(props: Props) {
 
   useEffect(() => {
     if (!state) {
+      syncPersonalDraftFromState(null)
       syncAssistantDraftFromState(null)
       return
     }
 
+    if (!personalDraftDirty) {
+      syncPersonalDraftFromState(state)
+    }
     if (!assistantDraftDirty) {
       syncAssistantDraftFromState(state)
     }
-  }, [assistantDraftDirty, state, syncAssistantDraftFromState])
+  }, [assistantDraftDirty, personalDraftDirty, state, syncAssistantDraftFromState, syncPersonalDraftFromState])
 
   useEffect(() => {
     let cancelled = false
@@ -317,6 +385,60 @@ export function FeishuPage(props: Props) {
     })
   }, [baseUrl, loadData, props.active])
 
+  const handleSavePersonal = useCallback(async () => {
+    if (!baseUrl) {
+      return
+    }
+    if (state?.smartAssistant.enabled) {
+      notifier.warning("已启用飞书智能助手，个人文档 MCP 已停用。")
+      return
+    }
+    if (!personalUrl.trim()) {
+      notifier.error(props.t("飞书页.校验.个人URL必填"))
+      return
+    }
+
+    try {
+      setSavingPersonal(true)
+      const nextState = await saveFeishuPersonalConfig(baseUrl, {
+        serverUrl: personalUrl.trim(),
+      })
+      const hydratedState = await hydratePersonalDiscoveredTools(baseUrl, nextState)
+      setState(hydratedState)
+      syncPersonalDraftFromState(hydratedState)
+      setLoadError("")
+      notifier.success(props.t("飞书页.反馈.保存成功"))
+    } catch (error) {
+      notifier.error(props.t("飞书页.反馈.保存失败", {
+        错误: error instanceof Error ? error.message : String(error),
+      }))
+    } finally {
+      setSavingPersonal(false)
+    }
+  }, [baseUrl, personalUrl, props.t, state?.smartAssistant.enabled])
+
+  const handleClearPersonal = useCallback(async () => {
+    if (!baseUrl) {
+      return
+    }
+
+    try {
+      setClearingPersonal(true)
+      const nextState = await clearFeishuPersonalConfig(baseUrl)
+      setState(nextState)
+      syncPersonalDraftFromState(nextState)
+      setPageView("personal-docs")
+      setLoadError("")
+      notifier.success("个人文档 MCP 已清除")
+    } catch (error) {
+      notifier.error(props.t("飞书页.反馈.清除失败", {
+        错误: error instanceof Error ? error.message : String(error),
+      }))
+    } finally {
+      setClearingPersonal(false)
+    }
+  }, [baseUrl, props.t])
+
   const handleSaveAssistant = useCallback(async () => {
     if (!baseUrl) {
       return
@@ -325,7 +447,7 @@ export function FeishuPage(props: Props) {
       notifier.error("请先填写飞书智能助手应用 App ID")
       return
     }
-    if (!resolveAssistantHasSavedSecret(state) && !assistantAppSecret.trim()) {
+    if (!state?.smartAssistant.hasAppSecret && !assistantAppSecret.trim()) {
       notifier.error("请先填写飞书智能助手应用 App Secret")
       return
     }
@@ -352,7 +474,7 @@ export function FeishuPage(props: Props) {
     assistantAppId,
     assistantAppSecret,
     props.t,
-    state,
+    state?.smartAssistant.hasAppSecret,
   ])
 
   const handleAuthorizeAssistant = useCallback(async () => {
@@ -361,7 +483,7 @@ export function FeishuPage(props: Props) {
     }
 
     const savedAssistant = state?.smartAssistant
-    if (!savedAssistant?.appId || !resolveAssistantHasSavedSecret(state)) {
+    if (!savedAssistant?.appId || !savedAssistant.hasAppSecret) {
       notifier.error("请先保存飞书智能助手配置，再发起 OAuth")
       return
     }
@@ -376,6 +498,7 @@ export function FeishuPage(props: Props) {
       setAuthorizing(true)
       const result = await beginFeishuDeveloperAuthorization(baseUrl, {
         appId: savedAssistant.appId,
+        redirectUri: savedAssistant.redirectUri,
       })
       setState(result.item)
 
@@ -393,7 +516,7 @@ export function FeishuPage(props: Props) {
     } finally {
       setAuthorizing(false)
     }
-  }, [baseUrl, props.t, state])
+  }, [baseUrl, props.t, state?.smartAssistant])
 
   const handleRefreshAssistantToken = useCallback(async () => {
     if (!baseUrl) {
@@ -486,28 +609,31 @@ export function FeishuPage(props: Props) {
   }, [baseUrl, props.t])
 
   const handleOpenDocsWorkspace = useCallback((returnView: FeishuPageTabKey) => {
+    const smartAssistantActive =
+      state?.smartAssistant.enabled === true || state?.mode === "developer"
     const smartAssistantAuthorized =
       state?.smartAssistant.authStatus === "authorized"
       || state?.developer?.authStatus === "authorized"
+    const personalDocsReady = Boolean(state?.personalDocs.docsMcp?.mcpId)
 
-    if (!smartAssistantAuthorized) {
-      notifier.warning("请先完成飞书智能助手授权")
-      return
-    }
-
-    const docsMcpReady = Boolean(state?.smartAssistant.docsMcp?.mcpId || state?.managedMcp?.mcpId)
-    if (!docsMcpReady) {
-      notifier.warning("飞书文档工作区未就绪")
+    if (smartAssistantActive) {
+      if (!smartAssistantAuthorized) {
+        notifier.warning("请先完成飞书智能助手授权")
+        return
+      }
+    } else if (!personalDocsReady && !smartAssistantAuthorized) {
+      notifier.warning("请先完成飞书文档接入")
       return
     }
 
     setDocsWorkspaceReturnView(returnView)
-    setPageView("docs-workspace")
+    setPageView("personal-docs-workspace")
   }, [
-    state?.smartAssistant.authStatus,
-    state?.smartAssistant.docsMcp?.mcpId,
     state?.developer?.authStatus,
-    state?.managedMcp?.mcpId,
+    state?.mode,
+    state?.personalDocs.docsMcp?.mcpId,
+    state?.smartAssistant.authStatus,
+    state?.smartAssistant.enabled,
   ])
 
   const handleDocsUiStateChange = useCallback((nextState: FeishuDocsWorkbenchUiState) => {
@@ -519,18 +645,51 @@ export function FeishuPage(props: Props) {
   }, [])
 
   const canOpenDocsWorkspace = useMemo(() => {
+    const smartAssistantActive =
+      state?.smartAssistant.enabled === true || state?.mode === "developer"
     const smartAssistantAuthorized =
       state?.smartAssistant.authStatus === "authorized"
       || state?.developer?.authStatus === "authorized"
-    const docsMcpReady = Boolean(state?.smartAssistant.docsMcp?.mcpId || state?.managedMcp?.mcpId)
-    return smartAssistantAuthorized && docsMcpReady
+    const personalDocsReady = Boolean(state?.personalDocs.docsMcp?.mcpId)
+
+    if (smartAssistantActive) {
+      return smartAssistantAuthorized
+    }
+
+    return personalDocsReady || smartAssistantAuthorized
   }, [
     state?.developer?.authStatus,
-    state?.managedMcp?.mcpId,
-    state?.smartAssistant.docsMcp?.mcpId,
+    state?.mode,
+    state?.personalDocs.docsMcp?.mcpId,
     state?.smartAssistant.authStatus,
+    state?.smartAssistant.enabled,
   ])
   const pageSections = useMemo(() => ([
+    {
+      key: "personal-docs" as const,
+      label: "个人文档 MCP",
+      content: (
+        <FeishuPersonalDocsPanel
+          state={state}
+          loadError={loadError}
+          personalUrl={personalUrl}
+          saving={savingPersonal}
+          clearing={clearingPersonal}
+          canOpenDocsWorkspace={canOpenDocsWorkspace}
+          onPersonalUrlChange={handlePersonalUrlChange}
+          onSave={() => {
+            void handleSavePersonal()
+          }}
+          onClear={() => {
+            void handleClearPersonal()
+          }}
+          onOpenDocsWorkspace={() => handleOpenDocsWorkspace("personal-docs")}
+          onRefresh={() => {
+            void loadData(false)
+          }}
+        />
+      ),
+    },
     {
       key: "bot" as const,
       label: "飞书机器人",
@@ -566,7 +725,6 @@ export function FeishuPage(props: Props) {
           loadError={loadError}
           assistantAppId={assistantAppId}
           assistantAppSecret={assistantAppSecret}
-          assistantHasSavedSecret={resolveAssistantHasSavedSecret(state)}
           assistantRedirectUri={assistantRedirectUri}
           saving={savingAssistant}
           authorizing={authorizing}
@@ -603,25 +761,31 @@ export function FeishuPage(props: Props) {
     canOpenDocsWorkspace,
     clearingBot,
     clearingAssistant,
+    clearingPersonal,
     assistantAppId,
     assistantAppSecret,
     assistantRedirectUri,
     handleAuthorizeAssistant,
     handleClearBot,
     handleClearAssistant,
+    handleClearPersonal,
     handleAssistantAppIdChange,
     handleAssistantAppSecretChange,
     handleOpenDocsWorkspace,
+    handlePersonalUrlChange,
     handleRefreshAssistantToken,
     handleSaveBot,
     handleSaveAssistant,
+    handleSavePersonal,
     loadData,
     loadError,
     loading,
+    personalUrl,
     props.t,
     refreshingToken,
     savingBot,
     savingAssistant,
+    savingPersonal,
     state,
     workspaces,
   ])
@@ -638,12 +802,12 @@ export function FeishuPage(props: Props) {
     )
   }
 
-  if (pageView === "docs-workspace") {
+  if (pageView === "personal-docs-workspace") {
     const docsWorkspaceId = activeWorkspaceId.trim()
     return (
       <div className="feishu-page">
         <FeishuDocsWorkbench
-          key={docsWorkspaceId || "feishu-docs-global"}
+          key={docsWorkspaceId || "feishu-personal-docs-global"}
           baseUrl={baseUrl}
           workspaceId={docsWorkspaceId}
           state={state}

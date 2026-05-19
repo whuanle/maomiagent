@@ -2,16 +2,13 @@ import {
   DependencyModuleBase,
   createServiceToken,
   type DependencyModuleContext,
-  type DependencyModuleRuntimeContext,
 } from "../../../shared/ioc";
 import type { DesktopConversationCapabilityProvider } from "../../conversation/abstraction/ports/desktop-conversation-capabilities.ports";
 import { DESKTOP_CONVERSATION_CAPABILITY_PROVIDER } from "../../conversation/abstraction/tokens/desktop-conversation.tokens";
 
 import { DESKTOP_AI_RUNTIME_PORT, DesktopAiModule } from "../../ai";
 import { DESKTOP_CONFIGURATION_PORT, DesktopConfigurationModule } from "../../configuration";
-import { DESKTOP_RUNTIME_CONTEXT } from "../../foundation";
 import { RUNTIME_LOGGER_FACTORY_PORT, DesktopLogsModule } from "../../logs";
-import { DESKTOP_FEISHU_OAUTH_CALLBACK_PATH } from "../../../../shared/desktop-feishu-oauth";
 import type { DesktopFeishuPort } from "../abstraction/ports/desktop-feishu.ports";
 import { DESKTOP_FEISHU_ACTION_EXECUTOR_PORT } from "../abstraction/tokens/desktop-feishu-action-executor.tokens";
 import { DESKTOP_FEISHU_DOC_RUNTIME_PORT } from "../abstraction/tokens/desktop-feishu-doc-runtime.tokens";
@@ -39,7 +36,6 @@ export const DESKTOP_FEISHU_CONVERSATION_CAPABILITY_PROVIDER_TOKEN =
 export class DesktopFeishuModule extends DependencyModuleBase {
   static moduleId = "desktop.feishu";
   static dependencies = [DesktopConfigurationModule, DesktopLogsModule, DesktopAiModule] as const;
-  private unregisterOAuthRoute?: () => void;
 
   override configureServices(context: DependencyModuleContext): void {
     context.addSingleton(DESKTOP_FEISHU_STORE_PORT, {
@@ -107,36 +103,5 @@ export class DesktopFeishuModule extends DependencyModuleBase {
         source: context.module.moduleId,
       },
     );
-  }
-
-  override async onStart(context: DependencyModuleRuntimeContext): Promise<void> {
-    const runtimeContext = context.container.resolve(DESKTOP_RUNTIME_CONTEXT);
-    const commandPort = context.container.resolve(DESKTOP_FEISHU_COMMAND_PORT);
-
-    this.unregisterOAuthRoute = runtimeContext.singleInstance.registerHttpRoute({
-      method: "GET",
-      path: DESKTOP_FEISHU_OAUTH_CALLBACK_PATH,
-      async handler(request) {
-        const result = await commandPort.handleOAuthCallback({
-          code: request.url.searchParams.get("code") ?? undefined,
-          state: request.url.searchParams.get("state") ?? undefined,
-          error: request.url.searchParams.get("error") ?? undefined,
-          errorDescription: request.url.searchParams.get("error_description") ?? undefined,
-        });
-
-        return {
-          status: result.success ? 200 : 400,
-          headers: {
-            "content-type": "text/html; charset=utf-8",
-          },
-          body: result.html,
-        };
-      },
-    });
-  }
-
-  override async onStop(_context: DependencyModuleRuntimeContext): Promise<void> {
-    this.unregisterOAuthRoute?.();
-    this.unregisterOAuthRoute = undefined;
   }
 }

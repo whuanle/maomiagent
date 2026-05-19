@@ -102,6 +102,8 @@ export function installElectrobunWindowBridge() {
     };
     window.maomiDesktopFeishu = {
       getDesktopFeishuState: () => rpc.request.getDesktopFeishuState(),
+      saveDesktopFeishuPersonalConfig: (input) => rpc.request.saveDesktopFeishuPersonalConfig(input),
+      clearDesktopFeishuPersonalConfig: () => rpc.request.clearDesktopFeishuPersonalConfig(),
       saveDesktopFeishuDeveloperConfig: (input) => rpc.request.saveDesktopFeishuDeveloperConfig(input),
       beginDesktopFeishuDeveloperAuthorization: (input) =>
         rpc.request.beginDesktopFeishuDeveloperAuthorization(input),
