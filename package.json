@@ -30,6 +30,10 @@
     "release:upload": "bun run --cwd apps/desktop/MaomiAgent release:upload",
     "release:tag": "node scripts/create-github-release-tag.mjs",
     "release:tag:push": "node scripts/create-github-release-tag.mjs --push",
+    "recovery:test": "bun test scripts/recovery/*.test.ts",
+    "recovery:inventory": "bun scripts/recovery/collect-recovery-inventory.ts",
+    "recovery:batch-map": "bun scripts/recovery/build-recovery-batch-map.ts",
+    "recovery:apply": "bun scripts/recovery/apply-recovery-batch.ts",
     "maomi": "bun run dev",
     "maomi:dev": "bun run dev",
     "maomi:web": "bun run ui:dev"
