@@ -122,7 +122,10 @@ export class DesktopWechatConversationCapabilityProvider
     }
 
     const recentMediaCount = runtimeContext.recentMessages.reduce(
-      (total, item) => total + (item.mediaAssets?.length ?? 0),
+      (
+        total: number,
+        item: (typeof runtimeContext.recentMessages)[number],
+      ) => total + (item.mediaAssets?.length ?? 0),
       0,
     );
     const toolHandlers: RegisteredToolHandler[] = [

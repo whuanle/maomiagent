@@ -1942,69 +1942,31 @@ export class DesktopWechatService implements DesktopWechatPort {
 }
 
 function extractAssistantReplyText(detail: DesktopConversationSessionDetail): string | undefined {
-  const latestRunId = trimText(detail.runs.at(-1)?.id);
-  if (latestRunId) {
-    const currentRunReply = extractAssistantReplyTextFromMessages(
-      detail.messages.filter((message) => message.runId === latestRunId),
-    );
-    if (currentRunReply) {
-      return currentRunReply;
+  for (let index = detail.messages.length - 1; index >= 0; index -= 1) {
+    const message = detail.messages[index];
+    if (message.role !== "assistant") {
+      continue;
     }
-  }
 
-  const latestUserIndex = findLastUserMessageIndex(detail.messages);
-  const candidateMessages = latestUserIndex >= 0
-    ? detail.messages.slice(latestUserIndex + 1)
-    : detail.messages;
+    const textParts: string[] = [];
+    for (const part of message.parts) {
+      if (part.type !== "text" && part.type !== "reasoning") {
+        continue;
+      }
 
-  return extractAssistantReplyTextFromMessages(candidateMessages);
-}
+      const text = part.text.trim();
+      if (text.length > 0) {
+        textParts.push(text);
+      }
+    }
 
-function extractAssistantReplyTextFromMessages(
-  messages: readonly DesktopConversationSessionDetail["messages"][number][],
-): string | undefined {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    const content = extractVisibleAssistantText(message);
-    if (content) {
-      return content;
+    const content = textParts.join("\n");
+
+    const compacted = compactPreview(content, 800);
+    if (compacted) {
+      return compacted;
     }
   }
 
   return undefined;
-}
-
-function extractVisibleAssistantText(
-  message: DesktopConversationSessionDetail["messages"][number],
-): string | undefined {
-  if (message.role !== "assistant") {
-    return undefined;
-  }
-
-  const textParts: string[] = [];
-  for (const part of message.parts) {
-    if (part.type !== "text") {
-      continue;
-    }
-
-    const text = part.text;
-    if (text.length > 0) {
-      textParts.push(text);
-    }
-  }
-
-  const content = textParts.join("").trim();
-  return content || undefined;
-}
-
-function findLastUserMessageIndex(
-  messages: readonly DesktopConversationSessionDetail["messages"][number][],
-): number {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index]?.role === "user") {
-      return index;
-    }
-  }
-
-  return -1;
 }
