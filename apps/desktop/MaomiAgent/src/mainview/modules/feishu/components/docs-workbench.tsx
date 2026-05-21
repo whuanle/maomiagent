@@ -29,7 +29,7 @@ import type {
   FeishuDocMediaPreviewErrorItem,
   FeishuDocWhiteboardPreviewErrorItem,
   FeishuDocSummary,
-  FeishuDocTreeQuery,
+  FeishuDocTreeNode,
   FeishuStateView,
 } from "../../../../shared/desktop-feishu"
 import type { FeishuTranslate as Translate } from "../types"
@@ -37,9 +37,10 @@ import {
   fetchFeishuDocContent,
   fetchFeishuDocMediaPreviewUrls,
   fetchFeishuDocWhiteboardPreviewUrls,
-  fetchFeishuDocTree,
   fetchFeishuDocsCapabilities,
   fetchFeishuWorkspaceDocLocalDraft,
+  loadFeishuDocTreeBranch,
+  loadFeishuDocTreeRoot,
   openFeishuWorkspaceDoc,
   pullFeishuWorkspaceDoc,
   pushFeishuWorkspaceDoc,
@@ -53,7 +54,6 @@ import { FeishuDocsLocalPreview } from "./feishu-docs-local-preview"
 
 const { Text, Title } = Typography
 const { TextArea } = Input
-const FEISHU_TREE_PAGE_SIZE = 50
 
 export type FeishuDocWorkspaceMode = "workspace"
 
@@ -136,28 +136,26 @@ function resolveStatusTagText(status: "blocked" | "limited" | "ready" | "probing
         : t("飞书页.文档.状态标签.当前阻断")
 }
 
-function mapTreeNodes(items: FeishuDocSummary[]): DocsTreeNode[] {
+function mapTreeNodes(items: FeishuDocTreeNode[]): DocsTreeNode[] {
   return items.map(mapTreeNode)
 }
 
-function mapTreeNode(item: FeishuDocSummary): DocsTreeNode {
+function mapTreeNode(item: FeishuDocTreeNode): DocsTreeNode {
   return {
-    key: item.id,
+    key: item.token,
     title: item.title,
     isLeaf: item.hasChild !== true,
     loaded: item.hasChild !== true,
-    doc: item,
-  }
-}
-
-function buildLoadedTreeNode(doc: FeishuDocSummary, children: DocsTreeNode[] = []): DocsTreeNode {
-  return {
-    key: doc.id,
-    title: doc.title,
-    isLeaf: children.length === 0,
-    loaded: true,
-    doc,
-    ...(children.length > 0 ? { children } : {}),
+    doc: {
+      id: item.token,
+      token: item.token,
+      kind: item.kind,
+      docId: item.docId ?? item.token,
+      title: item.title,
+      objType: item.objType,
+      updateTime: item.updatedAt ?? item.updateTime,
+      hasChild: item.hasChild,
+    },
   }
 }
 
@@ -386,6 +384,7 @@ export function FeishuDocsWorkbench(props: Props) {
   const [capabilities, setCapabilities] = useState<Awaited<ReturnType<typeof fetchFeishuDocsCapabilities>> | null>(null)
   const [treeNodes, setTreeNodes] = useState<DocsTreeNode[]>([])
   const [treeLoading, setTreeLoading] = useState(false)
+  const [treeStatus, setTreeStatus] = useState<"idle" | "loading" | "cached" | "refreshing" | "ready" | "error">("idle")
   const [treeError, setTreeError] = useState("")
   const [expandedKeys, setExpandedKeys] = useState<string[]>([])
   const [activeDoc, setActiveDoc] = useState<FeishuDocSummary | null>(null)
@@ -412,6 +411,8 @@ export function FeishuDocsWorkbench(props: Props) {
   const whiteboardPreviewRequestIdRef = useRef(0)
   const lastLoadErrorNoticeRef = useRef("")
   const lastAccessNoticeRef = useRef("")
+  const loadingTreeNodeKeysRef = useRef<Set<string>>(new Set())
+  const treeNodesLengthRef = useRef(0)
 
   const persistDraftIfDirty = useCallback(async () => {
     if (!hasWorkspaceContext) {
@@ -460,79 +461,16 @@ export function FeishuDocsWorkbench(props: Props) {
     }
   }, [props.baseUrl, remoteDocsReady])
 
-  const fetchAllTreeNodes = useCallback(async (input: FeishuDocTreeQuery): Promise<FeishuDocSummary[]> => {
-    const nodes: FeishuDocSummary[] = []
-    let pageToken = input.pageToken
-
-    for (;;) {
-      const item = await fetchFeishuDocTree(props.baseUrl, {
-        ...input,
-        ...(pageToken ? { pageToken } : {}),
-        pageSize: FEISHU_TREE_PAGE_SIZE,
-      })
-      nodes.push(...item.nodes)
-
-      if (!item.hasMore || !item.pageToken || item.pageToken === pageToken) {
-        break
-      }
-
-      pageToken = item.pageToken
-    }
-
-    return nodes
-  }, [props.baseUrl])
-
-  const hydrateTreeBranch = useCallback(async (
-    items: FeishuDocSummary[],
-    lineage: ReadonlySet<string> = new Set(),
-  ): Promise<DocsTreeNode[]> => {
-    const nodes: DocsTreeNode[] = []
-
-    for (const item of items) {
-      const nodeId = (item.id || item.docId || "").trim()
-      if (item.hasChild !== true || !nodeId || lineage.has(nodeId)) {
-        nodes.push(mapTreeNode(item))
-        continue
-      }
-
-      const nextLineage = new Set(lineage)
-      nextLineage.add(nodeId)
-      const children = await fetchAllTreeNodes({
-        root: "document",
-        docId: nodeId,
-      })
-
-      nodes.push(buildLoadedTreeNode(item, await hydrateTreeBranch(children, nextLineage)))
-    }
-
-    return nodes
-  }, [fetchAllTreeNodes])
-
-  const resolveRootDocSummary = useCallback(async (rootDocId: string): Promise<FeishuDocSummary> => {
-    // Keep tree loading independent from the currently selected doc.
-    // Otherwise selecting a node changes callback dependencies and re-triggers a full tree reload.
-    try {
-      const rootDoc = await fetchFeishuDocContent(props.baseUrl, rootDocId)
-      return {
-        id: rootDocId,
-        docId: rootDoc.docId,
-        title: rootDoc.title,
-      }
-    } catch {
-      return {
-        id: rootDocId,
-        docId: rootDocId,
-        title: rootDocId,
-      }
-    }
-  }, [props.baseUrl])
-
-  const loadTree = useCallback(async (rootDocId: string) => {
+  const loadTree = useCallback(async (
+    rootDocId: string,
+    options?: { forceRefresh?: boolean },
+  ) => {
     if (!props.baseUrl || !remoteDocsReady) {
       setTreeNodes([])
       setExpandedKeys([])
       setTreeError(remoteDocsBlockedMessage)
       setTreeLoading(false)
+      setTreeStatus("error")
       return
     }
     if (capabilities && !capabilities.canBrowseTree) {
@@ -540,46 +478,39 @@ export function FeishuDocsWorkbench(props: Props) {
       setExpandedKeys([])
       setTreeError(props.t("飞书页.文档.接入状态.未暴露工具.描述"))
       setTreeLoading(false)
+      setTreeStatus("error")
       return
     }
 
     try {
       setTreeLoading(true)
-      if (rootDocId) {
-        const [childItems, rootDoc] = await Promise.all([
-          fetchAllTreeNodes({
-            root: "document",
-            docId: rootDocId,
-          }),
-          resolveRootDocSummary(rootDocId),
-        ])
-        const loadedRoot = buildLoadedTreeNode(
-          rootDoc,
-          await hydrateTreeBranch(childItems, new Set([rootDoc.id])),
-        )
-        setTreeNodes([loadedRoot])
-        setExpandedKeys(collectExpandableKeys([loadedRoot]))
-      } else {
-        const items = await fetchAllTreeNodes({
-          root: "my_library",
-        })
-        setTreeNodes(mapTreeNodes(items))
-        setExpandedKeys([])
-      }
+      setTreeStatus("loading")
       setTreeError("")
+      loadingTreeNodeKeysRef.current.clear()
+      const result = await loadFeishuDocTreeRoot(props.baseUrl, {
+        token: rootDocId,
+        forceRefresh: options?.forceRefresh,
+      })
+      const nextNodes = mapTreeNodes(result.nodes)
+      setTreeNodes(nextNodes)
+      setExpandedKeys((previous) => result.source === "cache" ? previous : collectExpandableKeys(nextNodes))
+      setTreeError(result.error ?? "")
+      setTreeStatus(result.source === "cache" ? "cached" : result.refreshing ? "refreshing" : "ready")
     } catch (error) {
       setTreeError(error instanceof Error ? error.message : String(error))
+      setTreeStatus("error")
+      if (treeNodesLengthRef.current === 0) {
+        setExpandedKeys([])
+      }
     } finally {
       setTreeLoading(false)
     }
   }, [
     capabilities,
-    fetchAllTreeNodes,
-    hydrateTreeBranch,
+    props.baseUrl,
     props.t,
     remoteDocsBlockedMessage,
     remoteDocsReady,
-    resolveRootDocSummary,
   ])
 
   const handleOpenDoc = useCallback(async (doc: FeishuDocSummary) => {
@@ -630,7 +561,7 @@ export function FeishuDocsWorkbench(props: Props) {
       }
 
       void loadCapabilities()
-      void loadTree(treeRootDocId)
+      void loadTree(treeRootDocId, { forceRefresh: true })
       if (currentDoc?.docId) {
         void handleOpenDoc({
           id: currentDoc.docId,
@@ -707,7 +638,7 @@ export function FeishuDocsWorkbench(props: Props) {
   const handleTreeSubmit = useCallback(() => {
     const nextRoot = treeQuery.trim()
     setTreeRootDocId(nextRoot)
-    void loadTree(nextRoot)
+    void loadTree(nextRoot, { forceRefresh: true })
   }, [loadTree, treeQuery])
 
   const handleLoadTreeData = useCallback<NonNullable<TreeProps["loadData"]>>(async (node) => {
@@ -716,23 +647,34 @@ export function FeishuDocsWorkbench(props: Props) {
     }
 
     const current = node as DocsTreeNode
-    const doc = current.doc
-    const nodeId = doc?.id
-    if (!doc || !nodeId || current.loaded || current.isLeaf) {
+    if (!current.key || current.loaded || current.isLeaf) {
       return
     }
 
-    const children = await fetchAllTreeNodes({
-      root: "document",
-      docId: nodeId,
-    })
-    const loadedNode = buildLoadedTreeNode(
-      doc,
-      await hydrateTreeBranch(children, new Set([nodeId])),
-    )
-    setTreeNodes((previous) => replaceChildren(previous, current.key, loadedNode.children ?? []))
-    setExpandedKeys((previous) => mergeExpandedKeyLists(previous, collectExpandableKeys([loadedNode])))
-  }, [capabilities, fetchAllTreeNodes, hydrateTreeBranch, remoteDocsReady])
+    if (loadingTreeNodeKeysRef.current.has(current.key)) {
+      return
+    }
+
+    loadingTreeNodeKeysRef.current.add(current.key)
+    try {
+      const result = await loadFeishuDocTreeBranch(props.baseUrl, {
+        rootToken: treeRootDocId || current.key,
+        parentToken: current.key,
+      })
+      const childNodes = mapTreeNodes(result.nodes)
+      setTreeNodes((previous) => replaceChildren(previous, current.key, childNodes))
+      setExpandedKeys((previous) => mergeExpandedKeyLists(previous, [current.key]))
+      if (result.error) {
+        setTreeError(result.error)
+        setTreeStatus("error")
+      }
+    } catch (error) {
+      setTreeError(error instanceof Error ? error.message : String(error))
+      setTreeStatus("error")
+    } finally {
+      loadingTreeNodeKeysRef.current.delete(current.key)
+    }
+  }, [capabilities, props.baseUrl, remoteDocsReady, treeRootDocId])
 
   useEffect(() => {
     if (!remoteDocsReady) {
@@ -751,6 +693,7 @@ export function FeishuDocsWorkbench(props: Props) {
       setExpandedKeys([])
       setTreeError("")
       setTreeLoading(true)
+      setTreeStatus("loading")
       return
     }
 
@@ -759,11 +702,16 @@ export function FeishuDocsWorkbench(props: Props) {
       setExpandedKeys([])
       setTreeError(remoteDocsBlockedMessage)
       setTreeLoading(false)
+      setTreeStatus("error")
       return
     }
 
     void loadTree(props.initialTreeRootDocId ?? "")
   }, [loadTree, props.initialTreeRootDocId, remoteDocsBlockedMessage, remoteDocsReady, statePending])
+
+  useEffect(() => {
+    treeNodesLengthRef.current = treeNodes.length
+  }, [treeNodes.length])
 
   useEffect(() => {
     if (initialDocLoadedRef.current || !props.initialDocId) {
@@ -1107,6 +1055,18 @@ export function FeishuDocsWorkbench(props: Props) {
   }, [activeDoc?.docId, activeDoc?.id, currentDoc?.docId, treeNodes])
 
   const selectedKeys = selectedTreeKey ? [selectedTreeKey] : []
+  const treeStatusText = useMemo(() => {
+    if (treeStatus === "loading" || treeStatus === "refreshing") {
+      return props.t("飞书页.文档.状态.正在加载")
+    }
+    if (treeStatus === "cached") {
+      return props.t("飞书页.文档.状态.已显示上次结果")
+    }
+    if (treeStatus === "error") {
+      return props.t("飞书页.文档.状态.加载失败")
+    }
+    return ""
+  }, [props.t, treeStatus])
   const handleTreeExpand = useCallback<NonNullable<TreeProps["onExpand"]>>((keys, info) => {
     const nextKeys = keys.map((item) => String(item))
     if (!info.expanded) {
@@ -1201,7 +1161,12 @@ export function FeishuDocsWorkbench(props: Props) {
                   onChange={(event) => setTreeQuery(event.target.value)}
                   onPressEnter={handleTreeSubmit}
                 />
-                <Button icon={<ApartmentOutlined />} className="feishu-docs-load-button" onClick={handleTreeSubmit}>
+                <Button
+                  icon={<ApartmentOutlined />}
+                  className="feishu-docs-load-button"
+                  loading={treeLoading}
+                  onClick={handleTreeSubmit}
+                >
                   {treeQuery.trim()
                     ? props.t("飞书页.文档.导航.加载节点")
                     : props.t("飞书页.文档.导航.我的文档库")}
@@ -1211,86 +1176,94 @@ export function FeishuDocsWorkbench(props: Props) {
 
             <div className="feishu-docs-panel-body is-tree-panel-body">
               <div className="feishu-docs-tree-shell">
-                {treeLoading ? (
+                {treeStatusText && (treeNodes.length > 0 || treeStatus !== "loading") ? (
+                  <Text type="secondary" className="feishu-docs-tree-status">
+                    {treeStatusText}
+                  </Text>
+                ) : null}
+                {treeLoading && treeNodes.length === 0 ? (
                   <div className="feishu-docs-loading-shell">
                     <Spin size="small" />
-                    <Text type="secondary">{props.t("飞书页.文档.加载中.目录树")}</Text>
+                    <Text type="secondary">{props.t("飞书页.文档.状态.正在加载")}</Text>
                   </div>
+                ) : treeNodes.length > 0 ? (
+                  <>
+                    {treeError ? <Alert showIcon type="error" message={treeError} /> : null}
+                    <Tree
+                      blockNode
+                      className="feishu-docs-tree"
+                      treeData={treeNodes}
+                      expandedKeys={expandedKeys}
+                      selectedKeys={selectedKeys}
+                      loadData={handleLoadTreeData}
+                      switcherIcon={(nodeProps) => nodeProps.isLeaf ? null : <CaretRightFilled className="feishu-docs-tree-switcher-icon" />}
+                      titleRender={(node) => {
+                        const target = node as DocsTreeNode
+                        const docId = target.doc?.docId ?? target.doc?.id ?? ""
+
+                        return (
+                          <span className={`feishu-docs-tree-title${target.isLeaf ? " is-leaf" : ""}`} title={target.title}>
+                            <span className="feishu-docs-tree-title-main">
+                              <FileTextOutlined className="feishu-docs-tree-title-icon" />
+                              <span className="feishu-docs-tree-title-text">{target.title}</span>
+                            </span>
+                            {docId ? (
+                              <Button
+                                type="text"
+                                size="small"
+                                icon={<MessageOutlined />}
+                                className="feishu-docs-tree-action"
+                                disabled={!hasWorkspaceContext}
+                                aria-label={props.t("飞书页.文档.按钮.加入当前对话")}
+                                onMouseDown={(event) => {
+                                  event.preventDefault()
+                                  event.stopPropagation()
+                                }}
+                                onClick={(event) => {
+                                  if (!hasWorkspaceContext) {
+                                    return
+                                  }
+                                  event.preventDefault()
+                                  event.stopPropagation()
+                                  conversationLauncher.openConversation({
+                                    workspaceId: props.workspaceId,
+                                    draftText: buildDocChatDraftText({
+                                      title: target.doc?.title ?? target.title,
+                                      docId,
+                                      rootDocId: treeRootDocId || undefined,
+                                      url: target.doc?.url,
+                                      updateTime: target.doc?.updateTime,
+                                      cacheRelativePath:
+                                        currentDoc?.docId === docId
+                                          ? currentDoc.cache?.cacheRelativePath
+                                          : undefined,
+                                      t: props.t,
+                                    }),
+                                    attachedTabs: [{
+                                      kind: "feishu-docs-workspace",
+                                      title: target.doc?.title ?? target.title,
+                                      workspaceId: props.workspaceId || undefined,
+                                      docId,
+                                      rootDocId: treeRootDocId || undefined,
+                                    }],
+                                  })
+                                }}
+                              />
+                            ) : null}
+                          </span>
+                        )
+                      }}
+                      onExpand={handleTreeExpand}
+                      onSelect={(_keys, info) => {
+                        const target = info.node as DocsTreeNode
+                        if (target.doc) {
+                          void handleOpenDoc(target.doc)
+                        }
+                      }}
+                    />
+                  </>
                 ) : treeError ? (
                   <Alert showIcon type="error" message={treeError} />
-                ) : treeNodes.length > 0 ? (
-                  <Tree
-                    blockNode
-                    className="feishu-docs-tree"
-                    treeData={treeNodes}
-                    expandedKeys={expandedKeys}
-                    selectedKeys={selectedKeys}
-                    loadData={handleLoadTreeData}
-                    switcherIcon={(nodeProps) => nodeProps.isLeaf ? null : <CaretRightFilled className="feishu-docs-tree-switcher-icon" />}
-                    titleRender={(node) => {
-                      const target = node as DocsTreeNode
-                      const docId = target.doc?.docId ?? target.doc?.id ?? ""
-
-                      return (
-                        <span className={`feishu-docs-tree-title${target.isLeaf ? " is-leaf" : ""}`} title={target.title}>
-                          <span className="feishu-docs-tree-title-main">
-                            <FileTextOutlined className="feishu-docs-tree-title-icon" />
-                            <span className="feishu-docs-tree-title-text">{target.title}</span>
-                          </span>
-                          {docId ? (
-                            <Button
-                              type="text"
-                              size="small"
-                              icon={<MessageOutlined />}
-                              className="feishu-docs-tree-action"
-                              disabled={!hasWorkspaceContext}
-                              aria-label={props.t("飞书页.文档.按钮.加入当前对话")}
-                              onMouseDown={(event) => {
-                                event.preventDefault()
-                                event.stopPropagation()
-                              }}
-                              onClick={(event) => {
-                                if (!hasWorkspaceContext) {
-                                  return
-                                }
-                                event.preventDefault()
-                                event.stopPropagation()
-                                conversationLauncher.openConversation({
-                                  workspaceId: props.workspaceId,
-                                  draftText: buildDocChatDraftText({
-                                    title: target.doc?.title ?? target.title,
-                                    docId,
-                                    rootDocId: treeRootDocId || undefined,
-                                    url: target.doc?.url,
-                                    updateTime: target.doc?.updateTime,
-                                    cacheRelativePath:
-                                      currentDoc?.docId === docId
-                                        ? currentDoc.cache?.cacheRelativePath
-                                        : undefined,
-                                    t: props.t,
-                                  }),
-                                  attachedTabs: [{
-                                    kind: "feishu-docs-workspace",
-                                    title: target.doc?.title ?? target.title,
-                                    workspaceId: props.workspaceId || undefined,
-                                    docId,
-                                    rootDocId: treeRootDocId || undefined,
-                                  }],
-                                })
-                              }}
-                            />
-                          ) : null}
-                        </span>
-                      )
-                    }}
-                    onExpand={handleTreeExpand}
-                    onSelect={(_keys, info) => {
-                      const target = info.node as DocsTreeNode
-                      if (target.doc) {
-                        void handleOpenDoc(target.doc)
-                      }
-                    }}
-                  />
                 ) : (
                   <Empty
                     image={Empty.PRESENTED_IMAGE_SIMPLE}
