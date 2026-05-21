@@ -1,8 +1,11 @@
 import {
   DependencyModuleBase,
+  type DependencyModuleRuntimeContext,
   createServiceToken,
   type DependencyModuleContext,
 } from "../../../shared/ioc";
+import { DESKTOP_FEISHU_OAUTH_CALLBACK_PATH } from "../../../../shared/desktop-feishu-oauth";
+import { DESKTOP_RUNTIME_CONTEXT } from "../../foundation";
 import type { DesktopConversationCapabilityProvider } from "../../conversation/abstraction/ports/desktop-conversation-capabilities.ports";
 import { DESKTOP_CONVERSATION_CAPABILITY_PROVIDER } from "../../conversation/abstraction/tokens/desktop-conversation.tokens";
 
@@ -23,6 +26,7 @@ import { DesktopFeishuDocRuntime } from "../implementation/services/desktop-feis
 import { DesktopFeishuConversationCapabilityProvider } from "../implementation/services/desktop-feishu-conversation-capability-provider";
 import { DesktopFeishuSmartAssistantActionRegistry } from "../implementation/services/desktop-feishu-smart-assistant-action-registry";
 import { DesktopFeishuSmartAssistantActionExecutor } from "../implementation/services/desktop-feishu-smart-assistant-action-executor";
+import { DesktopFeishuOpenApiClient } from "../implementation/services/desktop-feishu-openapi-client";
 import { DesktopFeishuService } from "../implementation/services/desktop-feishu-service";
 import { DesktopFeishuStore } from "../implementation/stores/desktop-feishu-store";
 
@@ -36,6 +40,8 @@ export const DESKTOP_FEISHU_CONVERSATION_CAPABILITY_PROVIDER_TOKEN =
 export class DesktopFeishuModule extends DependencyModuleBase {
   static moduleId = "desktop.feishu";
   static dependencies = [DesktopConfigurationModule, DesktopLogsModule, DesktopAiModule] as const;
+
+  private unregisterOAuthCallbackRoute: (() => void) | null = null;
 
   override configureServices(context: DependencyModuleContext): void {
     context.addSingleton(DESKTOP_FEISHU_STORE_PORT, {
@@ -76,6 +82,7 @@ export class DesktopFeishuModule extends DependencyModuleBase {
         services.resolve(DESKTOP_FEISHU_STORE_PORT),
         services.resolve(DESKTOP_FEISHU_ACTION_EXECUTOR_PORT),
         services.resolve(DESKTOP_FEISHU_DOC_RUNTIME_PORT),
+        new DesktopFeishuOpenApiClient(),
       ),
       source: context.module.moduleId,
     });
@@ -103,5 +110,47 @@ export class DesktopFeishuModule extends DependencyModuleBase {
         source: context.module.moduleId,
       },
     );
+  }
+
+  override async onStart(context: DependencyModuleRuntimeContext): Promise<void> {
+    const runtimeContext = context.container.resolve(DESKTOP_RUNTIME_CONTEXT);
+    const feishu = context.container.resolve(DESKTOP_FEISHU_PORT);
+    const logger = context.container.resolve(RUNTIME_LOGGER_FACTORY_PORT).createLogger({
+      source: "desktop",
+      module: "desktop.feishu",
+    });
+
+    this.unregisterOAuthCallbackRoute?.();
+    this.unregisterOAuthCallbackRoute = runtimeContext.singleInstance.registerHttpRoute({
+      method: "GET",
+      path: DESKTOP_FEISHU_OAUTH_CALLBACK_PATH,
+      handler: async (request) => {
+        const result = await feishu.handleOAuthCallback({
+          code: request.url.searchParams.get("code") ?? undefined,
+          state: request.url.searchParams.get("state") ?? undefined,
+          error: request.url.searchParams.get("error") ?? undefined,
+          errorDescription: request.url.searchParams.get("error_description") ?? undefined,
+        });
+
+        return {
+          status: result.success ? 200 : 400,
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+          },
+          body: result.html,
+        };
+      },
+    });
+
+    await logger.info("Desktop feishu OAuth callback route registered", {
+      context: {
+        path: DESKTOP_FEISHU_OAUTH_CALLBACK_PATH,
+      },
+    });
+  }
+
+  override async onStop(): Promise<void> {
+    this.unregisterOAuthCallbackRoute?.();
+    this.unregisterOAuthCallbackRoute = null;
   }
 }
