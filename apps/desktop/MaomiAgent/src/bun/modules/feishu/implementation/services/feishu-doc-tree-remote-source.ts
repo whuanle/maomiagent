@@ -84,6 +84,17 @@ function valueOrFallback(value: unknown, fallback: string): string {
   return typeof value === "string" && value.length > 0 ? value : fallback;
 }
 
+function shouldFallbackToDocument(error: unknown): boolean {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  return (
+    message.includes("230027") ||
+    message.includes("not found") ||
+    message.includes("not_found") ||
+    message.includes("wrong kind") ||
+    message.includes("wrong-kind")
+  );
+}
+
 export class FeishuDocTreeRemoteSource {
   constructor(private readonly reader: FeishuOpenApiReader) {}
 
@@ -110,7 +121,11 @@ export class FeishuDocTreeRemoteSource {
       }
 
       return root;
-    } catch {
+    } catch (wikiError) {
+      if (!shouldFallbackToDocument(wikiError)) {
+        throw wikiError;
+      }
+
       const response = await this.reader.getJson<FeishuDocumentResponse>(
         openApiUrl(`/docx/v1/documents/${encodeURIComponent(token)}`),
         accessToken,
@@ -145,7 +160,9 @@ export class FeishuDocTreeRemoteSource {
       accessToken,
     );
 
-    const nodes = (response.items ?? []).map((item) => this.toTreeNode(item, root.rootNodeId));
+    const nodes = (response.items ?? [])
+      .map((item) => this.toTreeNode(item, root.rootNodeId))
+      .filter((node) => node.token.length > 0);
     const children: FeishuDocTreeRemoteChildren = {
       nodes,
       hasMore: response.has_more === true,

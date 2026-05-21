@@ -57,4 +57,68 @@ describe("FeishuDocTreeRemoteSource", () => {
 
     await expect(source.recognizeRoot("access", "doc_1")).resolves.toEqual({ token: "doc_1", kind: "document", rootNodeId: "doc_1", title: "普通文档", docId: "doc_1" });
   });
+
+  test("does not fall back to document recognition for wiki auth or network errors", async () => {
+    const requests: RequestRecord[] = [];
+    const authError = new Error("Feishu API error 99991663: auth failed");
+    const source = createSource({
+      "/wiki/v2/spaces/get_node": authError,
+      "/docx/v1/documents/wiki_root": { document: { document_id: "wiki_root", title: "不应请求" } },
+    }, requests);
+
+    let caught: unknown;
+    try {
+      await source.recognizeRoot("access", "wiki_root");
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBe(authError);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toContain("/wiki/v2/spaces/get_node");
+  });
+
+  test("returns no children for document roots without requesting remote nodes", async () => {
+    const requests: RequestRecord[] = [];
+    const source = createSource({}, requests);
+
+    const children = await source.listChildren("access", {
+      token: "doc_1",
+      kind: "document",
+      rootNodeId: "doc_1",
+      title: "普通文档",
+      docId: "doc_1",
+    });
+
+    expect(children).toEqual({ nodes: [], hasMore: false });
+    expect(requests).toEqual([]);
+  });
+
+  test("maps pagination fields and filters child nodes without tokens", async () => {
+    const requests: RequestRecord[] = [];
+    const source = createSource({
+      "/wiki/v2/spaces/space_1/nodes": {
+        items: [
+          { title: "缺 token 节点", has_child: true },
+          { node_token: "child_node", obj_token: "child_doc", obj_type: "docx", title: "测试节点1", has_child: false },
+        ],
+        has_more: true,
+        page_token: "next_cursor",
+      },
+    }, requests);
+
+    const children = await source.listChildren("access", {
+      token: "wiki_root",
+      kind: "wiki_node",
+      rootNodeId: "wiki_root",
+      title: "测试 root",
+      spaceId: "space_1",
+    }, "cursor_1");
+
+    expect(children.hasMore).toBe(true);
+    expect(children.pageToken).toBe("next_cursor");
+    expect(children.nodes).toEqual([{ id: "child_node", token: "child_node", kind: "wiki_node", docId: "child_doc", title: "测试节点1", objType: "docx", hasChild: false, parentToken: "wiki_root" }]);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toContain("page_token=cursor_1");
+  });
 });
