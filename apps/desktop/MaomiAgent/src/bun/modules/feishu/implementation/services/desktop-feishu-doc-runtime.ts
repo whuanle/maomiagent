@@ -1,6 +1,10 @@
 import type {
   FeishuDocContentView,
   FeishuDocMediaPreviewResult,
+  FeishuDocTreeBranchInput,
+  FeishuDocTreeBranchResult,
+  FeishuDocTreeLoadInput,
+  FeishuDocTreeLoadResult,
   FeishuDocTreeQuery,
   FeishuDocTreeView,
   FeishuDocWhiteboardPreviewResult,
@@ -12,39 +16,111 @@ import type {
 import type { DesktopFeishuDocRuntimePort } from "../../abstraction/ports/desktop-feishu-doc-runtime.ports";
 import type { DesktopFeishuStorePort } from "../../abstraction/ports/desktop-feishu-store.ports";
 
+type DesktopFeishuDocTreeLoaderPort = {
+  loadRoot(input: FeishuDocTreeLoadInput): Promise<FeishuDocTreeLoadResult>;
+  loadBranch(input: FeishuDocTreeBranchInput): Promise<FeishuDocTreeBranchResult>;
+};
+
+type DesktopFeishuDocRuntimeDeps =
+  | DesktopFeishuStorePort
+  | DesktopFeishuDocTreeLoaderPort
+  | {
+      store: DesktopFeishuStorePort;
+      loader: DesktopFeishuDocTreeLoaderPort;
+    };
+
+function isStorePort(value: DesktopFeishuDocRuntimeDeps): value is DesktopFeishuStorePort {
+  return "read" in value && "write" in value;
+}
+
+function isRuntimeBundle(
+  value: DesktopFeishuDocRuntimeDeps,
+): value is { store: DesktopFeishuStorePort; loader: DesktopFeishuDocTreeLoaderPort } {
+  return "store" in value && "loader" in value;
+}
+
 export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
-  constructor(private readonly store: DesktopFeishuStorePort) {}
+  private readonly store: DesktopFeishuStorePort | null;
+  private readonly loader: DesktopFeishuDocTreeLoaderPort;
+
+  constructor(deps: DesktopFeishuDocRuntimeDeps) {
+    if (isRuntimeBundle(deps)) {
+      this.store = deps.store;
+      this.loader = deps.loader;
+      return;
+    }
+
+    if (isStorePort(deps)) {
+      this.store = deps;
+      this.loader = this.createStoreBackedLoader(deps);
+      return;
+    }
+
+    this.store = null;
+    this.loader = deps;
+  }
 
   async getDocsCapabilities(): Promise<FeishuDocsCapabilitiesView> {
     return {
-      localDraft: true,
-      mediaPreview: true,
-      whiteboardPreview: true,
-      smartAssistantExecution: true,
-    } as unknown as FeishuDocsCapabilitiesView;
+      mode: "developer",
+      accessKind: "developer_oauth",
+      accessLabel: "智能助手 OAuth",
+      managedMcpId: "desktop.feishu.smart-assistant",
+      endpoint: "desktop://feishu-assistant/docs",
+      availableTools: [
+        "search-doc",
+        "fetch-doc",
+        "create-doc",
+        "update-doc",
+        "docs.list_nodes",
+      ],
+      toolDetails: [
+        {
+          name: "search-doc",
+          description: "Search Feishu docs and wiki nodes.",
+        },
+        {
+          name: "fetch-doc",
+          description: "Read Feishu doc content and tree metadata.",
+        },
+      ],
+      canSearchDocs: true,
+      canListDocs: true,
+      canFetchDocs: true,
+      canUpdateDocs: true,
+      canBrowseTree: true,
+      canReadDocs: true,
+      canWriteDocs: true,
+    };
+  }
+
+  async loadDocTreeRoot(input: FeishuDocTreeLoadInput): Promise<FeishuDocTreeLoadResult> {
+    return this.loader.loadRoot(input);
+  }
+
+  async loadDocTreeBranch(input: FeishuDocTreeBranchInput): Promise<FeishuDocTreeBranchResult> {
+    return this.loader.loadBranch(input);
   }
 
   async getDocTree(input: FeishuDocTreeQuery): Promise<FeishuDocTreeView> {
-    const payload = input as any;
-    const store = await this.store.read();
-    const items = Object.values(store.docs).map((doc: any) => ({
-      docId: doc.docId,
-      title: doc.title,
-      type: "doc",
-      hasChildren: false,
-      updatedAt: doc.updatedAt,
-    }));
+    const token = input.docId ?? input.root;
+    const result = await this.loadDocTreeRoot({
+      token,
+      forceRefresh: input.forceRefresh,
+    });
+
     return {
-      request: payload,
-      items,
-      total: items.length,
+      root: input.root,
+      ...(input.docId ? { parentDocId: input.docId } : {}),
+      nodes: result.nodes,
       hasMore: false,
-    } as unknown as FeishuDocTreeView;
+    };
   }
 
   async getDocContent(docId: string): Promise<FeishuDocContentView> {
-    const store = await this.store.read();
-    const existing = store.docs[docId];
+    const store = this.requireStore();
+    const snapshot = await store.read();
+    const existing = snapshot.docs[docId];
     if (existing) {
       return existing as FeishuDocContentView;
     }
@@ -66,9 +142,66 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
         riskyBlockMode: "safe" as const,
       },
     };
-    store.docs[docId] = item as unknown as FeishuDocContentView;
-    await this.store.write(store);
+    snapshot.docs[docId] = item as unknown as FeishuDocContentView;
+    await store.write(snapshot);
     return item as unknown as FeishuDocContentView;
+  }
+
+  private requireStore(): DesktopFeishuStorePort {
+    if (!this.store) {
+      throw new Error("Desktop Feishu doc store is not configured");
+    }
+    return this.store;
+  }
+
+  private createStoreBackedLoader(store: DesktopFeishuStorePort): DesktopFeishuDocTreeLoaderPort {
+    return {
+      loadRoot: async (input) => {
+        const snapshot = await store.read();
+        const nodes = Object.values(snapshot.docs).map((doc: any) => ({
+          id: doc.docId,
+          token: doc.docId,
+          kind: "document" as const,
+          docId: doc.docId,
+          title: doc.title,
+          docType: "doc",
+          hasChild: false,
+          updateTime: doc.updatedAt,
+        }));
+
+        if (nodes.every((item) => item.token !== input.token)) {
+          nodes.unshift({
+            id: input.token,
+            token: input.token,
+            kind: "document" as const,
+            docId: input.token,
+            title: input.token,
+            docType: "doc",
+            hasChild: false,
+            updateTime: new Date().toISOString(),
+          });
+        }
+
+        return {
+          rootToken: input.token,
+          rootKind: "document",
+          nodes,
+          source: "cache",
+          refreshing: false,
+          stale: false,
+          loadedAt: new Date().toISOString(),
+        };
+      },
+      loadBranch: async (input) => ({
+        rootToken: input.rootToken,
+        parentToken: input.parentToken,
+        nodes: [],
+        source: "cache",
+        refreshing: false,
+        stale: false,
+        loadedAt: new Date().toISOString(),
+      }),
+    };
   }
 
   async getDocMediaPreviewUrls(input: { fileTokens: string[] }): Promise<FeishuDocMediaPreviewResult> {
@@ -109,7 +242,8 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
     force?: boolean;
   }): Promise<FeishuDocContentView> {
     const current = await this.getDocContent(input.docId);
-    const store = await this.store.read();
+    const store = this.requireStore();
+    const snapshot = await store.read();
     const item = {
       ...(current as any),
       docId: input.docId,
@@ -117,8 +251,8 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       markdown: input.markdown ?? (current as any).markdown ?? "",
       updatedAt: new Date().toISOString(),
     };
-    store.docs[input.docId] = item as FeishuDocContentView;
-    await this.store.write(store);
+    snapshot.docs[input.docId] = item as FeishuDocContentView;
+    await store.write(snapshot);
     return item as FeishuDocContentView;
   }
 

@@ -1,4 +1,6 @@
 import type {
+  FeishuDocTreeBranchInput,
+  FeishuDocTreeBranchResult,
   FeishuDocTreeLoadInput,
   FeishuDocTreeLoadResult,
   FeishuDocTreeMutationEvent,
@@ -25,7 +27,11 @@ export type FeishuDocTreeLoaderCache = {
 
 export type FeishuDocTreeLoaderRemote = {
   recognizeRoot(accessToken: string, token: string): Promise<FeishuDocTreeRecognizedRoot>;
-  listChildren(accessToken: string, root: FeishuDocTreeRecognizedRoot): Promise<FeishuDocTreeRemoteChildren>;
+  listChildren(
+    accessToken: string,
+    root: FeishuDocTreeRecognizedRoot,
+    pageToken?: string,
+  ): Promise<FeishuDocTreeRemoteChildren>;
 };
 
 export type FeishuDocTreeLoaderDeps = {
@@ -55,6 +61,25 @@ export class FeishuDocTreeLoader {
     }
 
     return this.refreshRoot(scopeId, input.token);
+  }
+
+  async loadBranch(input: FeishuDocTreeBranchInput): Promise<FeishuDocTreeBranchResult> {
+    const scopeId = this.deps.scopeId();
+    const cachedBranch = await this.deps.cache.readBranch(scopeId, input.rootToken, input.parentToken);
+
+    if (!input.forceRefresh && cachedBranch) {
+      void this.refreshBranch(scopeId, input.rootToken, input.parentToken).catch((error) => {
+        this.deps.emit({
+          type: "branch-failed",
+          rootToken: input.rootToken,
+          parentToken: input.parentToken,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+      return this.branchCacheResult(cachedBranch);
+    }
+
+    return this.refreshBranch(scopeId, input.rootToken, input.parentToken);
   }
 
   private async refreshRoot(scopeId: string, token: string): Promise<FeishuDocTreeLoadResult> {
@@ -99,6 +124,57 @@ export class FeishuDocTreeLoader {
     return {
       rootToken: cachedRoot.token,
       rootKind: cachedRoot.kind,
+      nodes: cachedBranch.nodes,
+      source: "cache",
+      refreshing: true,
+      stale: true,
+      loadedAt: cachedBranch.loadedAt,
+    };
+  }
+
+  private async refreshBranch(
+    scopeId: string,
+    rootToken: string,
+    parentToken: string,
+  ): Promise<FeishuDocTreeBranchResult> {
+    const cachedRoot = await this.deps.cache.readRoot(scopeId, rootToken);
+    const accessToken = await this.deps.accessToken();
+    const recognizedRoot = await this.deps.remote.recognizeRoot(accessToken, rootToken);
+    const children = await this.deps.remote.listChildren(accessToken, {
+      ...recognizedRoot,
+      kind: cachedRoot?.kind ?? recognizedRoot.kind,
+      title: cachedRoot?.title ?? recognizedRoot.title,
+      rootNodeId: parentToken,
+    });
+    const loadedAt = this.deps.now();
+
+    await this.deps.cache.saveBranch(scopeId, {
+      rootToken,
+      parentToken,
+      nodes: children.nodes,
+      loadedAt,
+      complete: !children.hasMore,
+    });
+
+    const result: FeishuDocTreeBranchResult = {
+      rootToken,
+      parentToken,
+      nodes: children.nodes,
+      source: "remote",
+      refreshing: false,
+      stale: false,
+      loadedAt,
+    };
+    this.deps.emit({ type: "branch-refreshed", payload: result });
+    return result;
+  }
+
+  private branchCacheResult(
+    cachedBranch: DesktopFeishuDocTreeBranchCacheEntry,
+  ): FeishuDocTreeBranchResult {
+    return {
+      rootToken: cachedBranch.rootToken,
+      parentToken: cachedBranch.parentToken,
       nodes: cachedBranch.nodes,
       source: "cache",
       refreshing: true,

@@ -5,13 +5,18 @@ import type {
   FeishuDeveloperConfigInput,
   FeishuDocContentView,
   FeishuDocMediaPreviewResult,
+  FeishuDocTreeBranchInput,
+  FeishuDocTreeBranchResult,
+  FeishuDocTreeLoadInput,
+  FeishuDocTreeLoadResult,
   FeishuDocTreeQuery,
   FeishuDocTreeView,
   FeishuDocWhiteboardPreviewResult,
   FeishuDocWorkspacePullResult,
   FeishuDocWorkspacePushResult,
   FeishuDocsCapabilitiesView,
-  FeishuPersonalConfigInput,
+  FeishuOAuthCallbackInput,
+  FeishuOAuthCallbackResult,
   FeishuSmartAssistantActionExecuteResultView,
   FeishuSmartAssistantExecuteActionInput,
   FeishuStateView,
@@ -22,6 +27,8 @@ export interface DesktopFeishuQueryPort {
   getState(): Promise<FeishuStateView>;
   getBotState(): Promise<FeishuBotStateView>;
   getDocsCapabilities(): Promise<FeishuDocsCapabilitiesView>;
+  loadDocTreeRoot(input: FeishuDocTreeLoadInput): Promise<FeishuDocTreeLoadResult>;
+  loadDocTreeBranch(input: FeishuDocTreeBranchInput): Promise<FeishuDocTreeBranchResult>;
   getDocTree(input: FeishuDocTreeQuery): Promise<FeishuDocTreeView>;
   getDocContent(docId: string): Promise<FeishuDocContentView>;
   getDocMediaPreviewUrls(input: { fileTokens: string[] }): Promise<FeishuDocMediaPreviewResult>;
@@ -32,12 +39,11 @@ export interface DesktopFeishuQueryPort {
 }
 
 export interface DesktopFeishuCommandPort {
-  savePersonalConfig(input: FeishuPersonalConfigInput): Promise<FeishuStateView>;
-  clearPersonalConfig(): Promise<FeishuStateView>;
   saveDeveloperConfig(input: FeishuDeveloperConfigInput): Promise<FeishuStateView>;
   beginDeveloperAuthorization(
     input: FeishuDeveloperConfigInput,
   ): Promise<FeishuDeveloperAuthorizeResult>;
+  handleOAuthCallback(input: FeishuOAuthCallbackInput): Promise<FeishuOAuthCallbackResult>;
   refreshDeveloperToken(): Promise<FeishuStateView>;
   clearSmartAssistantConfig(): Promise<FeishuStateView>;
   clearConfig(): Promise<FeishuStateView>;

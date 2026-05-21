@@ -89,4 +89,41 @@ describe("FeishuDocTreeLoader", () => {
     branches.set("root", { rootToken: "root", parentToken: "root", loadedAt: "2026-05-20T00:00:00.000Z", complete: true, nodes: [{ id: "cached", token: "cached", kind: "document", title: "Cached", hasChild: false }] });
     await expect(loader.loadRoot({ token: "root", forceRefresh: true })).rejects.toThrow("remote down");
   });
+
+  test("loads and caches a branch from the remote source", async () => {
+    const { loader, branches, updates } = createLoader({
+      listChildren: async (_access: string, root: any) => ({
+        nodes: [{ id: `${root.rootNodeId}-child`, token: `${root.rootNodeId}-child`, kind: "document", title: "Branch Child", hasChild: false }],
+        hasMore: false,
+      }),
+    });
+
+    const result = await loader.loadBranch({ rootToken: "root", parentToken: "parent" });
+
+    expect(result.source).toBe("remote");
+    expect(result.rootToken).toBe("root");
+    expect(result.parentToken).toBe("parent");
+    expect(result.nodes[0].title).toBe("Branch Child");
+    expect(branches.get("parent").nodes[0].title).toBe("Branch Child");
+    expect(updates).toContainEqual(expect.objectContaining({ type: "branch-refreshed" }));
+  });
+
+  test("returns cached branch immediately while refreshing it in the background", async () => {
+    const deferredChildren = createDeferred<any>();
+    const { loader, roots, branches } = createLoader({
+      listChildren: async () => deferredChildren.promise,
+    });
+    roots.set("root", { token: "root", kind: "wiki_node", rootNodeId: "root", title: "Root", loadedAt: "2026-05-20T00:00:00.000Z" });
+    branches.set("parent", { rootToken: "root", parentToken: "parent", loadedAt: "2026-05-20T00:00:00.000Z", complete: true, nodes: [{ id: "cached", token: "cached", kind: "document", title: "Cached Branch", hasChild: false }] });
+
+    const result = await loader.loadBranch({ rootToken: "root", parentToken: "parent" });
+
+    expect(result.source).toBe("cache");
+    expect(result.refreshing).toBe(true);
+    expect(result.stale).toBe(true);
+    expect(result.loadedAt).toBe("2026-05-20T00:00:00.000Z");
+    expect(result.nodes[0].title).toBe("Cached Branch");
+
+    deferredChildren.resolve({ nodes: [], hasMore: false });
+  });
 });

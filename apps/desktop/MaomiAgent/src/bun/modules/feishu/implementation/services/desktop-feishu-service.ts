@@ -12,6 +12,10 @@ import type {
   FeishuDeveloperConfigInput,
   FeishuDocContentView,
   FeishuDocMediaPreviewResult,
+  FeishuDocTreeBranchInput,
+  FeishuDocTreeBranchResult,
+  FeishuDocTreeLoadInput,
+  FeishuDocTreeLoadResult,
   FeishuDocTreeQuery,
   FeishuDocTreeView,
   FeishuDocWhiteboardPreviewResult,
@@ -434,6 +438,14 @@ export class DesktopFeishuService implements DesktopFeishuPort {
 
   async getDocsCapabilities(): Promise<FeishuDocsCapabilitiesView> {
     return this.docRuntime.getDocsCapabilities();
+  }
+
+  async loadDocTreeRoot(input: FeishuDocTreeLoadInput): Promise<FeishuDocTreeLoadResult> {
+    return this.docRuntime.loadDocTreeRoot(input);
+  }
+
+  async loadDocTreeBranch(input: FeishuDocTreeBranchInput): Promise<FeishuDocTreeBranchResult> {
+    return this.docRuntime.loadDocTreeBranch(input);
   }
 
   async getDocTree(input: FeishuDocTreeQuery): Promise<FeishuDocTreeView> {

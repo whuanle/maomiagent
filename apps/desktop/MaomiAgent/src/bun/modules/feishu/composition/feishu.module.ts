@@ -24,6 +24,9 @@ import {
 import { DESKTOP_FEISHU_STORE_PORT } from "../abstraction/tokens/desktop-feishu-store.tokens";
 import { DesktopFeishuDocRuntime } from "../implementation/services/desktop-feishu-doc-runtime";
 import { DesktopFeishuConversationCapabilityProvider } from "../implementation/services/desktop-feishu-conversation-capability-provider";
+import { FeishuDocTreeCache } from "../implementation/services/feishu-doc-tree-cache";
+import { FeishuDocTreeLoader } from "../implementation/services/feishu-doc-tree-loader";
+import { FeishuDocTreeRemoteSource } from "../implementation/services/feishu-doc-tree-remote-source";
 import { DesktopFeishuSmartAssistantActionRegistry } from "../implementation/services/desktop-feishu-smart-assistant-action-registry";
 import { DesktopFeishuSmartAssistantActionExecutor } from "../implementation/services/desktop-feishu-smart-assistant-action-executor";
 import { DesktopFeishuOpenApiClient } from "../implementation/services/desktop-feishu-openapi-client";
@@ -44,6 +47,8 @@ export class DesktopFeishuModule extends DependencyModuleBase {
   private unregisterOAuthCallbackRoute: (() => void) | null = null;
 
   override configureServices(context: DependencyModuleContext): void {
+    const openApiClient = new DesktopFeishuOpenApiClient();
+
     context.addSingleton(DESKTOP_FEISHU_STORE_PORT, {
       useFactory: (services) => new DesktopFeishuStore(
         services.resolve(DESKTOP_CONFIGURATION_PORT),
@@ -56,9 +61,26 @@ export class DesktopFeishuModule extends DependencyModuleBase {
     });
 
     context.addSingleton(DESKTOP_FEISHU_DOC_RUNTIME_PORT, {
-      useFactory: (services) => new DesktopFeishuDocRuntime(
-        services.resolve(DESKTOP_FEISHU_STORE_PORT),
-      ),
+      useFactory: (services) => {
+        const store = services.resolve(DESKTOP_FEISHU_STORE_PORT);
+        const treeCache = new FeishuDocTreeCache(store);
+        const remoteSource = new FeishuDocTreeRemoteSource(openApiClient);
+        const treeLoader = new FeishuDocTreeLoader({
+          scopeId: () => "desktop.feishu.smart-assistant",
+          accessToken: async () => {
+            const snapshot = await store.read();
+            if (!snapshot.developerToken.accessToken) {
+              throw new Error("请先完成飞书授权");
+            }
+            return snapshot.developerToken.accessToken;
+          },
+          now: () => new Date().toISOString(),
+          cache: treeCache,
+          remote: remoteSource,
+          emit: () => undefined,
+        });
+        return new DesktopFeishuDocRuntime({ store, loader: treeLoader });
+      },
       source: context.module.moduleId,
     });
 
@@ -82,7 +104,7 @@ export class DesktopFeishuModule extends DependencyModuleBase {
         services.resolve(DESKTOP_FEISHU_STORE_PORT),
         services.resolve(DESKTOP_FEISHU_ACTION_EXECUTOR_PORT),
         services.resolve(DESKTOP_FEISHU_DOC_RUNTIME_PORT),
-        new DesktopFeishuOpenApiClient(),
+        openApiClient,
       ),
       source: context.module.moduleId,
     });
