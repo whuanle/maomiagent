@@ -4,6 +4,10 @@ import type {
   FeishuDeveloperAuthorizeResult,
   FeishuDeveloperConfigInput,
   FeishuDocContentView,
+  FeishuDocTreeBranchInput,
+  FeishuDocTreeBranchResult,
+  FeishuDocTreeLoadInput,
+  FeishuDocTreeLoadResult,
   FeishuDocMediaPreviewResult,
   FeishuDocTreeQuery,
   FeishuDocTreeView,
@@ -36,6 +40,8 @@ type DesktopFeishuBridge = {
 
   getDesktopFeishuDocsCapabilities: () => Promise<FeishuDocsCapabilitiesView>;
   getDesktopFeishuDocTree: (input: FeishuDocTreeQuery) => Promise<FeishuDocTreeView>;
+  loadDesktopFeishuDocTreeRoot: (input: FeishuDocTreeLoadInput) => Promise<FeishuDocTreeLoadResult>;
+  loadDesktopFeishuDocTreeBranch: (input: FeishuDocTreeBranchInput) => Promise<FeishuDocTreeBranchResult>;
   getDesktopFeishuDocContent: (docId: string) => Promise<FeishuDocContentView>;
   getDesktopFeishuDocMediaPreviewUrls: (input: {
     fileTokens: string[];
@@ -145,6 +151,18 @@ export function fetchDesktopFeishuDocsCapabilities(): Promise<FeishuDocsCapabili
 
 export function fetchDesktopFeishuDocTree(input: FeishuDocTreeQuery): Promise<FeishuDocTreeView> {
   return getDesktopFeishuBridge().getDesktopFeishuDocTree(input);
+}
+
+export function loadDesktopFeishuDocTreeRoot(
+  input: FeishuDocTreeLoadInput,
+): Promise<FeishuDocTreeLoadResult> {
+  return getDesktopFeishuBridge().loadDesktopFeishuDocTreeRoot(input);
+}
+
+export function loadDesktopFeishuDocTreeBranch(
+  input: FeishuDocTreeBranchInput,
+): Promise<FeishuDocTreeBranchResult> {
+  return getDesktopFeishuBridge().loadDesktopFeishuDocTreeBranch(input);
 }
 
 export function fetchDesktopFeishuDocContent(docId: string): Promise<FeishuDocContentView> {

@@ -4,6 +4,10 @@ import type {
   FeishuDeveloperAuthorizeResult,
   FeishuDeveloperConfigInput,
   FeishuDocContentView,
+  FeishuDocTreeBranchInput,
+  FeishuDocTreeBranchResult,
+  FeishuDocTreeLoadInput,
+  FeishuDocTreeLoadResult,
   FeishuDocMediaPreviewResult,
   FeishuDocTreeQuery,
   FeishuDocTreeView,
@@ -29,6 +33,8 @@ import {
   fetchDesktopFeishuDocWhiteboardPreviewUrls,
   fetchDesktopFeishuState,
   fetchDesktopFeishuWorkspaceDocLocalDraft,
+  loadDesktopFeishuDocTreeBranch,
+  loadDesktopFeishuDocTreeRoot,
   openDesktopFeishuWorkspaceDoc,
   pullDesktopFeishuWorkspaceDoc,
   pushDesktopFeishuWorkspaceDoc,
@@ -128,6 +134,20 @@ export async function fetchFeishuDocTree(
   input: FeishuDocTreeQuery,
 ): Promise<FeishuDocTreeView> {
   return fetchDesktopFeishuDocTree(input);
+}
+
+export async function loadFeishuDocTreeRoot(
+  _baseUrl: string,
+  input: FeishuDocTreeLoadInput,
+): Promise<FeishuDocTreeLoadResult> {
+  return loadDesktopFeishuDocTreeRoot(input);
+}
+
+export async function loadFeishuDocTreeBranch(
+  _baseUrl: string,
+  input: FeishuDocTreeBranchInput,
+): Promise<FeishuDocTreeBranchResult> {
+  return loadDesktopFeishuDocTreeBranch(input);
 }
 
 export async function fetchFeishuDocContent(

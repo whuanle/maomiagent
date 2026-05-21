@@ -8,6 +8,12 @@ import { startDesktopApplication } from "./desktop-host";
 import type { ModuleHost } from "./shared/ioc";
 import { createSingleInstanceCoordinator } from "./single-instance";
 import type { DesktopRendererRPC, DesktopWindowAction } from "../shared/desktop-rpc";
+import type {
+  FeishuDocTreeBranchInput,
+  FeishuDocTreeBranchResult,
+  FeishuDocTreeLoadInput,
+  FeishuDocTreeLoadResult,
+} from "../shared/desktop-feishu";
 import {
   RUNTIME_LOGGER_FACTORY_PORT,
   RUNTIME_LOGS_QUERY_PORT,
@@ -457,6 +463,18 @@ function resolveDesktopFeishuCommandPort(host: ModuleHost | null) {
   return resolveModuleHost(host).container.resolve(DESKTOP_FEISHU_COMMAND_PORT);
 }
 
+function createDesktopFeishuDocTreeRuntimeRequestHandlers(host: ModuleHost | null): {
+  loadDesktopFeishuDocTreeRoot: (input: FeishuDocTreeLoadInput) => Promise<FeishuDocTreeLoadResult>;
+  loadDesktopFeishuDocTreeBranch: (input: FeishuDocTreeBranchInput) => Promise<FeishuDocTreeBranchResult>;
+} {
+  return {
+    loadDesktopFeishuDocTreeRoot: (input) =>
+      resolveDesktopFeishuQueryPort(host).loadDocTreeRoot(input),
+    loadDesktopFeishuDocTreeBranch: (input) =>
+      resolveDesktopFeishuQueryPort(host).loadDocTreeBranch(input),
+  };
+}
+
 function resolveDesktopMemoryQueryPort(host: ModuleHost | null) {
   return resolveModuleHost(host).container.resolve(DESKTOP_MEMORY_QUERY_PORT);
 }
@@ -689,6 +707,7 @@ try {
               resolveDesktopFeishuQueryPort(host).getDocsCapabilities(),
             getDesktopFeishuDocTree: (input) =>
               resolveDesktopFeishuQueryPort(host).getDocTree(input),
+            ...createDesktopFeishuDocTreeRuntimeRequestHandlers(host),
             getDesktopFeishuDocContent: ({ docId }) =>
               resolveDesktopFeishuQueryPort(host).getDocContent(docId),
             getDesktopFeishuDocMediaPreviewUrls: ({ fileTokens }) =>

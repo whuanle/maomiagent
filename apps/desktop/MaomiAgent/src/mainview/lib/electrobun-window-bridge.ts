@@ -1,4 +1,10 @@
 import type { DesktopRendererRPC, DesktopWindowAction } from "../../shared/desktop-rpc";
+import type {
+  FeishuDocTreeBranchInput,
+  FeishuDocTreeBranchResult,
+  FeishuDocTreeLoadInput,
+  FeishuDocTreeLoadResult,
+} from "../../shared/desktop-feishu";
 import {
   emitDesktopConversationRuntimeEventsUpdated,
   emitDesktopConversationSessionDetailUpdated,
@@ -8,6 +14,11 @@ import { notifyDesktopWindowBridgeReady } from "./desktop-window";
 
 type ElectrobunGlobal = {
   __electrobun?: unknown;
+};
+
+type DesktopFeishuDocTreeRuntimeRequests = {
+  loadDesktopFeishuDocTreeRoot: (input: FeishuDocTreeLoadInput) => Promise<FeishuDocTreeLoadResult>;
+  loadDesktopFeishuDocTreeBranch: (input: FeishuDocTreeBranchInput) => Promise<FeishuDocTreeBranchResult>;
 };
 
 let initialized = false;
@@ -39,6 +50,7 @@ export function installElectrobunWindowBridge() {
       },
     });
     new Electroview({ rpc });
+    const desktopFeishuDocTreeRuntimeRequest = rpc.request as typeof rpc.request & DesktopFeishuDocTreeRuntimeRequests;
 
     window.maomiDesktopWindow = {
       getWindowState: () => rpc.request.getWindowState(),
@@ -116,6 +128,10 @@ export function installElectrobunWindowBridge() {
       clearDesktopFeishuBotConfig: () => rpc.request.clearDesktopFeishuBotConfig(),
       getDesktopFeishuDocsCapabilities: () => rpc.request.getDesktopFeishuDocsCapabilities(),
       getDesktopFeishuDocTree: (input) => rpc.request.getDesktopFeishuDocTree(input),
+      loadDesktopFeishuDocTreeRoot: (input) =>
+        desktopFeishuDocTreeRuntimeRequest.loadDesktopFeishuDocTreeRoot(input),
+      loadDesktopFeishuDocTreeBranch: (input) =>
+        desktopFeishuDocTreeRuntimeRequest.loadDesktopFeishuDocTreeBranch(input),
       getDesktopFeishuDocContent: (docId) => rpc.request.getDesktopFeishuDocContent({ docId }),
       getDesktopFeishuDocMediaPreviewUrls: (input) =>
         rpc.request.getDesktopFeishuDocMediaPreviewUrls(input),
