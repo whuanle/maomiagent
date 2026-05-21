@@ -23,7 +23,15 @@ function contentKey(scopeId: string, docId: string): string {
 }
 
 export class FeishuDocTreeCache {
+  private writeQueue: Promise<void> = Promise.resolve();
+
   constructor(private readonly store: DesktopFeishuStorePort) {}
+
+  private enqueueWrite(operation: () => Promise<void>): Promise<void> {
+    const next = this.writeQueue.then(operation, operation);
+    this.writeQueue = next.catch(() => undefined);
+    return next;
+  }
 
   async readRoot(scopeId: string, token: string): Promise<DesktopFeishuDocTreeRootCacheEntry | null> {
     const snapshot = await this.store.read();
@@ -31,16 +39,18 @@ export class FeishuDocTreeCache {
   }
 
   async saveRoot(scopeId: string, entry: DesktopFeishuDocTreeRootCacheEntry): Promise<void> {
-    const snapshot = await this.store.read();
-    await this.store.write({
-      ...snapshot,
-      docTreeCache: {
-        ...snapshot.docTreeCache,
-        roots: {
-          ...snapshot.docTreeCache.roots,
-          [rootKey(scopeId, entry.token)]: entry,
+    return this.enqueueWrite(async () => {
+      const snapshot = await this.store.read();
+      await this.store.write({
+        ...snapshot,
+        docTreeCache: {
+          ...snapshot.docTreeCache,
+          roots: {
+            ...snapshot.docTreeCache.roots,
+            [rootKey(scopeId, entry.token)]: entry,
+          },
         },
-      },
+      });
     });
   }
 
@@ -54,16 +64,18 @@ export class FeishuDocTreeCache {
   }
 
   async saveBranch(scopeId: string, entry: DesktopFeishuDocTreeBranchCacheEntry): Promise<void> {
-    const snapshot = await this.store.read();
-    await this.store.write({
-      ...snapshot,
-      docTreeCache: {
-        ...snapshot.docTreeCache,
-        branches: {
-          ...snapshot.docTreeCache.branches,
-          [branchKey(scopeId, entry.rootToken, entry.parentToken)]: entry,
+    return this.enqueueWrite(async () => {
+      const snapshot = await this.store.read();
+      await this.store.write({
+        ...snapshot,
+        docTreeCache: {
+          ...snapshot.docTreeCache,
+          branches: {
+            ...snapshot.docTreeCache.branches,
+            [branchKey(scopeId, entry.rootToken, entry.parentToken)]: entry,
+          },
         },
-      },
+      });
     });
   }
 
@@ -78,16 +90,18 @@ export class FeishuDocTreeCache {
     item: FeishuDocContentView,
     loadedAt: string,
   ): Promise<void> {
-    const snapshot = await this.store.read();
-    await this.store.write({
-      ...snapshot,
-      docTreeCache: {
-        ...snapshot.docTreeCache,
-        contents: {
-          ...snapshot.docTreeCache.contents,
-          [contentKey(scopeId, docId)]: { docId, item, loadedAt },
+    return this.enqueueWrite(async () => {
+      const snapshot = await this.store.read();
+      await this.store.write({
+        ...snapshot,
+        docTreeCache: {
+          ...snapshot.docTreeCache,
+          contents: {
+            ...snapshot.docTreeCache.contents,
+            [contentKey(scopeId, docId)]: { docId, item, loadedAt },
+          },
         },
-      },
+      });
     });
   }
 }
