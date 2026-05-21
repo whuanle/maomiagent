@@ -48,11 +48,10 @@ export class FeishuDocTreeLoader {
       : null;
 
     if (!input.forceRefresh && cachedRoot && cachedBranch) {
-      try {
-        return await this.refreshRoot(scopeId, input.token);
-      } catch (error) {
-        return this.cacheResult(cachedRoot, cachedBranch, error);
-      }
+      void this.refreshRoot(scopeId, input.token).catch((error) => {
+        void error;
+      });
+      return this.cacheResult(cachedRoot, cachedBranch);
     }
 
     return this.refreshRoot(scopeId, input.token);
@@ -96,17 +95,15 @@ export class FeishuDocTreeLoader {
   private cacheResult(
     cachedRoot: DesktopFeishuDocTreeRootCacheEntry,
     cachedBranch: DesktopFeishuDocTreeBranchCacheEntry,
-    error: unknown,
   ): FeishuDocTreeLoadResult {
     return {
       rootToken: cachedRoot.token,
       rootKind: cachedRoot.kind,
       nodes: cachedBranch.nodes,
       source: "cache",
-      refreshing: false,
+      refreshing: true,
       stale: true,
       loadedAt: cachedBranch.loadedAt,
-      error: error instanceof Error ? error.message : String(error),
     };
   }
 
