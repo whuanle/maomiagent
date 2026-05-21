@@ -836,20 +836,35 @@ export type FeishuDocSearchResult = {
   total: number
 }
 
+export type FeishuDocTreeNodeKind = "wiki_node" | "document"
+
+export type FeishuDocTreeSource = "remote" | "cache"
+
+export type FeishuDocTreeObjectType = "doc" | "docx" | "sheet" | "mindnote" | "bitable" | "file" | "slides"
+
 export type FeishuDocSummary = {
   id: string
+  token?: string
+  kind?: FeishuDocTreeNodeKind
   docId?: string
   title: string
   url?: string
   ownerName?: string
   docType?: string
+  objType?: FeishuDocTreeObjectType
+  parentToken?: string
   createTime?: string
   updateTime?: string
+  updatedAt?: string
   lastOpenTime?: string
   hasChild?: boolean
 }
 
 export type FeishuDocTreeNode = FeishuDocSummary & {
+  id: string
+  token: string
+  kind: FeishuDocTreeNodeKind
+  title: string
   hasChild: boolean
 }
 
@@ -860,6 +875,7 @@ export type FeishuDocTreeQuery = {
   docId?: string
   pageToken?: string
   pageSize?: number
+  forceRefresh?: boolean
 }
 
 export type FeishuDocTreeView = {
@@ -869,6 +885,44 @@ export type FeishuDocTreeView = {
   hasMore: boolean
   pageToken?: string
 }
+
+export type FeishuDocTreeLoadInput = {
+  token: string
+  forceRefresh?: boolean
+}
+
+export type FeishuDocTreeBranchInput = {
+  rootToken: string
+  parentToken: string
+  forceRefresh?: boolean
+}
+
+export type FeishuDocTreeLoadResult = {
+  rootToken: string
+  rootKind: FeishuDocTreeNodeKind
+  nodes: FeishuDocTreeNode[]
+  source: FeishuDocTreeSource
+  refreshing: boolean
+  stale: boolean
+  loadedAt?: string
+  error?: string
+}
+
+export type FeishuDocTreeBranchResult = {
+  rootToken: string
+  parentToken: string
+  nodes: FeishuDocTreeNode[]
+  source: FeishuDocTreeSource
+  refreshing: boolean
+  stale: boolean
+  loadedAt?: string
+  error?: string
+}
+
+export type FeishuDocTreeMutationEvent =
+  | { type: "root-refreshed"; payload: FeishuDocTreeLoadResult }
+  | { type: "branch-refreshed"; payload: FeishuDocTreeBranchResult }
+  | { type: "branch-failed"; rootToken: string; parentToken: string; message: string }
 
 export type FeishuDocMediaPreviewItem = {
   fileToken: string

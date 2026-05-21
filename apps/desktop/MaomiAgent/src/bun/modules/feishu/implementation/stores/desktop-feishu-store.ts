@@ -5,6 +5,9 @@ import { dirname, join } from "node:path";
 import type { DesktopConfigurationPort } from "../../../configuration";
 import type { RuntimeLogger } from "../../../logs";
 import type {
+  DesktopFeishuDeveloperCredentialSnapshot,
+  DesktopFeishuDeveloperTokenSnapshot,
+  DesktopFeishuDocTreeCacheSnapshot,
   DesktopFeishuStorePort,
   DesktopFeishuStoreSnapshot,
 } from "../../abstraction/ports/desktop-feishu-store.ports";
@@ -88,11 +91,37 @@ function createInitialBotState(): FeishuBotStateView {
   };
 }
 
+function createInitialDeveloperCredential(): DesktopFeishuDeveloperCredentialSnapshot {
+  return {
+    appSecret: "",
+  };
+}
+
+function createInitialDeveloperToken(): DesktopFeishuDeveloperTokenSnapshot {
+  return {
+    accessToken: "",
+    refreshToken: "",
+    accessTokenExpiresAt: "",
+    refreshTokenExpiresAt: "",
+  };
+}
+
+function createInitialDocTreeCache(): DesktopFeishuDocTreeCacheSnapshot {
+  return {
+    roots: {},
+    branches: {},
+    contents: {},
+  };
+}
+
 function createInitialSnapshot(): DesktopFeishuStoreSnapshot {
   return {
     state: createInitialStateView(),
     bot: createInitialBotState(),
     docs: {},
+    developerCredential: createInitialDeveloperCredential(),
+    developerToken: createInitialDeveloperToken(),
+    docTreeCache: createInitialDocTreeCache(),
   };
 }
 
@@ -122,6 +151,19 @@ export class DesktopFeishuStore implements DesktopFeishuStorePort {
           ...(parsed.bot ?? {}),
         },
         docs: (parsed.docs ?? {}) as Record<string, FeishuDocContentView>,
+        developerCredential: {
+          ...initial.developerCredential,
+          ...(parsed.developerCredential ?? {}),
+        },
+        developerToken: {
+          ...initial.developerToken,
+          ...(parsed.developerToken ?? {}),
+        },
+        docTreeCache: {
+          roots: parsed.docTreeCache?.roots ?? initial.docTreeCache.roots,
+          branches: parsed.docTreeCache?.branches ?? initial.docTreeCache.branches,
+          contents: parsed.docTreeCache?.contents ?? initial.docTreeCache.contents,
+        },
       };
     } catch {
       return createInitialSnapshot();
