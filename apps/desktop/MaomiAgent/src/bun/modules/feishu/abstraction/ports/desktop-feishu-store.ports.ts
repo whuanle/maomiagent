@@ -32,6 +32,7 @@ export type DesktopFeishuDocTreeBranchCacheEntry = {
   nodes: FeishuDocTreeNode[];
   loadedAt: string;
   complete: boolean;
+  pageToken?: string;
   error?: string;
 };
 

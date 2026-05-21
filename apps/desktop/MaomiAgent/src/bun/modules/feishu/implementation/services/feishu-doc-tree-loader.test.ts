@@ -47,6 +47,7 @@ describe("FeishuDocTreeLoader", () => {
     const result = await loader.loadRoot({ token: "root" });
     expect(result.source).toBe("remote");
     expect(result.refreshing).toBe(false);
+    expect(result.hasMore).toBe(false);
     expect(result.nodes[0].title).toBe("Child");
     expect(branches.get("root").nodes[0].title).toBe("Child");
   });
@@ -57,13 +58,15 @@ describe("FeishuDocTreeLoader", () => {
       recognizeRoot: async () => deferredRoot.promise,
     });
     roots.set("root", { token: "root", kind: "wiki_node", rootNodeId: "root", title: "Root", loadedAt: "2026-05-20T00:00:00.000Z" });
-    branches.set("root", { rootToken: "root", parentToken: "root", loadedAt: "2026-05-20T00:00:00.000Z", complete: true, nodes: [{ id: "cached", token: "cached", kind: "document", title: "Cached", hasChild: false }] });
+    branches.set("root", { rootToken: "root", parentToken: "root", loadedAt: "2026-05-20T00:00:00.000Z", complete: false, pageToken: "next", nodes: [{ id: "cached", token: "cached", kind: "document", title: "Cached", hasChild: false }] });
 
     const result = await loader.loadRoot({ token: "root" });
 
     expect(result.source).toBe("cache");
     expect(result.refreshing).toBe(true);
     expect(result.stale).toBe(true);
+    expect(result.hasMore).toBe(true);
+    expect(result.pageToken).toBe("next");
     expect(result.loadedAt).toBe("2026-05-20T00:00:00.000Z");
     expect(result.nodes[0].title).toBe("Cached");
 
@@ -94,7 +97,8 @@ describe("FeishuDocTreeLoader", () => {
     const { loader, branches, updates } = createLoader({
       listChildren: async (_access: string, root: any) => ({
         nodes: [{ id: `${root.rootNodeId}-child`, token: `${root.rootNodeId}-child`, kind: "document", title: "Branch Child", hasChild: false }],
-        hasMore: false,
+        hasMore: true,
+        pageToken: "next-page",
       }),
     });
 
@@ -103,7 +107,11 @@ describe("FeishuDocTreeLoader", () => {
     expect(result.source).toBe("remote");
     expect(result.rootToken).toBe("root");
     expect(result.parentToken).toBe("parent");
+    expect(result.hasMore).toBe(true);
+    expect(result.pageToken).toBe("next-page");
     expect(result.nodes[0].title).toBe("Branch Child");
+    expect(branches.get("parent").complete).toBe(false);
+    expect(branches.get("parent").pageToken).toBe("next-page");
     expect(branches.get("parent").nodes[0].title).toBe("Branch Child");
     expect(updates).toContainEqual(expect.objectContaining({ type: "branch-refreshed" }));
   });

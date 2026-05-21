@@ -119,6 +119,7 @@ describe("DesktopFeishuDocRuntime", () => {
         rootToken: "root",
         rootKind: "wiki_node",
         nodes: [{ id: "child", token: "child", kind: "document", title: "Child", hasChild: false }],
+        hasMore: false,
         source: "remote",
         refreshing: false,
         stale: false,
@@ -128,6 +129,7 @@ describe("DesktopFeishuDocRuntime", () => {
         rootToken: "root",
         parentToken: "child",
         nodes: [],
+        hasMore: false,
         source: "remote",
         refreshing: false,
         stale: false,
@@ -149,6 +151,7 @@ describe("DesktopFeishuDocRuntime", () => {
         rootToken: input.rootToken,
         parentToken: input.parentToken,
         nodes: [{ id: "grandchild", token: "grandchild", kind: "document", title: "Grandchild", hasChild: false }],
+        hasMore: false,
         source: "remote",
         refreshing: false,
         stale: false,
@@ -194,12 +197,30 @@ describe("DesktopFeishuDocRuntime", () => {
     expect(tree.root).toBe("document");
     expect(tree.parentDocId).toBe("doc_1");
     expect(tree.hasMore).toBe(false);
-    expect(tree.nodes).toEqual([
-      expect.objectContaining({
-        id: "doc_1",
-        docId: "doc_1",
-        hasChild: false,
-      }),
-    ]);
+    expect(tree.nodes).toEqual([]);
+  });
+
+  test("returns an empty legacy tree when no concrete token is provided", async () => {
+    const runtime = createRuntime({
+      state: createState(),
+      bot: createBotState(),
+      docs: {},
+    });
+
+    await expect(runtime.getDocTree({ root: "document" })).resolves.toMatchObject({
+      root: "document",
+      nodes: [],
+      hasMore: false,
+    });
+  });
+
+  test("does not fabricate document content when cache is empty", async () => {
+    const runtime = createRuntime({
+      state: createState(),
+      bot: createBotState(),
+      docs: {},
+    });
+
+    await expect(runtime.getDocContent("doc_1")).rejects.toThrow("暂未加载文档内容");
   });
 });

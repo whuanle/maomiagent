@@ -103,17 +103,31 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
   }
 
   async getDocTree(input: FeishuDocTreeQuery): Promise<FeishuDocTreeView> {
-    const token = input.docId ?? input.root;
-    const result = await this.loadDocTreeRoot({
-      token,
-      forceRefresh: input.forceRefresh,
-    });
+    if (!input.docId) {
+      return {
+        root: input.root,
+        nodes: [],
+        hasMore: false,
+      };
+    }
+
+    const result = input.root === "document"
+      ? await this.loadDocTreeBranch({
+          rootToken: input.docId,
+          parentToken: input.docId,
+          forceRefresh: input.forceRefresh,
+        })
+      : await this.loadDocTreeRoot({
+          token: input.docId,
+          forceRefresh: input.forceRefresh,
+        });
 
     return {
       root: input.root,
-      ...(input.docId ? { parentDocId: input.docId } : {}),
+      parentDocId: input.docId,
       nodes: result.nodes,
-      hasMore: false,
+      hasMore: result.hasMore,
+      ...(result.pageToken ? { pageToken: result.pageToken } : {}),
     };
   }
 
@@ -125,26 +139,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       return existing as FeishuDocContentView;
     }
 
-    const now = new Date().toISOString();
-    const item = {
-      docId,
-      title: `文档 ${docId}`,
-      markdown: `# ${docId}\n\nDesktop Feishu module placeholder content.`,
-      length: 0,
-      totalLength: 0,
-      offset: 0,
-      updatedAt: now,
-      blocks: [],
-      analysis: {
-        riskyBlocks: [],
-        riskySync: false,
-        syncMode: null,
-        riskyBlockMode: "safe" as const,
-      },
-    };
-    snapshot.docs[docId] = item as unknown as FeishuDocContentView;
-    await store.write(snapshot);
-    return item as unknown as FeishuDocContentView;
+    throw new Error("暂未加载文档内容");
   }
 
   private requireStore(): DesktopFeishuStorePort {
@@ -186,6 +181,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
           rootToken: input.token,
           rootKind: "document",
           nodes,
+          hasMore: false,
           source: "cache",
           refreshing: false,
           stale: false,
@@ -196,6 +192,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
         rootToken: input.rootToken,
         parentToken: input.parentToken,
         nodes: [],
+        hasMore: false,
         source: "cache",
         refreshing: false,
         stale: false,

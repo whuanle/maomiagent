@@ -101,12 +101,15 @@ export class FeishuDocTreeLoader {
       nodes: children.nodes,
       loadedAt,
       complete: !children.hasMore,
+      ...(children.pageToken ? { pageToken: children.pageToken } : {}),
     });
 
     const result: FeishuDocTreeLoadResult = {
       rootToken: token,
       rootKind: recognizedRoot.kind,
       nodes: children.nodes,
+      hasMore: children.hasMore,
+      ...(children.pageToken ? { pageToken: children.pageToken } : {}),
       source: "remote",
       refreshing: false,
       stale: false,
@@ -125,6 +128,8 @@ export class FeishuDocTreeLoader {
       rootToken: cachedRoot.token,
       rootKind: cachedRoot.kind,
       nodes: cachedBranch.nodes,
+      hasMore: !cachedBranch.complete,
+      ...(cachedBranch.pageToken ? { pageToken: cachedBranch.pageToken } : {}),
       source: "cache",
       refreshing: true,
       stale: true,
@@ -154,12 +159,15 @@ export class FeishuDocTreeLoader {
       nodes: children.nodes,
       loadedAt,
       complete: !children.hasMore,
+      ...(children.pageToken ? { pageToken: children.pageToken } : {}),
     });
 
     const result: FeishuDocTreeBranchResult = {
       rootToken,
       parentToken,
       nodes: children.nodes,
+      hasMore: children.hasMore,
+      ...(children.pageToken ? { pageToken: children.pageToken } : {}),
       source: "remote",
       refreshing: false,
       stale: false,
@@ -176,6 +184,8 @@ export class FeishuDocTreeLoader {
       rootToken: cachedBranch.rootToken,
       parentToken: cachedBranch.parentToken,
       nodes: cachedBranch.nodes,
+      hasMore: !cachedBranch.complete,
+      ...(cachedBranch.pageToken ? { pageToken: cachedBranch.pageToken } : {}),
       source: "cache",
       refreshing: true,
       stale: true,

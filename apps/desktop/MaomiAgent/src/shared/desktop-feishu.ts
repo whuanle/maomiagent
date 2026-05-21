@@ -97,8 +97,9 @@ export const FEISHU_SMART_ASSISTANT_POLICY_KEY_VALUES = [
   "credential_proxy",
 ] as const
 export const FEISHU_BOT_CONNECTION_STATUS_VALUES = [
-  "stopped",
-  "ready",
+  "disconnected",
+  "connecting",
+  "connected",
   "processing",
   "error",
 ] as const
@@ -106,11 +107,12 @@ export const FEISHU_BOT_MEDIA_ASSET_KIND_VALUES = [
   "image",
   "file",
 ] as const
-export const FEISHU_BOT_WEBHOOK_STATUS_VALUES = [
-  "challenge",
+export const FEISHU_BOT_EVENT_STATUS_VALUES = [
+  "received",
   "queued",
   "duplicate",
   "ignored",
+  "planned",
   "processed",
   "failed",
 ] as const
@@ -120,8 +122,8 @@ export const FEISHU_BOT_CAPABILITY_STATUS_VALUES = [
   "missing",
 ] as const
 export const FEISHU_BOT_CAPABILITY_KIND_VALUES = [
-  "webhook_verification",
-  "webhook_event_receive",
+  "persistent_connection",
+  "event_receive",
   "formal_workspace_home",
   "conversation_binding",
   "session_progress_snapshot",
@@ -131,6 +133,8 @@ export const FEISHU_BOT_CAPABILITY_KIND_VALUES = [
   "text_reply_send",
   "app_access_token_resolution",
   "media_message_receive",
+  "action_query_execute",
+  "action_mutation_plan_confirm",
   "media_message_send",
   "image_message_send",
   "file_message_send",
@@ -176,7 +180,7 @@ export type FeishuSmartAssistantPolicyKey =
   (typeof FEISHU_SMART_ASSISTANT_POLICY_KEY_VALUES)[number]
 export type FeishuBotConnectionStatus = (typeof FEISHU_BOT_CONNECTION_STATUS_VALUES)[number]
 export type FeishuBotMediaAssetKind = (typeof FEISHU_BOT_MEDIA_ASSET_KIND_VALUES)[number]
-export type FeishuBotWebhookStatus = (typeof FEISHU_BOT_WEBHOOK_STATUS_VALUES)[number]
+export type FeishuBotEventStatus = (typeof FEISHU_BOT_EVENT_STATUS_VALUES)[number]
 export type FeishuBotCapabilityStatus = (typeof FEISHU_BOT_CAPABILITY_STATUS_VALUES)[number]
 export type FeishuBotCapabilityKind = (typeof FEISHU_BOT_CAPABILITY_KIND_VALUES)[number]
 export type FeishuBotExecutionWorkspaceMode =
@@ -194,7 +198,7 @@ export type FeishuBotCapabilityDescriptorView = {
 }
 
 export type FeishuBotCapabilityCatalogView = {
-  transportMode: "webhook"
+  transportMode: "websocket"
   descriptors: FeishuBotCapabilityDescriptorView[]
 }
 
@@ -441,6 +445,7 @@ export type FeishuSmartAssistantExecuteActionInput = {
   cc?: string[]
   bcc?: string[]
   subject?: string
+  eventId?: string
   meetingId?: string
   minuteToken?: string
 }
@@ -654,8 +659,8 @@ export type FeishuBotProcessedMessage = {
   updatedAt: string
 }
 
-export type FeishuBotWebhookInfo = {
-  status: FeishuBotWebhookStatus
+export type FeishuBotEventInfo = {
+  status: FeishuBotEventStatus
   receivedAt: string
   eventType?: string
   eventId?: string
@@ -664,13 +669,27 @@ export type FeishuBotWebhookInfo = {
   detail?: string
 }
 
+export type FeishuBotPendingActionView = {
+  pendingId: string
+  chatId: string
+  threadId?: string
+  messageId: string
+  domain: FeishuSmartAssistantDomainKey
+  actionId: string
+  workspaceId?: string
+  summary: string
+  details: string[]
+  createdAt: string
+  expiresAt: string
+}
+
 export type FeishuBotStateView = {
   enabled: boolean
   appId: string
   hasAppSecret: boolean
   hasVerificationToken: boolean
   hasEncryptKey: boolean
-  transportMode: "webhook"
+  transportMode: "websocket"
   catalog: FeishuBotCapabilityCatalogView
   connectionStatus: FeishuBotConnectionStatus
   connectionDetail?: string
@@ -690,8 +709,10 @@ export type FeishuBotStateView = {
   savedAt?: string
   updatedAt: string
   lastError?: string
-  latestWebhook?: FeishuBotWebhookInfo
+  latestEvent?: FeishuBotEventInfo
   latestProcessedMessage?: FeishuBotProcessedMessage
+  pendingActionCount?: number
+  latestPendingAction?: FeishuBotPendingActionView
 }
 
 export type FeishuBotConfigInput = {
@@ -710,7 +731,7 @@ export type FeishuBotConfigInput = {
   selectedModelId?: string
 }
 
-export type FeishuBotWebhookHandleResult = {
+export type FeishuBotEventHandleResult = {
   status: number
   body: Record<string, unknown>
 }
@@ -901,6 +922,8 @@ export type FeishuDocTreeLoadResult = {
   rootToken: string
   rootKind: FeishuDocTreeNodeKind
   nodes: FeishuDocTreeNode[]
+  hasMore: boolean
+  pageToken?: string
   source: FeishuDocTreeSource
   refreshing: boolean
   stale: boolean
@@ -912,6 +935,8 @@ export type FeishuDocTreeBranchResult = {
   rootToken: string
   parentToken: string
   nodes: FeishuDocTreeNode[]
+  hasMore: boolean
+  pageToken?: string
   source: FeishuDocTreeSource
   refreshing: boolean
   stale: boolean
