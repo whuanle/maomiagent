@@ -21,12 +21,18 @@ type DesktopFeishuDocTreeLoaderPort = {
   loadBranch(input: FeishuDocTreeBranchInput): Promise<FeishuDocTreeBranchResult>;
 };
 
+type DesktopFeishuDocContentSourcePort = {
+  readDocumentContent(accessToken: string, docId: string): Promise<FeishuDocContentView>;
+};
+
 type DesktopFeishuDocRuntimeDeps =
   | DesktopFeishuStorePort
   | DesktopFeishuDocTreeLoaderPort
   | {
       store: DesktopFeishuStorePort;
       loader: DesktopFeishuDocTreeLoaderPort;
+      contentSource?: DesktopFeishuDocContentSourcePort;
+      accessToken?: () => Promise<string>;
     };
 
 function isStorePort(value: DesktopFeishuDocRuntimeDeps): value is DesktopFeishuStorePort {
@@ -35,29 +41,42 @@ function isStorePort(value: DesktopFeishuDocRuntimeDeps): value is DesktopFeishu
 
 function isRuntimeBundle(
   value: DesktopFeishuDocRuntimeDeps,
-): value is { store: DesktopFeishuStorePort; loader: DesktopFeishuDocTreeLoaderPort } {
+): value is {
+  store: DesktopFeishuStorePort;
+  loader: DesktopFeishuDocTreeLoaderPort;
+  contentSource?: DesktopFeishuDocContentSourcePort;
+  accessToken?: () => Promise<string>;
+} {
   return "store" in value && "loader" in value;
 }
 
 export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
   private readonly store: DesktopFeishuStorePort | null;
   private readonly loader: DesktopFeishuDocTreeLoaderPort;
+  private readonly contentSource: DesktopFeishuDocContentSourcePort | null;
+  private readonly accessToken: (() => Promise<string>) | null;
 
   constructor(deps: DesktopFeishuDocRuntimeDeps) {
     if (isRuntimeBundle(deps)) {
       this.store = deps.store;
       this.loader = deps.loader;
+      this.contentSource = deps.contentSource ?? null;
+      this.accessToken = deps.accessToken ?? null;
       return;
     }
 
     if (isStorePort(deps)) {
       this.store = deps;
       this.loader = this.createStoreBackedLoader(deps);
+      this.contentSource = null;
+      this.accessToken = null;
       return;
     }
 
     this.store = null;
     this.loader = deps;
+    this.contentSource = null;
+    this.accessToken = null;
   }
 
   async getDocsCapabilities(): Promise<FeishuDocsCapabilitiesView> {
@@ -132,14 +151,36 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
   }
 
   async getDocContent(docId: string): Promise<FeishuDocContentView> {
-    const store = this.requireStore();
-    const snapshot = await store.read();
-    const existing = snapshot.docs[docId];
-    if (existing) {
-      return existing as FeishuDocContentView;
+    const snapshot = this.store ? await this.store.read() : null;
+    const existing = snapshot?.docs[docId] as FeishuDocContentView | undefined;
+
+    if (this.contentSource && this.accessToken) {
+      try {
+        const item = await this.contentSource.readDocumentContent(await this.accessToken(), docId);
+        if (snapshot && this.store) {
+          const nextSnapshot = {
+            ...snapshot,
+            docs: {
+              ...snapshot.docs,
+              [docId]: item,
+            },
+          };
+          await this.store.write(nextSnapshot);
+        }
+        return item;
+      } catch {
+        if (existing) {
+          return existing;
+        }
+        throw new Error("文档内容加载失败");
+      }
     }
 
-    throw new Error("暂未加载文档内容");
+    if (existing) {
+      return existing;
+    }
+
+    throw new Error("文档内容加载失败");
   }
 
   private requireStore(): DesktopFeishuStorePort {

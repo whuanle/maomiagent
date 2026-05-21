@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
-import type { FeishuBotStateView, FeishuStateView } from "../../../../../shared/desktop-feishu";
+import type {
+  FeishuBotStateView,
+  FeishuDocContentView,
+  FeishuStateView,
+} from "../../../../../shared/desktop-feishu";
 import type { DesktopFeishuStoreSnapshot } from "../../abstraction/ports/desktop-feishu-store.ports";
 import { DesktopFeishuDocRuntime } from "./desktop-feishu-doc-runtime";
 
@@ -85,14 +89,64 @@ function createBotState(): FeishuBotStateView {
   };
 }
 
-function createRuntime(snapshot: DesktopFeishuStoreSnapshot) {
-  return new DesktopFeishuDocRuntime({
+function createSnapshot(docs: Record<string, FeishuDocContentView> = {}): DesktopFeishuStoreSnapshot {
+  return {
+    state: createState(),
+    bot: createBotState(),
+    docs,
+    developerCredential: { appSecret: "" },
+    developerToken: { accessToken: "access", refreshToken: "", accessTokenExpiresAt: "", refreshTokenExpiresAt: "" },
+    docTreeCache: { roots: {}, branches: {}, contents: {} },
+  };
+}
+
+function createContentView(docId: string, title: string, markdown: string): FeishuDocContentView {
+  return {
+    docId,
+    title,
+    markdown,
+    length: markdown.length,
+    totalLength: markdown.length,
+    offset: 0,
+    analysis: {
+      riskyBlocks: [],
+      riskySync: false,
+      syncMode: null,
+      riskyBlockMode: "safe",
+    },
+  };
+}
+
+function createStore(snapshot: DesktopFeishuStoreSnapshot) {
+  return {
     read: async () => snapshot,
     write: async (next) => {
       snapshot.state = next.state;
       snapshot.bot = next.bot;
       snapshot.docs = next.docs;
+      snapshot.developerCredential = next.developerCredential;
+      snapshot.developerToken = next.developerToken;
+      snapshot.docTreeCache = next.docTreeCache;
     },
+  };
+}
+
+function createRuntime(snapshot: DesktopFeishuStoreSnapshot) {
+  return new DesktopFeishuDocRuntime(createStore(snapshot));
+}
+
+function createRuntimeWithContentSource(
+  snapshot: DesktopFeishuStoreSnapshot,
+  contentSource: { readDocumentContent(accessToken: string, docId: string): Promise<FeishuDocContentView> },
+) {
+  return new DesktopFeishuDocRuntime({
+    store: createStore(snapshot),
+    loader: {
+      loadRoot: async () => { throw new Error("not used"); },
+      loadBranch: async () => { throw new Error("not used"); },
+    },
+    contentSource,
+    accessToken: async () => "access",
   });
 }
 
@@ -168,11 +222,7 @@ describe("DesktopFeishuDocRuntime", () => {
   });
 
   test("exposes document tree capabilities expected by the workbench", async () => {
-    const runtime = createRuntime({
-      state: createState(),
-      bot: createBotState(),
-      docs: {},
-    });
+    const runtime = createRuntime(createSnapshot());
 
     const capabilities = await runtime.getDocsCapabilities();
 
@@ -183,11 +233,7 @@ describe("DesktopFeishuDocRuntime", () => {
   });
 
   test("returns FeishuDocTreeView nodes for the requested root document", async () => {
-    const runtime = createRuntime({
-      state: createState(),
-      bot: createBotState(),
-      docs: {},
-    });
+    const runtime = createRuntime(createSnapshot());
 
     const tree = await runtime.getDocTree({
       root: "document",
@@ -201,11 +247,7 @@ describe("DesktopFeishuDocRuntime", () => {
   });
 
   test("returns an empty legacy tree when no concrete token is provided", async () => {
-    const runtime = createRuntime({
-      state: createState(),
-      bot: createBotState(),
-      docs: {},
-    });
+    const runtime = createRuntime(createSnapshot());
 
     await expect(runtime.getDocTree({ root: "document" })).resolves.toMatchObject({
       root: "document",
@@ -214,13 +256,33 @@ describe("DesktopFeishuDocRuntime", () => {
     });
   });
 
-  test("does not fabricate document content when cache is empty", async () => {
-    const runtime = createRuntime({
-      state: createState(),
-      bot: createBotState(),
-      docs: {},
+  test("getDocContent fails instead of generating content when remote and cache are unavailable", async () => {
+    const runtime = createRuntime(createSnapshot());
+
+    await expect(runtime.getDocContent("doc_1")).rejects.toThrow("文档内容加载失败");
+  });
+
+  test("getDocContent returns cached content when remote fails", async () => {
+    const cached = createContentView("doc_1", "Cached Doc", "Cached markdown");
+    const runtime = createRuntimeWithContentSource(createSnapshot({ doc_1: cached }), {
+      readDocumentContent: async () => { throw new Error("remote unavailable"); },
     });
 
-    await expect(runtime.getDocContent("doc_1")).rejects.toThrow("暂未加载文档内容");
+    await expect(runtime.getDocContent("doc_1")).resolves.toBe(cached);
+  });
+
+  test("getDocContent reads remote content and caches it", async () => {
+    const snapshot = createSnapshot();
+    const remote = createContentView("doc_1", "Remote Doc", "Remote markdown");
+    const runtime = createRuntimeWithContentSource(snapshot, {
+      readDocumentContent: async (accessToken, docId) => {
+        expect(accessToken).toBe("access");
+        expect(docId).toBe("doc_1");
+        return remote;
+      },
+    });
+
+    await expect(runtime.getDocContent("doc_1")).resolves.toBe(remote);
+    expect(snapshot.docs.doc_1).toBe(remote);
   });
 });

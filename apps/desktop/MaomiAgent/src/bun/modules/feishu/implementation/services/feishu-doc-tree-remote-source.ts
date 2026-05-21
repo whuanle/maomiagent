@@ -1,4 +1,8 @@
-import type { FeishuDocTreeNode, FeishuDocTreeObjectType } from "../../../../../shared/desktop-feishu";
+import type {
+  FeishuDocContentView,
+  FeishuDocTreeNode,
+  FeishuDocTreeObjectType,
+} from "../../../../../shared/desktop-feishu";
 
 export type FeishuOpenApiReader = {
   getJson<T>(url: string, accessToken: string): Promise<T>;
@@ -44,6 +48,17 @@ type FeishuDocumentResponse = {
     document_id?: string;
     title?: string;
   };
+};
+
+type FeishuDocumentBlockPayload = {
+  block_id?: string;
+  text?: {
+    content?: string;
+  };
+};
+
+type FeishuDocumentBlocksResponse = {
+  items?: FeishuDocumentBlockPayload[];
 };
 
 const FEISHU_OPEN_API_BASE_URL = "https://open.feishu.cn/open-apis";
@@ -97,6 +112,45 @@ function shouldFallbackToDocument(error: unknown): boolean {
 
 export class FeishuDocTreeRemoteSource {
   constructor(private readonly reader: FeishuOpenApiReader) {}
+
+  async readDocumentContent(accessToken: string, docId: string): Promise<FeishuDocContentView> {
+    const [documentResponse, blocksResponse] = await Promise.all([
+      this.reader.getJson<FeishuDocumentResponse>(
+        openApiUrl(`/docx/v1/documents/${encodeURIComponent(docId)}`),
+        accessToken,
+      ),
+      this.reader.getJson<FeishuDocumentBlocksResponse>(
+        openApiUrl(`/docx/v1/documents/${encodeURIComponent(docId)}/blocks`, { page_size: 500 }),
+        accessToken,
+      ),
+    ]);
+
+    const document = documentResponse.document ?? {};
+    const resolvedDocId = valueOrFallback(document.document_id, docId);
+    const title = valueOrFallback(document.title, resolvedDocId);
+    const blocks = blocksResponse.items ?? [];
+    const markdown = blocks
+      .map((block) => typeof block.text?.content === "string" ? block.text.content.trim() : "")
+      .filter((content) => content.length > 0)
+      .join("\n\n");
+
+    return {
+      docId: resolvedDocId,
+      title,
+      markdown,
+      length: markdown.length,
+      totalLength: markdown.length,
+      offset: 0,
+      updatedAt: new Date().toISOString(),
+      blocks,
+      analysis: {
+        riskyBlocks: [],
+        riskySync: false,
+        syncMode: null,
+        riskyBlockMode: "safe",
+      },
+    } as FeishuDocContentView;
+  }
 
   async recognizeRoot(accessToken: string, token: string): Promise<FeishuDocTreeRecognizedRoot> {
     try {

@@ -65,21 +65,27 @@ export class DesktopFeishuModule extends DependencyModuleBase {
         const store = services.resolve(DESKTOP_FEISHU_STORE_PORT);
         const treeCache = new FeishuDocTreeCache(store);
         const remoteSource = new FeishuDocTreeRemoteSource(openApiClient);
+        const accessToken = async () => {
+          const snapshot = await store.read();
+          if (!snapshot.developerToken.accessToken) {
+            throw new Error("请先完成飞书授权");
+          }
+          return snapshot.developerToken.accessToken;
+        };
         const treeLoader = new FeishuDocTreeLoader({
           scopeId: () => "desktop.feishu.smart-assistant",
-          accessToken: async () => {
-            const snapshot = await store.read();
-            if (!snapshot.developerToken.accessToken) {
-              throw new Error("请先完成飞书授权");
-            }
-            return snapshot.developerToken.accessToken;
-          },
+          accessToken,
           now: () => new Date().toISOString(),
           cache: treeCache,
           remote: remoteSource,
           emit: () => undefined,
         });
-        return new DesktopFeishuDocRuntime({ store, loader: treeLoader });
+        return new DesktopFeishuDocRuntime({
+          store,
+          loader: treeLoader,
+          contentSource: remoteSource,
+          accessToken,
+        });
       },
       source: context.module.moduleId,
     });

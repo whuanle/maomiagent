@@ -121,4 +121,41 @@ describe("FeishuDocTreeRemoteSource", () => {
     expect(requests).toHaveLength(1);
     expect(requests[0]?.url).toContain("page_token=cursor_1");
   });
+
+  test("reads document content from document metadata and text blocks", async () => {
+    const requests: RequestRecord[] = [];
+    const source = createSource({
+      "/docx/v1/documents/doc_1/blocks": {
+        items: [
+          { block_id: "block_1", text: { content: "第一段" } },
+          { block_id: "block_2", text: { content: "   " } },
+          { block_id: "block_3", text: { content: "第二段" } },
+        ],
+      },
+      "/docx/v1/documents/doc_1": {
+        document: { document_id: "doc_1", title: "远端文档" },
+      },
+    }, requests);
+
+    const content = await source.readDocumentContent("access", "doc_1");
+
+    expect(content).toMatchObject({
+      docId: "doc_1",
+      title: "远端文档",
+      markdown: "第一段\n\n第二段",
+      length: "第一段\n\n第二段".length,
+      totalLength: "第一段\n\n第二段".length,
+      offset: 0,
+      analysis: {
+        riskyBlocks: [],
+        riskySync: false,
+        syncMode: null,
+        riskyBlockMode: "safe",
+      },
+    });
+    expect(requests.map((item) => item.url)).toEqual(expect.arrayContaining([
+      expect.stringContaining("/docx/v1/documents/doc_1"),
+      expect.stringContaining("/docx/v1/documents/doc_1/blocks?page_size=500"),
+    ]));
+  });
 });
