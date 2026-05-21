@@ -52,6 +52,47 @@ describe("FeishuDocTreeLoader", () => {
     expect(branches.get("root").nodes[0].title).toBe("Child");
   });
 
+  test("progressively hydrates child branches after returning the root layer", async () => {
+    const deferredBranch = createDeferred<any>();
+    const { loader, branches, updates } = createLoader({
+      listChildren: async (_access: string, root: any) => {
+        if (root.rootNodeId === "root") {
+          return {
+            nodes: [
+              { id: "child_parent", token: "child_parent", kind: "wiki_node", title: "Child Parent", hasChild: true },
+            ],
+            hasMore: false,
+          };
+        }
+
+        if (root.rootNodeId === "child_parent") {
+          return deferredBranch.promise;
+        }
+
+        return { nodes: [], hasMore: false };
+      },
+    });
+
+    const result = await loader.loadRoot({ token: "root" });
+
+    expect(result.source).toBe("remote");
+    expect(result.nodes).toHaveLength(1);
+    expect(result.nodes[0].token).toBe("child_parent");
+    expect(branches.get("root").nodes[0].token).toBe("child_parent");
+    expect(branches.get("child_parent")).toBeUndefined();
+    expect(updates).not.toContainEqual(expect.objectContaining({ type: "branch-refreshed" }));
+
+    deferredBranch.resolve({
+      nodes: [{ id: "grandchild", token: "grandchild", kind: "document", title: "Grandchild", hasChild: false }],
+      hasMore: false,
+    });
+
+    await loader.waitForIdleForTest();
+
+    expect(updates).toContainEqual(expect.objectContaining({ type: "branch-refreshed" }));
+    expect(branches.get("child_parent").nodes[0].token).toBe("grandchild");
+  });
+
   test("returns cache immediately while refreshing cached root in the background", async () => {
     const deferredRoot = createDeferred<any>();
     const { loader, roots, branches } = createLoader({

@@ -44,6 +44,8 @@ export type FeishuDocTreeLoaderDeps = {
 };
 
 export class FeishuDocTreeLoader {
+  private readonly hydrationTasks = new Set<Promise<void>>();
+
   constructor(private readonly deps: FeishuDocTreeLoaderDeps) {}
 
   async loadRoot(input: FeishuDocTreeLoadInput): Promise<FeishuDocTreeLoadResult> {
@@ -116,8 +118,23 @@ export class FeishuDocTreeLoader {
       loadedAt,
     };
     this.deps.emit({ type: "root-refreshed", payload: result });
-    await this.hydrateChildrenProgressively();
+    this.startHydrationTask(
+      this.hydrateChildrenProgressively(
+        scopeId,
+        token,
+        recognizedRoot,
+        children.nodes,
+        accessToken,
+        new Set([recognizedRoot.rootNodeId]),
+      ),
+    );
     return result;
+  }
+
+  async waitForIdleForTest(): Promise<void> {
+    while (this.hydrationTasks.size > 0) {
+      await Promise.all(Array.from(this.hydrationTasks));
+    }
   }
 
   private cacheResult(
@@ -193,7 +210,77 @@ export class FeishuDocTreeLoader {
     };
   }
 
-  private async hydrateChildrenProgressively(): Promise<void> {
-    return undefined;
+  private startHydrationTask(task: Promise<void>): void {
+    const trackedTask = task.catch(() => undefined);
+    this.hydrationTasks.add(trackedTask);
+    trackedTask.finally(() => {
+      this.hydrationTasks.delete(trackedTask);
+    });
+  }
+
+  private async hydrateChildrenProgressively(
+    scopeId: string,
+    rootToken: string,
+    recognizedRoot: FeishuDocTreeRecognizedRoot,
+    nodes: FeishuDocTreeLoadResult["nodes"],
+    accessToken: string,
+    lineage: Set<string>,
+  ): Promise<void> {
+    for (const node of nodes) {
+      if (!node.hasChild || lineage.has(node.token)) {
+        continue;
+      }
+
+      const nextLineage = new Set(lineage);
+      nextLineage.add(node.token);
+
+      try {
+        const children = await this.deps.remote.listChildren(accessToken, {
+          ...recognizedRoot,
+          kind: node.kind,
+          title: node.title,
+          rootNodeId: node.token,
+        });
+        const loadedAt = this.deps.now();
+
+        await this.deps.cache.saveBranch(scopeId, {
+          rootToken,
+          parentToken: node.token,
+          nodes: children.nodes,
+          loadedAt,
+          complete: !children.hasMore,
+          ...(children.pageToken ? { pageToken: children.pageToken } : {}),
+        });
+
+        const result: FeishuDocTreeBranchResult = {
+          rootToken,
+          parentToken: node.token,
+          nodes: children.nodes,
+          hasMore: children.hasMore,
+          ...(children.pageToken ? { pageToken: children.pageToken } : {}),
+          source: "remote",
+          refreshing: false,
+          stale: false,
+          loadedAt,
+        };
+        this.deps.emit({ type: "branch-refreshed", payload: result });
+
+        await this.hydrateChildrenProgressively(
+          scopeId,
+          rootToken,
+          recognizedRoot,
+          children.nodes,
+          accessToken,
+          nextLineage,
+        );
+      } catch (error) {
+        this.deps.emit({
+          type: "branch-failed",
+          rootToken,
+          parentToken: node.token,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
   }
 }
