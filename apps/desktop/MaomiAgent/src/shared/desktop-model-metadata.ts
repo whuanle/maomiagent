@@ -313,29 +313,29 @@ export function resolveDesktopChannelModelMetadata(
 
   return {
     modelId,
-    displayName: providerModel?.displayName ?? customModel?.displayName ?? inferred?.displayName ?? modelId,
-    family: providerModel?.family ?? customModel?.family ?? inferred?.family,
+    displayName: customModel?.displayName ?? providerModel?.displayName ?? inferred?.displayName ?? modelId,
+    family: customModel?.family ?? providerModel?.family ?? inferred?.family,
     supportsAttachments:
-      providerModel?.supportsAttachments ?? customModel?.supportsAttachments ?? inferred?.supportsAttachments,
-    supportsReasoning: providerModel?.supportsReasoning ?? customModel?.supportsReasoning ?? inferred?.supportsReasoning,
+      customModel?.supportsAttachments ?? providerModel?.supportsAttachments ?? inferred?.supportsAttachments,
+    supportsReasoning: customModel?.supportsReasoning ?? providerModel?.supportsReasoning ?? inferred?.supportsReasoning,
     supportsFunctionCall:
-      providerModel?.supportsFunctionCall ?? customModel?.supportsFunctionCall ?? inferred?.supportsFunctionCall,
+      customModel?.supportsFunctionCall ?? providerModel?.supportsFunctionCall ?? inferred?.supportsFunctionCall,
     supportsStructuredOutput:
-      providerModel?.supportsStructuredOutput
-      ?? customModel?.supportsStructuredOutput
+      customModel?.supportsStructuredOutput
+      ?? providerModel?.supportsStructuredOutput
       ?? inferred?.supportsStructuredOutput,
     supportsTemperature:
-      providerModel?.supportsTemperature ?? customModel?.supportsTemperature ?? inferred?.supportsTemperature,
-    interleaved: providerModel?.interleaved ?? customModel?.interleaved ?? inferred?.interleaved,
-    knowledgeCutoff: providerModel?.knowledgeCutoff ?? customModel?.knowledgeCutoff ?? inferred?.knowledgeCutoff,
-    releaseDate: providerModel?.releaseDate ?? customModel?.releaseDate ?? inferred?.releaseDate,
-    lastUpdated: providerModel?.lastUpdated ?? customModel?.lastUpdated ?? inferred?.lastUpdated,
+      customModel?.supportsTemperature ?? providerModel?.supportsTemperature ?? inferred?.supportsTemperature,
+    interleaved: customModel?.interleaved ?? providerModel?.interleaved ?? inferred?.interleaved,
+    knowledgeCutoff: customModel?.knowledgeCutoff ?? providerModel?.knowledgeCutoff ?? inferred?.knowledgeCutoff,
+    releaseDate: customModel?.releaseDate ?? providerModel?.releaseDate ?? inferred?.releaseDate,
+    lastUpdated: customModel?.lastUpdated ?? providerModel?.lastUpdated ?? inferred?.lastUpdated,
     modalities,
-    openWeights: providerModel?.openWeights ?? customModel?.openWeights ?? inferred?.openWeights,
-    contextWindow: providerModel?.contextWindow ?? customModel?.contextWindow ?? inferred?.contextWindow,
+    openWeights: customModel?.openWeights ?? providerModel?.openWeights ?? inferred?.openWeights,
+    contextWindow: customModel?.contextWindow ?? providerModel?.contextWindow ?? inferred?.contextWindow,
     maxOutputTokens:
-      providerModel?.maxOutputTokens ?? customModel?.maxOutputTokens ?? inferred?.maxOutputTokens,
-    cost: providerModel?.cost ?? customModel?.cost ?? inferred?.cost,
+      customModel?.maxOutputTokens ?? providerModel?.maxOutputTokens ?? inferred?.maxOutputTokens,
+    cost: customModel?.cost ?? providerModel?.cost ?? inferred?.cost,
   };
 }
 

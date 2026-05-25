@@ -27,13 +27,18 @@ function createTask(overrides: Partial<DesktopTaskRecord> = {}): DesktopTaskReco
 }
 
 describe("projectDesktopTaskRecordToTaskCenterItem", () => {
-  test("projects scheduled automation tasks as hidden background work", () => {
+  test("projects explicit system tasks into the visible system surface", () => {
     const projected = projectDesktopTaskRecordToTaskCenterItem(createTask({
-      taskId: "task-automation",
+      taskId: "feishu-refresh-token",
+      workspaceId: "system",
       title: "Refresh token",
       goal: "Refresh the access token on interval.",
       taskType: "automation",
       status: "success",
+      surface: "system",
+      scope: "system",
+      visibility: "visible",
+      identityKey: "system::handler.refresh-token::refresh-token",
       schedule: {
         kind: "interval",
         intervalMinutes: 30,
@@ -48,9 +53,14 @@ describe("projectDesktopTaskRecordToTaskCenterItem", () => {
     }));
 
     expect(projected).toMatchObject({
+      workspaceId: "system",
       sourceKind: "automation",
       exposure: "hidden",
       attentionState: "scheduled",
+      surface: "system",
+      scope: "system",
+      visibility: "visible",
+      identityKey: "system::handler.refresh-token::refresh-token",
       priority: "normal",
       hasSchedule: true,
       scheduleKind: "interval",
@@ -90,6 +100,9 @@ describe("projectDesktopTaskRecordToTaskCenterItem", () => {
       attentionReason: "Waiting for GitHub Actions to pass.",
       rootTaskId: "task-managed-verification",
       linkedSessionId: "session-1",
+      surface: "critical",
+      visibility: "visible",
+      scope: "workspace",
     });
   });
 
@@ -117,6 +130,7 @@ describe("projectDesktopTaskRecordToTaskCenterItem", () => {
       exposure: "contextual",
       attentionState: "wrap_up_required",
       attentionReason: "The final wrap-up command still needs to run.",
+      surface: "critical",
     });
   });
 
@@ -139,6 +153,7 @@ describe("projectDesktopTaskRecordToTaskCenterItem", () => {
       sourceKind: "managed_execution",
       exposure: "contextual",
       attentionState: "takeover_required",
+      surface: "critical",
     });
     expect(projected.attentionReason).toContain("takeover session");
   });
@@ -165,6 +180,34 @@ describe("projectDesktopTaskRecordToTaskCenterItem", () => {
       exposure: "contextual",
       attentionState: "blocked",
       attentionReason: "Need a confirmation before continuing.",
+      surface: "internal",
+      visibility: "hidden",
+      scope: "workspace",
+    });
+  });
+
+  test("projects ordinary conversation runs as hidden internal items", () => {
+    const projected = projectDesktopTaskRecordToTaskCenterItem(createTask({
+      taskId: "conversation-run_123",
+      title: "Assistant task",
+      goal: "Continue the current conversation.",
+      taskType: "conversation",
+      executionMode: "interactive",
+      runMode: "normal",
+      linkedSessionId: "session-2",
+      status: "running",
+      metadata: {
+        sessionId: "session-2",
+        runId: "run_123",
+      },
+    }));
+
+    expect(projected).toMatchObject({
+      taskId: "conversation-run_123",
+      sourceKind: "conversation",
+      surface: "internal",
+      visibility: "hidden",
+      scope: "workspace",
     });
   });
 });

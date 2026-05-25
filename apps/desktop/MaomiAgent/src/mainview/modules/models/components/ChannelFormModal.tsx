@@ -306,9 +306,16 @@ export function ChannelFormModal(props: ChannelFormModalProps) {
       okText={t("工作区页.按钮.保存")}
       cancelText={t("工作区页.按钮.取消")}
       confirmLoading={submitting}
+      width="min(760px, calc(100vw - 48px))"
       destroyOnHidden
       style={{ top: 56 }}
-      styles={{ body: { maxHeight: "calc(80vh - 180px)", overflow: "auto" } }}
+      styles={{
+        body: {
+          maxHeight: "calc(80vh - 180px)",
+          overflowX: "hidden",
+          overflowY: "auto",
+        },
+      }}
       className="models-page-modal"
       onCancel={onCancel}
       onOk={() => {

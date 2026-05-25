@@ -42,6 +42,95 @@ describe("DesktopFeishuOpenApiClient", () => {
     expect(result.refreshTokenExpiresAt).toBe("2026-06-20T00:00:00.000Z");
   });
 
+  test("accepts OAuth token fields returned at the top level", async () => {
+    const client = new DesktopFeishuOpenApiClient({
+      fetch: async () => new Response(JSON.stringify({
+        code: 0,
+        access_token: "u-access",
+        refresh_token: "u-refresh",
+        expires_in: 7200,
+        refresh_expires_in: 2592000,
+      }), { status: 200 }),
+      now: () => new Date("2026-05-21T00:00:00.000Z"),
+    });
+
+    const result = await client.exchangeOAuthCode({
+      appId: "cli_app",
+      appSecret: "secret",
+      code: "code_1",
+      redirectUri: "http://127.0.0.1:35000/desktop/feishu/oauth/callback",
+    });
+
+    expect(result.accessToken).toBe("u-access");
+    expect(result.refreshToken).toBe("u-refresh");
+    expect(result.accessTokenExpiresAt).toBe("2026-05-21T02:00:00.000Z");
+    expect(result.refreshTokenExpiresAt).toBe("2026-06-20T00:00:00.000Z");
+  });
+
+  test("accepts initial OAuth token responses without a refresh token", async () => {
+    const client = new DesktopFeishuOpenApiClient({
+      fetch: async () => new Response(JSON.stringify({
+        code: 0,
+        access_token: "u-access",
+        expires_in: 7200,
+      }), { status: 200 }),
+      now: () => new Date("2026-05-21T00:00:00.000Z"),
+    });
+
+    const result = await client.exchangeOAuthCode({
+      appId: "cli_app",
+      appSecret: "secret",
+      code: "code_1",
+      redirectUri: "http://127.0.0.1:35000/desktop/feishu/oauth/callback",
+    });
+
+    expect(result.accessToken).toBe("u-access");
+    expect(result.refreshToken).toBe("");
+    expect(result.accessTokenExpiresAt).toBe("2026-05-21T02:00:00.000Z");
+    expect(result.refreshTokenExpiresAt).toBe("");
+  });
+
+  test("requires a refresh token when refreshing OAuth tokens", async () => {
+    const client = new DesktopFeishuOpenApiClient({
+      fetch: async () => new Response(JSON.stringify({
+        code: 0,
+        access_token: "new-access",
+        expires_in: 3600,
+      }), { status: 200 }),
+      now: () => new Date("2026-05-21T00:00:00.000Z"),
+    });
+
+    await expect(client.refreshUserAccessToken({
+      appId: "cli_app",
+      appSecret: "secret",
+      refreshToken: "old-refresh",
+    })).rejects.toThrow("Feishu API response missing token data: refresh_token, refresh_expires_in");
+  });
+
+  test("accepts refreshed token fields returned at the top level", async () => {
+    const client = new DesktopFeishuOpenApiClient({
+      fetch: async () => new Response(JSON.stringify({
+        code: 0,
+        access_token: "new-access",
+        refresh_token: "new-refresh",
+        expires_in: 3600,
+        refresh_expires_in: 2592000,
+      }), { status: 200 }),
+      now: () => new Date("2026-05-21T00:00:00.000Z"),
+    });
+
+    const result = await client.refreshUserAccessToken({
+      appId: "cli_app",
+      appSecret: "secret",
+      refreshToken: "old-refresh",
+    });
+
+    expect(result.accessToken).toBe("new-access");
+    expect(result.refreshToken).toBe("new-refresh");
+    expect(result.accessTokenExpiresAt).toBe("2026-05-21T01:00:00.000Z");
+    expect(result.refreshTokenExpiresAt).toBe("2026-06-20T00:00:00.000Z");
+  });
+
   test("throws a readable error for Feishu error responses", async () => {
     const client = new DesktopFeishuOpenApiClient({
       fetch: async () => new Response(JSON.stringify({ code: 99991663, msg: "invalid code" }), { status: 200 }),

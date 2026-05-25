@@ -16,6 +16,8 @@ import type {
 import type { DesktopModelsQueryPort } from "../../../models";
 import type {
   WechatAccountStatusInput,
+  WechatConversationDesktopCaptureInput,
+  WechatConversationDesktopCaptureResult,
   WechatConversationMediaSendInput,
   WechatConversationMediaSendResult,
   WechatConversationRuntimeContextView,
@@ -30,7 +32,7 @@ import type {
   WechatQrLoginStartResult,
   WechatStateView,
 } from "../../../../../shared/desktop-wechat";
-import { FULLY_MANAGED_AGENT_ID } from "../../../../../shared/conversation/managed-execution";
+import { WECHAT_AGENT_ID } from "../../../../../shared/conversation/managed-execution";
 import {
   fetchWechatBotQrCode,
   fetchWechatQrLoginStatus,
@@ -40,6 +42,7 @@ import {
   type WechatInboundMessage,
   verifyWechatConfigEndpoint,
 } from "./wechat-api-client";
+import { captureDesktopScreenshotForWechat } from "./wechat-desktop-capture";
 import { saveWechatInboundMediaItem } from "./wechat-media";
 
 type WechatConversationBindingRecord = WechatStateView["bindings"][number] & {
@@ -96,7 +99,46 @@ const DEFAULT_WECHAT_CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c";
 const WECHAT_LOGIN_TTL_MS = 5 * 60 * 1000;
 const WECHAT_MESSAGE_RETENTION = 400;
 const WECHAT_TEXT_CHUNK_SIZE = 3200;
-const WECHAT_RUNTIME_SESSION_VERSION = "wechat-capabilities-v1";
+const WECHAT_RUNTIME_SESSION_VERSION = "wechat-capabilities-v2";
+const WECHAT_STALE_REPLY_MAX_AGE_MS = 15 * 60 * 1000;
+const WECHAT_STARTUP_REPLY_GUARD_MS = 60 * 1000;
+const WECHAT_MESSAGE_COALESCE_WINDOW_MS = 6 * 1000;
+const WECHAT_REPLY_FALLBACK_TEXT = "已处理完成";
+const WECHAT_PSEUDO_TOOL_FAILURE_TEXT = "当前模型未完成该操作，请切换到支持工具调用的模型后重试。";
+const WECHAT_STALE_MESSAGE_RESPONSE_PREVIEW = "已记录旧消息，不自动回复";
+const WECHAT_SUPERSEDED_MESSAGE_RESPONSE_PREVIEW = "已跳到较新的消息";
+const WECHAT_NO_FRESH_REPLY_RESPONSE_PREVIEW = "未生成新的文本回复";
+const WECHAT_INTERNAL_LINE_PREFIXES = [
+  "执行摘要",
+  "execution summary",
+  "工具调用",
+  "tool call",
+  "tool:",
+  "memory:",
+  "observation:",
+  "analysis:",
+];
+const WECHAT_INTERNAL_LINE_SUBSTRINGS = [
+  "bitblt",
+  "screen capture",
+  "runtime trace",
+  "context token",
+  "tool execution",
+  "powershell",
+  "copyfromscreen",
+  "easytouch",
+  "let me provide a summary to the user",
+  "file timestamp shows",
+];
+const WECHAT_INLINE_CUTOFF_MARKERS = [
+  "执行摘要",
+  "Execution summary",
+  "⏰",
+  "截图时间",
+  "文件保存",
+  "文件保存在",
+  "保存位置",
+];
 
 type WechatMonitorHandle = {
   abortController: AbortController;
@@ -107,10 +149,22 @@ type QueuedWechatMessage = {
   accountId: string;
   peerId: string;
   conversationKey: string;
-  messageId: string;
+  messageIds: string[];
   text: string;
   createdAt: string;
+  latestCreatedAt?: string;
   contextToken?: string;
+};
+
+type BufferedWechatConversation = {
+  messages: QueuedWechatMessage[];
+  timer: ReturnType<typeof setTimeout>;
+};
+
+type WechatReplyExtractionResult = {
+  hasFreshAssistantMessage: boolean;
+  text?: string;
+  errorText?: string;
 };
 
 type WechatRuntimeModelSelection = {
@@ -281,6 +335,26 @@ function parseDebugCommand(text: string): "toggle" | "on" | "off" | undefined {
   return undefined;
 }
 
+function isSlashCommandText(text: string): boolean {
+  return text.trim().startsWith("/");
+}
+
+function parseTimestampMs(value: string | undefined): number | undefined {
+  const parsed = typeof value === "string" ? Date.parse(value) : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function getLatestQueuedMessageId(message: QueuedWechatMessage): string {
+  return message.messageIds[message.messageIds.length - 1] ?? "";
+}
+
+function mergeQueuedMessageText(messages: QueuedWechatMessage[]): string {
+  return messages
+    .map((item) => item.text.trim())
+    .filter((item) => item.length > 0)
+    .join("\n\n");
+}
+
 function normalizeStringList(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return [];
@@ -343,8 +417,8 @@ function toWechatBindingView(item: WechatConversationBindingRecord): WechatState
 function buildWechatConversationSettings(): Record<string, unknown> {
   return {
     capabilityPreferences: {
-      "mcp.runtime": true,
-      "skills.runtime": true,
+      "mcp.runtime": false,
+      "skills.runtime": false,
       "wechat.runtime": true,
     },
   };
@@ -681,8 +755,10 @@ export class DesktopWechatService implements DesktopWechatPort {
   private storage: WechatModuleStorage = createEmptyStorage();
   private loadPromise: Promise<void>;
   private writeQueue: Promise<void> = Promise.resolve();
+  private readonly serviceStartedAtMs = Date.now();
   private readonly monitors = new Map<string, WechatMonitorHandle>();
   private readonly updatesBufferByAccount = new Map<string, string>();
+  private readonly bufferedConversationMessages = new Map<string, BufferedWechatConversation>();
   private readonly conversationQueues = new Map<string, Promise<void>>();
   private readonly conversationPendingCounts = new Map<string, number>();
 
@@ -692,6 +768,7 @@ export class DesktopWechatService implements DesktopWechatPort {
     private readonly conversationCommand: DesktopConversationCommandPort,
     private readonly workspaceQuery: Pick<DesktopWorkspaceQueryPort, "list">,
     private readonly modelsQuery: Pick<DesktopModelsQueryPort, "getRuntimeSelectionSnapshot">,
+    private readonly captureDesktopScreenshot: typeof captureDesktopScreenshotForWechat = captureDesktopScreenshotForWechat,
   ) {
     this.storagePath = configuration.getString("wechat.state.path")
       ?? join(homedir(), ".maomiagent", "desktop", "data", "wechat-state.json");
@@ -1008,6 +1085,13 @@ export class DesktopWechatService implements DesktopWechatPort {
 
     this.storage.bindings = this.storage.bindings.filter((item) => item.accountId !== normalizedAccountId);
     this.storage.processedMessages = this.storage.processedMessages.filter((item) => item.accountId !== normalizedAccountId);
+    for (const [conversationKey, buffered] of this.bufferedConversationMessages.entries()) {
+      if (!conversationKey.startsWith(`${normalizedAccountId}:`)) {
+        continue;
+      }
+      clearTimeout(buffered.timer);
+      this.bufferedConversationMessages.delete(conversationKey);
+    }
     for (const [conversationKey] of this.conversationQueues.entries()) {
       if (conversationKey.startsWith(`${normalizedAccountId}:`)) {
         this.conversationQueues.delete(conversationKey);
@@ -1031,6 +1115,13 @@ export class DesktopWechatService implements DesktopWechatPort {
     this.storage.accounts = this.storage.accounts.filter((item) => item.accountId !== normalizedAccountId);
     this.storage.bindings = this.storage.bindings.filter((item) => item.accountId !== normalizedAccountId);
     this.storage.processedMessages = this.storage.processedMessages.filter((item) => item.accountId !== normalizedAccountId);
+    for (const [conversationKey, buffered] of this.bufferedConversationMessages.entries()) {
+      if (!conversationKey.startsWith(`${normalizedAccountId}:`)) {
+        continue;
+      }
+      clearTimeout(buffered.timer);
+      this.bufferedConversationMessages.delete(conversationKey);
+    }
     for (const [conversationKey] of this.conversationQueues.entries()) {
       if (conversationKey.startsWith(`${normalizedAccountId}:`)) {
         this.conversationQueues.delete(conversationKey);
@@ -1156,6 +1247,36 @@ export class DesktopWechatService implements DesktopWechatPort {
     return {
       ...sent,
       contextToken,
+    };
+  }
+
+  async captureConversationDesktopAndSend(
+    input: WechatConversationDesktopCaptureInput,
+  ): Promise<WechatConversationDesktopCaptureResult> {
+    await this.ensureLoaded();
+
+    const { binding } = this.requireConversationRuntimeTarget(input.sessionId);
+    const capture = await this.captureDesktopScreenshot({
+      outputDir: join(
+        dirname(this.storagePath),
+        "wechat-generated",
+        binding.accountId,
+        binding.peerId,
+      ),
+      fileNamePrefix: "desktop-capture",
+    });
+
+    const sent = await this.sendConversationMedia({
+      sessionId: input.sessionId,
+      filePath: capture.filePath,
+      contextToken: trimText(input.contextToken),
+    });
+
+    return {
+      ...sent,
+      kind: "image",
+      filePath: capture.filePath,
+      fileName: capture.fileName,
     };
   }
 
@@ -1377,16 +1498,31 @@ export class DesktopWechatService implements DesktopWechatPort {
       }
 
       const contextToken = trimText(message.context_token);
-
-      this.enqueueConversationMessage({
+      const queuedMessage: QueuedWechatMessage = {
         accountId,
         peerId,
         conversationKey,
-        messageId,
+        messageIds: [messageId],
         text,
         createdAt,
+        latestCreatedAt: createdAt,
         contextToken,
-      });
+      };
+
+      if (this.shouldIgnoreInboundAutoReply(createdAt)) {
+        processedMessage.status = "ignored";
+        processedMessage.responsePreview = WECHAT_STALE_MESSAGE_RESPONSE_PREVIEW;
+        processedMessage.updatedAt = processedAt;
+        changed = true;
+        continue;
+      }
+
+      if (isSlashCommandText(text)) {
+        this.addConversationPendingCount(conversationKey, queuedMessage.messageIds.length);
+        this.enqueueConversationMessage(queuedMessage);
+      } else {
+        this.bufferConversationMessage(queuedMessage);
+      }
 
       changed = true;
     }
@@ -1440,10 +1576,152 @@ export class DesktopWechatService implements DesktopWechatPort {
     return mediaAssets;
   }
 
-  private enqueueConversationMessage(message: QueuedWechatMessage): void {
-    const currentPending = this.conversationPendingCounts.get(message.conversationKey) ?? 0;
-    this.conversationPendingCounts.set(message.conversationKey, currentPending + 1);
+  private shouldIgnoreInboundAutoReply(createdAt: string): boolean {
+    const createdAtMs = parseTimestampMs(createdAt);
+    if (createdAtMs === undefined) {
+      return false;
+    }
 
+    const nowMs = Date.now();
+    if (nowMs - createdAtMs > WECHAT_STALE_REPLY_MAX_AGE_MS) {
+      return true;
+    }
+
+    return createdAtMs < this.serviceStartedAtMs
+      && this.serviceStartedAtMs - createdAtMs > WECHAT_STARTUP_REPLY_GUARD_MS;
+  }
+
+  private addConversationPendingCount(conversationKey: string, count: number): void {
+    const normalizedCount = Math.max(0, count);
+    if (normalizedCount === 0) {
+      return;
+    }
+
+    const currentPending = this.conversationPendingCounts.get(conversationKey) ?? 0;
+    this.conversationPendingCounts.set(conversationKey, currentPending + normalizedCount);
+  }
+
+  private removeConversationPendingCount(conversationKey: string, count: number): void {
+    const normalizedCount = Math.max(0, count);
+    const remaining = Math.max(
+      0,
+      (this.conversationPendingCounts.get(conversationKey) ?? normalizedCount) - normalizedCount,
+    );
+
+    if (remaining === 0) {
+      this.conversationPendingCounts.delete(conversationKey);
+      return;
+    }
+
+    this.conversationPendingCounts.set(conversationKey, remaining);
+  }
+
+  private bufferConversationMessage(message: QueuedWechatMessage): void {
+    this.addConversationPendingCount(message.conversationKey, message.messageIds.length);
+
+    const existing = this.bufferedConversationMessages.get(message.conversationKey);
+    if (existing) {
+      clearTimeout(existing.timer);
+      existing.messages.push(message);
+      existing.timer = this.createBufferedConversationTimer(message.conversationKey);
+      return;
+    }
+
+    this.bufferedConversationMessages.set(message.conversationKey, {
+      messages: [message],
+      timer: this.createBufferedConversationTimer(message.conversationKey),
+    });
+  }
+
+  private createBufferedConversationTimer(conversationKey: string): ReturnType<typeof setTimeout> {
+    const timer = setTimeout(() => {
+      this.flushBufferedConversation(conversationKey);
+    }, WECHAT_MESSAGE_COALESCE_WINDOW_MS);
+
+    timer.unref?.();
+    return timer;
+  }
+
+  private flushBufferedConversation(conversationKey: string): void {
+    const buffered = this.bufferedConversationMessages.get(conversationKey);
+    if (!buffered) {
+      return;
+    }
+
+    clearTimeout(buffered.timer);
+    this.bufferedConversationMessages.delete(conversationKey);
+
+    const firstMessage = buffered.messages[0];
+    const lastMessage = buffered.messages[buffered.messages.length - 1];
+    if (!firstMessage || !lastMessage) {
+      return;
+    }
+
+    const mergedText = mergeQueuedMessageText(buffered.messages);
+    if (!mergedText) {
+      this.removeConversationPendingCount(
+        conversationKey,
+        buffered.messages.reduce((sum, item) => sum + item.messageIds.length, 0),
+      );
+      return;
+    }
+
+    this.enqueueConversationMessage({
+      accountId: firstMessage.accountId,
+      peerId: firstMessage.peerId,
+      conversationKey,
+      messageIds: buffered.messages.flatMap((item) => item.messageIds),
+      text: mergedText,
+      createdAt: firstMessage.createdAt,
+      latestCreatedAt: lastMessage.latestCreatedAt ?? lastMessage.createdAt,
+      contextToken: lastMessage.contextToken,
+    });
+  }
+
+  private findSupersedingConversationMessage(
+    message: QueuedWechatMessage,
+  ): WechatStateView["processedMessages"][number] | undefined {
+    if (isSlashCommandText(message.text)) {
+      return undefined;
+    }
+
+    const latestCreatedAtMs = parseTimestampMs(message.latestCreatedAt ?? message.createdAt);
+    if (latestCreatedAtMs === undefined) {
+      return undefined;
+    }
+
+    const currentMessageIds = new Set(message.messageIds);
+    return this.storage.processedMessages.find((item) => {
+      if (item.conversationKey !== message.conversationKey) {
+        return false;
+      }
+
+      if (currentMessageIds.has(item.messageId) || item.status === "ignored") {
+        return false;
+      }
+
+      const preview = trimText(item.queryPreview);
+      if (!preview || isSlashCommandText(preview)) {
+        return false;
+      }
+
+      const createdAtMs = parseTimestampMs(item.createdAt);
+      return createdAtMs !== undefined && createdAtMs > latestCreatedAtMs;
+    });
+  }
+
+  private markSupersededProcessedMessages(
+    processedMessages: Array<WechatStateView["processedMessages"][number]>,
+  ): void {
+    const updatedAt = nowIso();
+    for (const processedMessage of processedMessages) {
+      processedMessage.status = "ignored";
+      processedMessage.responsePreview = WECHAT_SUPERSEDED_MESSAGE_RESPONSE_PREVIEW;
+      processedMessage.updatedAt = updatedAt;
+    }
+  }
+
+  private enqueueConversationMessage(message: QueuedWechatMessage): void {
     const previous = this.conversationQueues.get(message.conversationKey) ?? Promise.resolve();
     let next: Promise<void>;
     next = previous
@@ -1453,26 +1731,20 @@ export class DesktopWechatService implements DesktopWechatPort {
           context: {
             accountId: message.accountId,
             peerId: message.peerId,
-            messageId: message.messageId,
+            messageId: getLatestQueuedMessageId(message),
             error: error instanceof Error ? error.message : String(error),
           },
         });
       })
       .finally(() => {
-        const remaining = Math.max(
-          0,
-          (this.conversationPendingCounts.get(message.conversationKey) ?? 1) - 1,
-        );
+        this.removeConversationPendingCount(message.conversationKey, message.messageIds.length);
 
-        if (remaining === 0) {
-          this.conversationPendingCounts.delete(message.conversationKey);
+        if (!this.conversationPendingCounts.has(message.conversationKey)) {
           if (this.conversationQueues.get(message.conversationKey) === next) {
             this.conversationQueues.delete(message.conversationKey);
           }
           return;
         }
-
-        this.conversationPendingCounts.set(message.conversationKey, remaining);
       });
 
     this.conversationQueues.set(message.conversationKey, next);
@@ -1480,10 +1752,20 @@ export class DesktopWechatService implements DesktopWechatPort {
 
   private async processQueuedMessage(message: QueuedWechatMessage): Promise<void> {
     const account = this.storage.accounts.find((item) => item.accountId === message.accountId);
-    const processedMessage = this.storage.processedMessages.find((item) =>
-      item.accountId === message.accountId && item.messageId === message.messageId,
-    );
-    if (!account || !processedMessage) {
+    const processedMessages = message.messageIds
+      .map((messageId) => this.storage.processedMessages.find((item) =>
+        item.accountId === message.accountId && item.messageId === messageId,
+      ))
+      .filter((item): item is WechatStateView["processedMessages"][number] => Boolean(item));
+    const primaryProcessedMessage = processedMessages[0];
+    if (!account || !primaryProcessedMessage || processedMessages.length !== message.messageIds.length) {
+      return;
+    }
+
+    if (this.findSupersedingConversationMessage(message)) {
+      this.markSupersededProcessedMessages(processedMessages);
+      this.storage.updatedAt = nowIso();
+      await this.persistStorage();
       return;
     }
 
@@ -1494,7 +1776,7 @@ export class DesktopWechatService implements DesktopWechatPort {
       const commandHandled = await this.tryHandleInboundCommand({
         account,
         message,
-        processedMessage,
+        processedMessage: primaryProcessedMessage,
       });
       if (commandHandled) {
         this.storage.updatedAt = nowIso();
@@ -1506,7 +1788,7 @@ export class DesktopWechatService implements DesktopWechatPort {
         accountId: message.accountId,
         peerId: message.peerId,
         conversationKey: message.conversationKey,
-        messageId: message.messageId,
+        messageId: getLatestQueuedMessageId(message),
         inboundText: message.text,
         createdAt: message.createdAt,
         contextToken: message.contextToken,
@@ -1517,20 +1799,38 @@ export class DesktopWechatService implements DesktopWechatPort {
         sessionId: binding.sessionId,
         workspaceId: binding.workspaceId,
         text: message.text,
-        attachments: await this.buildConversationAttachments(processedMessage),
-        selectedAgentId: FULLY_MANAGED_AGENT_ID,
+        attachments: await this.buildConversationAttachments(processedMessages),
+        selectedAgentId: WECHAT_AGENT_ID,
         selectedChannelId: modelSelection.selectedChannelId,
         selectedModelId: modelSelection.selectedModelId,
       });
 
-      let replyText = extractAssistantReplyText(result.detail)
-        ?? "已收到消息，正在处理中";
+      const extractedReply = extractWechatReplyText(result.detail);
+      if (extractedReply.errorText) {
+        throw new Error(extractedReply.errorText);
+      }
+
+      if (!extractedReply.hasFreshAssistantMessage) {
+        const ignoredAt = nowIso();
+        for (const processedMessage of processedMessages) {
+          processedMessage.status = "ignored";
+          processedMessage.responsePreview = WECHAT_NO_FRESH_REPLY_RESPONSE_PREVIEW;
+          processedMessage.updatedAt = ignoredAt;
+        }
+        this.storage.updatedAt = ignoredAt;
+        await this.persistStorage();
+        return;
+      }
+
+      let replyText = extractedReply.text
+        ?? WECHAT_REPLY_FALLBACK_TEXT;
 
       if (debugEnabled) {
         const elapsed = Date.now() - startedAtMs;
         const queueDepth = Math.max(
           0,
-          (this.conversationPendingCounts.get(message.conversationKey) ?? 1) - 1,
+          (this.conversationPendingCounts.get(message.conversationKey) ?? message.messageIds.length)
+            - message.messageIds.length,
         );
         replyText = `${replyText}\n\n[debug] elapsed=${elapsed}ms queue=${queueDepth}`;
       }
@@ -1538,6 +1838,13 @@ export class DesktopWechatService implements DesktopWechatPort {
       const token = trimText(account.token);
       if (!token) {
         throw new Error("账号 token 缺失，无法回发微信消息");
+      }
+
+      if (this.findSupersedingConversationMessage(message)) {
+        this.markSupersededProcessedMessages(processedMessages);
+        this.storage.updatedAt = nowIso();
+        await this.persistStorage();
+        return;
       }
 
       await this.sendTextChunks({
@@ -1551,21 +1858,29 @@ export class DesktopWechatService implements DesktopWechatPort {
       account.updatedAt = nowIso();
       account.lastError = undefined;
 
-      processedMessage.status = "completed";
-      processedMessage.responsePreview = compactPreview(replyText) ?? "已完成";
-      processedMessage.updatedAt = nowIso();
+      const completedAt = nowIso();
+      const responsePreview = compactPreview(replyText) ?? "已完成";
+      for (const processedMessage of processedMessages) {
+        processedMessage.status = "completed";
+        processedMessage.responsePreview = responsePreview;
+        processedMessage.updatedAt = completedAt;
+      }
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      processedMessage.status = "failed";
-      processedMessage.responsePreview = compactPreview(reason) ?? "处理失败";
-      processedMessage.updatedAt = nowIso();
+      const failedAt = nowIso();
+      const responsePreview = compactPreview(reason) ?? "处理失败";
+      for (const processedMessage of processedMessages) {
+        processedMessage.status = "failed";
+        processedMessage.responsePreview = responsePreview;
+        processedMessage.updatedAt = failedAt;
+      }
       account.lastError = reason;
       account.updatedAt = nowIso();
       await this.logger.warn("Desktop wechat inbound conversation relay failed", {
         context: {
           accountId: message.accountId,
           peerId: message.peerId,
-          messageId: message.messageId,
+          messageId: getLatestQueuedMessageId(message),
           error: reason,
         },
       });
@@ -1655,40 +1970,38 @@ export class DesktopWechatService implements DesktopWechatPort {
   }
 
   private async buildConversationAttachments(
-    processedMessage: WechatStateView["processedMessages"][number],
+    processedMessages: Array<WechatStateView["processedMessages"][number]>,
   ): Promise<DesktopConversationAttachmentInput[] | undefined> {
-    const mediaAssets = processedMessage.mediaAssets ?? [];
-    if (mediaAssets.length === 0) {
-      return undefined;
-    }
-
     const attachments: DesktopConversationAttachmentInput[] = [];
-    for (let index = 0; index < mediaAssets.length; index += 1) {
-      const asset = mediaAssets[index];
-      if (!asset) {
-        continue;
-      }
+    for (const processedMessage of processedMessages) {
+      const mediaAssets = processedMessage.mediaAssets ?? [];
+      for (let index = 0; index < mediaAssets.length; index += 1) {
+        const asset = mediaAssets[index];
+        if (!asset) {
+          continue;
+        }
 
-      try {
-        const binary = await fs.readFile(asset.path);
-        attachments.push({
-          attachmentId: `wechat-${processedMessage.messageId}-${index + 1}`,
-          kind: toConversationAttachmentKind(asset.kind),
-          fileName: asset.fileName ?? basename(asset.path),
-          dataBase64: binary.toString("base64"),
-          ...(asset.mimeType ? { mimeType: asset.mimeType } : {}),
-          ...(typeof asset.sizeBytes === "number" ? { sizeBytes: asset.sizeBytes } : {}),
-        });
-      } catch (error) {
-        await this.logger.warn("Desktop wechat attachment bridge failed", {
-          context: {
-            accountId: processedMessage.accountId,
-            peerId: processedMessage.peerId,
-            messageId: processedMessage.messageId,
-            path: asset.path,
-            error: error instanceof Error ? error.message : String(error),
-          },
-        });
+        try {
+          const binary = await fs.readFile(asset.path);
+          attachments.push({
+            attachmentId: `wechat-${processedMessage.messageId}-${index + 1}`,
+            kind: toConversationAttachmentKind(asset.kind),
+            fileName: asset.fileName ?? basename(asset.path),
+            dataBase64: binary.toString("base64"),
+            ...(asset.mimeType ? { mimeType: asset.mimeType } : {}),
+            ...(typeof asset.sizeBytes === "number" ? { sizeBytes: asset.sizeBytes } : {}),
+          });
+        } catch (error) {
+          await this.logger.warn("Desktop wechat attachment bridge failed", {
+            context: {
+              accountId: processedMessage.accountId,
+              peerId: processedMessage.peerId,
+              messageId: processedMessage.messageId,
+              path: asset.path,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          });
+        }
       }
     }
 
@@ -1842,7 +2155,7 @@ export class DesktopWechatService implements DesktopWechatPort {
     const created = await this.conversationCommand.createSession({
       workspaceId,
       title: `微信会话 ${input.peerId}`,
-      selectedAgentId: FULLY_MANAGED_AGENT_ID,
+      selectedAgentId: WECHAT_AGENT_ID,
       metadata: {
         source: "wechat",
         accountId: input.accountId,
@@ -1941,16 +2254,96 @@ export class DesktopWechatService implements DesktopWechatPort {
   }
 }
 
-function extractAssistantReplyText(detail: DesktopConversationSessionDetail): string | undefined {
+function extractWechatReplyText(detail: DesktopConversationSessionDetail): WechatReplyExtractionResult {
+  const latestRun = detail.runs[detail.runs.length - 1];
+  const latestRunId = trimText(latestRun?.id);
+  if (latestRunId) {
+    let hasFreshAssistantMessage = false;
+    let latestErrorText: string | undefined;
+    for (let index = detail.messages.length - 1; index >= 0; index -= 1) {
+      const message = detail.messages[index];
+      if (message.role !== "assistant" || message.runId !== latestRunId) {
+        continue;
+      }
+
+      hasFreshAssistantMessage = true;
+      const textParts: string[] = [];
+      const errorParts: string[] = [];
+      for (const part of message.parts) {
+        if (part.type === "text") {
+          const text = part.text.trim();
+          if (text.length > 0) {
+            textParts.push(text);
+          }
+          continue;
+        }
+        if (part.type === "error") {
+          const errorText = normalizeWechatAssistantError(part.error?.message);
+          if (errorText) {
+            errorParts.push(errorText);
+          }
+        }
+      }
+
+      const content = textParts.join("\n");
+      if (content && containsPseudoWechatToolMarkup(content) && !hasRunToolCalls(detail, latestRunId)) {
+        return {
+          hasFreshAssistantMessage: true,
+          errorText: WECHAT_PSEUDO_TOOL_FAILURE_TEXT,
+        };
+      }
+      const compacted = sanitizeWechatReplyText(content);
+      if (compacted) {
+        return {
+          hasFreshAssistantMessage: true,
+          text: compacted,
+        };
+      }
+
+      if (errorParts.length > 0) {
+        latestErrorText = errorParts.join("；");
+      }
+    }
+
+    if (latestErrorText) {
+      return {
+        hasFreshAssistantMessage: true,
+        errorText: latestErrorText,
+      };
+    }
+
+    if (latestRun?.status === "failed") {
+      return {
+        hasFreshAssistantMessage,
+        errorText: "当前模型调用失败，请检查所选模型或渠道配置",
+      };
+    }
+
+    return {
+      hasFreshAssistantMessage,
+    };
+  }
+
+  let latestUserIndex = -1;
   for (let index = detail.messages.length - 1; index >= 0; index -= 1) {
+    if (detail.messages[index]?.role === "user") {
+      latestUserIndex = index;
+      break;
+    }
+  }
+
+  let hasFreshAssistantMessage = false;
+  for (let index = detail.messages.length - 1; index > latestUserIndex; index -= 1) {
     const message = detail.messages[index];
     if (message.role !== "assistant") {
       continue;
     }
 
+    hasFreshAssistantMessage = true;
+
     const textParts: string[] = [];
     for (const part of message.parts) {
-      if (part.type !== "text" && part.type !== "reasoning") {
+      if (part.type !== "text") {
         continue;
       }
 
@@ -1961,12 +2354,137 @@ function extractAssistantReplyText(detail: DesktopConversationSessionDetail): st
     }
 
     const content = textParts.join("\n");
-
-    const compacted = compactPreview(content, 800);
+    const compacted = sanitizeWechatReplyText(content);
     if (compacted) {
-      return compacted;
+      return {
+        hasFreshAssistantMessage: true,
+        text: compacted,
+      };
     }
   }
 
-  return undefined;
+  return {
+    hasFreshAssistantMessage,
+  };
+}
+
+function normalizeWechatAssistantError(message: string | undefined): string | undefined {
+  const normalized = compactPreview(message ?? "", 200);
+  if (!normalized) {
+    return undefined;
+  }
+
+  if (/^当前模型调用失败[:：]/.test(normalized)) {
+    return normalized;
+  }
+
+  return `当前模型调用失败：${normalized}`;
+}
+
+function hasRunToolCalls(
+  detail: DesktopConversationSessionDetail,
+  runId: string,
+): boolean {
+  return detail.toolCalls.some((item) => item.runId === runId);
+}
+
+function containsPseudoWechatToolMarkup(input: string): boolean {
+  return /<tool_call>/i.test(input)
+    || /<\/tool_call>/i.test(input)
+    || /<function=[^>\n]+>/i.test(input)
+    || /<\/function>/i.test(input);
+}
+
+function sanitizeWechatReplyText(input: string): string | undefined {
+  const normalizedInput = input.replace(/\r\n/g, "\n").trim();
+  if (!normalizedInput) {
+    return undefined;
+  }
+
+  const lines = normalizedInput.split("\n");
+  const kept: string[] = [];
+  let insideFence = false;
+
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    if (trimmed.startsWith("```")) {
+      insideFence = !insideFence;
+      continue;
+    }
+
+    if (insideFence) {
+      continue;
+    }
+
+    const sanitizedLine = sanitizeWechatReplyLine(rawLine);
+    if (!sanitizedLine) {
+      continue;
+    }
+
+    kept.push(sanitizedLine);
+  }
+
+  const normalized = kept
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return compactPreview(normalized, 800);
+}
+
+function sanitizeWechatReplyLine(rawLine: string): string | undefined {
+  const trimmed = rawLine.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const normalized = applyWechatInlineCutoff(trimmed);
+  if (!normalized) {
+    return undefined;
+  }
+
+  if (shouldDropWechatReplyLine(normalized)) {
+    return undefined;
+  }
+
+  const cleaned = normalized.replace(/[\s\-:：|]+$/g, "").trim();
+  return cleaned || undefined;
+}
+
+function applyWechatInlineCutoff(line: string): string | undefined {
+  let current = line;
+  for (const marker of WECHAT_INLINE_CUTOFF_MARKERS) {
+    const index = current.indexOf(marker);
+    if (index < 0) {
+      continue;
+    }
+
+    current = current.slice(0, index).trim();
+  }
+
+  return current || undefined;
+}
+
+function shouldDropWechatReplyLine(line: string): boolean {
+  const lower = line.toLowerCase();
+  if (WECHAT_INTERNAL_LINE_PREFIXES.some((prefix) => lower.startsWith(prefix.toLowerCase()))) {
+    return true;
+  }
+
+  if (/<tool_call>/i.test(line) || /<\/tool_call>/i.test(line)) {
+    return true;
+  }
+
+  if (/<function=[^>\n]+>/i.test(line) || /<\/function>/i.test(line)) {
+    return true;
+  }
+
+  if (/^[a-z]:\\/i.test(line)) {
+    return true;
+  }
+
+  if (/^(powershell|start-process|copyfromscreen|cmd\s*\/c|python)(\s|$)/i.test(line)) {
+    return true;
+  }
+
+  return WECHAT_INTERNAL_LINE_SUBSTRINGS.some((item) => lower.includes(item));
 }

@@ -62,6 +62,19 @@ export const DESKTOP_TASK_SOURCE_OWNER_KIND_VALUES = [
   "system",
   "external",
 ] as const;
+export const DESKTOP_TASK_SURFACE_VALUES = [
+  "critical",
+  "system",
+  "internal",
+] as const;
+export const DESKTOP_TASK_SCOPE_VALUES = [
+  "workspace",
+  "system",
+] as const;
+export const DESKTOP_TASK_VISIBILITY_VALUES = [
+  "visible",
+  "hidden",
+] as const;
 
 export type DesktopTaskStatus = (typeof DESKTOP_TASK_STATUS_VALUES)[number];
 export type DesktopTaskPriority = (typeof DESKTOP_TASK_PRIORITY_VALUES)[number];
@@ -78,6 +91,10 @@ export type DesktopTaskRunStatus =
   (typeof DESKTOP_TASK_RUN_STATUS_VALUES)[number];
 export type DesktopTaskSourceOwnerKind =
   (typeof DESKTOP_TASK_SOURCE_OWNER_KIND_VALUES)[number];
+export type DesktopTaskSurface = (typeof DESKTOP_TASK_SURFACE_VALUES)[number];
+export type DesktopTaskScope = (typeof DESKTOP_TASK_SCOPE_VALUES)[number];
+export type DesktopTaskVisibility =
+  (typeof DESKTOP_TASK_VISIBILITY_VALUES)[number];
 
 export type DesktopTaskSchedule = {
   kind: DesktopTaskScheduleKind;
@@ -133,6 +150,13 @@ export type DesktopTaskRecord = {
   updatedAt: string;
   startedAt?: string;
   finishedAt?: string;
+  surface?: DesktopTaskSurface;
+  visibility?: DesktopTaskVisibility;
+  scope?: DesktopTaskScope;
+  identityKey?: string;
+  hiddenAt?: string;
+  purgeAfterAt?: string;
+  deferredCompaction?: boolean;
   error?: {
     code?: string;
     message: string;

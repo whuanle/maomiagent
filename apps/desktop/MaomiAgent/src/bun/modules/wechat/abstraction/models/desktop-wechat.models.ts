@@ -6,6 +6,8 @@ export type {
   WechatCapabilityDescriptorView,
   WechatConfigInput,
   WechatConversationBindingView,
+  WechatConversationDesktopCaptureInput,
+  WechatConversationDesktopCaptureResult,
   WechatConversationMediaSendInput,
   WechatConversationMediaSendResult,
   WechatConversationRuntimeContextView,

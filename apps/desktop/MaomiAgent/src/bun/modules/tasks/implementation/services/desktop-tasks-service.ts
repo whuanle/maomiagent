@@ -24,6 +24,7 @@ import {
   type DesktopTaskRunRecord,
   type DesktopTaskRunsResponse,
   type DesktopTaskSchedule,
+  type DesktopTaskScope,
   type DesktopTaskSourceOwnerKind,
   type DesktopTaskSourceRecord,
   type DesktopTaskStatus,
@@ -38,6 +39,7 @@ import {
 } from "../../../../../shared/desktop-task-center";
 import type { DesktopWorkspaceQueryPort } from "../../../workspace";
 import type {
+  DesktopConversationTaskArchiveInput,
   DesktopConversationTaskBlockedInput,
   DesktopConversationTaskCompleteInput,
   DesktopConversationTaskFailInput,
@@ -51,6 +53,7 @@ import type {
   DesktopTaskDetailResponse,
   DesktopTaskListQuery,
   DesktopTaskListResponse,
+  DesktopTaskWorkspacePurgeResult,
   DesktopTaskWorkspacesResponse,
 } from "../../abstraction/models/desktop-tasks.models";
 import type {
@@ -93,6 +96,9 @@ const DEFAULT_RUN_LIMIT = 20;
 const MAX_LIMIT = 1000;
 const DEFAULT_SCHEDULER_BATCH_SIZE = 20;
 const DEFAULT_SCHEDULER_INTERVAL_MS = 30_000;
+const ARCHIVED_SESSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const SYSTEM_WORKSPACE_ID = "system";
+const SYSTEM_TASK_RUN_HISTORY_LIMIT = 10;
 
 export class DesktopTasksError extends Error {
   constructor(
@@ -488,7 +494,10 @@ function normalizeManagedDefinition(
   }
 
   const taskKey = trimText(record.taskKey);
-  const workspaceId = trimText(record.workspaceId);
+  const scope = record.scope === "system" ? "system" : "workspace";
+  const workspaceId = scope === "system"
+    ? SYSTEM_WORKSPACE_ID
+    : trimText(record.workspaceId);
   const title = trimText(record.title);
   const goal = trimText(record.goal);
   const schedule = normalizeTaskSchedule(record.schedule);
@@ -499,6 +508,7 @@ function normalizeManagedDefinition(
   return {
     taskKey,
     workspaceId,
+    scope,
     title,
     goal,
     schedule,
@@ -544,11 +554,38 @@ function buildManagedLookupKey(
   return `${workspaceId}::${handlerId}::${taskKey}`;
 }
 
+function buildManagedIdentityKey(
+  scope: DesktopTaskScope,
+  handlerId: string,
+  taskKey: string,
+): string {
+  return `${scope}::${handlerId}::${taskKey}`;
+}
+
 function buildManagedLookupKeyForTask(item: DesktopTaskRecord): string | null {
   if (!item.handler?.handlerId || !item.handler.taskKey) {
     return null;
   }
   return buildManagedLookupKey(item.workspaceId, item.handler.handlerId, item.handler.taskKey);
+}
+
+function resolveManagedTaskScope(
+  definition: Pick<DesktopScheduledTaskDefinition, "scope" | "workspaceId">,
+): DesktopTaskScope {
+  return definition.scope === "system" || definition.workspaceId === SYSTEM_WORKSPACE_ID
+    ? "system"
+    : "workspace";
+}
+
+function buildManagedIdentityKeyForTask(item: DesktopTaskRecord): string | null {
+  if (!item.handler?.handlerId || !item.handler.taskKey) {
+    return null;
+  }
+
+  const scope = item.scope === "system" || item.workspaceId === SYSTEM_WORKSPACE_ID
+    ? "system"
+    : "workspace";
+  return buildManagedIdentityKey(scope, item.handler.handlerId, item.handler.taskKey);
 }
 
 function createDefaultFailedSteps(
@@ -683,6 +720,10 @@ function resolveTaskRootTaskId(item: DesktopTaskRecord): string | undefined {
   return metadata?.rootTask === true ? item.taskId : undefined;
 }
 
+function buildTaskStorageKey(item: Pick<DesktopTaskRecord, "workspaceId" | "taskId">): string {
+  return `${item.workspaceId}:${item.taskId}`;
+}
+
 function readTrimmedEnv(name: string): string | undefined {
   const value = process.env[name];
   return trimText(value);
@@ -709,6 +750,8 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
   private definitionsDirty = true;
   private legacyImportPromise: Promise<void> | null = null;
   private legacyImported = false;
+  private projectionBackfillPromise: Promise<void> | null = null;
+  private projectionBackfilled = false;
   private syncPromise: Promise<void> | null = null;
   private schedulerTickPromise: Promise<void> | null = null;
   private schedulerHandle: ReturnType<typeof setInterval> | null = null;
@@ -769,6 +812,17 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
     await this.ensureManagedTasksSynced();
   }
 
+  async runMaintenanceNow(now = nowIso()): Promise<void> {
+    await this.ensureLegacyImported();
+    await this.ensureManagedTasksSynced();
+
+    await this.runMutation(async () => {
+      this.purgeExpiredHiddenTasks(now);
+      this.compactDeferredSystemTasks(now);
+      this.trimSystemTaskRunHistory();
+    });
+  }
+
   startScheduler(intervalMs = DEFAULT_SCHEDULER_INTERVAL_MS): void {
     if (this.schedulerHandle) {
       return;
@@ -817,6 +871,10 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
     });
 
     tasks.forEach((task) => {
+      if (task.scope === "system" || task.workspaceId === SYSTEM_WORKSPACE_ID) {
+        return;
+      }
+
       const existing = workspaceMap.get(task.workspaceId);
       if (!existing) {
         workspaceMap.set(task.workspaceId, {
@@ -899,8 +957,15 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
     input: DesktopTaskCenterListQuery = {},
   ): Promise<DesktopTaskCenterListResponse> {
     await this.ensureLegacyImported();
+    await this.ensureManagedTasksSynced();
     const keyword = trimText(input.q)?.toLowerCase() ?? "";
     const workspaceId = trimText(input.workspaceId);
+    const surface = input.surface && input.surface !== "all"
+      ? input.surface
+      : undefined;
+    const visibility = input.visibility && input.visibility !== "all"
+      ? input.visibility
+      : "visible";
     const sourceKind = input.sourceKind && input.sourceKind !== "all"
       ? input.sourceKind
       : undefined;
@@ -924,6 +989,12 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
       .map((item) => projectDesktopTaskRecordToTaskCenterItem(item))
       .filter((item) => {
         if (workspaceId && item.workspaceId !== workspaceId) {
+          return false;
+        }
+        if (surface && item.surface !== surface) {
+          return false;
+        }
+        if (visibility !== "all" && item.visibility !== visibility) {
           return false;
         }
         if (sourceKind && item.sourceKind !== sourceKind) {
@@ -1069,6 +1140,21 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
     return this.updateScheduleEnabled(workspaceId, taskId, true);
   }
 
+  async purgeWorkspaceTasks(workspaceId: string): Promise<DesktopTaskWorkspacePurgeResult> {
+    await this.ensureLegacyImported();
+    const normalizedWorkspaceId = ensureWorkspaceId(workspaceId);
+    if (normalizedWorkspaceId === SYSTEM_WORKSPACE_ID) {
+      return {
+        taskCount: 0,
+        runCount: 0,
+      };
+    }
+
+    return this.runMutation(async () => {
+      return this.store.deleteTasksByWorkspace(normalizedWorkspaceId);
+    });
+  }
+
   async listDueScheduledTasks(limit = DEFAULT_LIMIT): Promise<DesktopTaskRecord[]> {
     await this.ensureLegacyImported();
     await this.ensureManagedTasksSynced();
@@ -1078,6 +1164,8 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
     return this.store.listTasks()
       .filter((item) =>
         Boolean(item.handler)
+        && !(item.visibility === "hidden" && Boolean(item.hiddenAt ?? item.purgeAfterAt))
+        && item.deferredCompaction !== true
         && item.status !== "running"
         && item.status !== "cancelled"
         && isScheduledTaskDue(item.schedule, nowMs))
@@ -1097,6 +1185,43 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
     taskId: string,
   ): Promise<DesktopTaskRecord | null> {
     return this.runManagedTask(workspaceId, taskId, "auto");
+  }
+
+  async archiveConversationSessionTasks(
+    input: DesktopConversationTaskArchiveInput,
+  ): Promise<void> {
+    await this.ensureLegacyImported();
+    const workspaceId = ensureWorkspaceId(input.workspaceId);
+    const sessionId = ensureTaskId(input.sessionId);
+    const archivedAt = trimText(input.archivedAt) ?? nowIso();
+    const purgeAfterAt = this.buildArchivedTaskPurgeAfterAt(archivedAt);
+
+    await this.runMutation(async () => {
+      this.store.listTasks().forEach((current) => {
+        if (current.workspaceId !== workspaceId) {
+          return;
+        }
+        if (this.resolveTaskSessionId(current) !== sessionId) {
+          return;
+        }
+
+        const projected = projectDesktopTaskRecordToTaskCenterItem(current);
+        if (projected.surface === "critical") {
+          return;
+        }
+
+        const next: DesktopTaskRecord = {
+          ...current,
+          visibility: "hidden",
+          hiddenAt: archivedAt,
+          purgeAfterAt,
+          updatedAt: archivedAt,
+        };
+        if (!compareJsonLike(current, next)) {
+          this.store.upsertTask(next);
+        }
+      });
+    });
   }
 
   async ensureConversationTaskRunning(
@@ -1176,8 +1301,9 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
               ...(input.metadata ?? {}),
             }),
           };
-      this.store.upsertTask(next);
-      return next;
+      const classified = this.applyProjectedTaskCenterState(next);
+      this.store.upsertTask(classified);
+      return classified;
     });
   }
 
@@ -1277,8 +1403,9 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
         }),
       };
 
-      this.store.upsertTask(next);
-      return next;
+      const classified = this.applyProjectedTaskCenterState(next);
+      this.store.upsertTask(classified);
+      return classified;
     });
   }
 
@@ -1347,8 +1474,9 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
         }),
       };
 
-      this.store.upsertTask(next);
-      return next;
+      const classified = this.applyProjectedTaskCenterState(next);
+      this.store.upsertTask(classified);
+      return classified;
     });
   }
 
@@ -1383,8 +1511,9 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
           ...(input.metadata ?? {}),
         }),
       };
-      this.store.upsertTask(next);
-      return next;
+      const classified = this.applyProjectedTaskCenterState(next);
+      this.store.upsertTask(classified);
+      return classified;
     });
   }
 
@@ -1453,9 +1582,10 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
         },
       };
 
-      this.store.upsertTask(next);
+      const classified = this.applyProjectedTaskCenterState(next);
+      this.store.upsertTask(classified);
       this.store.upsertTaskRun(runRecord);
-      return next;
+      return classified;
     });
   }
 
@@ -1528,14 +1658,16 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
         },
       };
 
-      this.store.upsertTask(next);
+      const classified = this.applyProjectedTaskCenterState(next);
+      this.store.upsertTask(classified);
       this.store.upsertTaskRun(runRecord);
-      return next;
+      return classified;
     });
   }
 
   private async ensureLegacyImported(): Promise<void> {
     if (this.legacyImported) {
+      await this.ensureStoredTaskProjectionBackfilled();
       return;
     }
     if (!this.legacyImportPromise) {
@@ -1602,6 +1734,50 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
     }
 
     await this.legacyImportPromise;
+    await this.ensureStoredTaskProjectionBackfilled();
+  }
+
+  private async ensureStoredTaskProjectionBackfilled(): Promise<void> {
+    if (this.projectionBackfilled) {
+      return;
+    }
+
+    if (!this.projectionBackfillPromise) {
+      this.projectionBackfillPromise = this.runMutation(async () => {
+        if (this.projectionBackfilled) {
+          return;
+        }
+
+        let changedCount = 0;
+        this.store.listTasks().forEach((current) => {
+          if (!this.shouldBackfillTaskProjection(current)) {
+            return;
+          }
+
+          const next = this.buildBackfilledTaskProjection(current);
+          if (compareJsonLike(current, next)) {
+            return;
+          }
+
+          this.store.upsertTask(next);
+          changedCount += 1;
+        });
+
+        if (changedCount > 0) {
+          await this.logger.info("Desktop task projection metadata backfilled", {
+            context: {
+              taskCount: changedCount,
+            },
+          });
+        }
+
+        this.projectionBackfilled = true;
+      }).finally(() => {
+        this.projectionBackfillPromise = null;
+      });
+    }
+
+    await this.projectionBackfillPromise;
   }
 
   private async ensureManagedTasksSynced(): Promise<void> {
@@ -1628,6 +1804,7 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
         await this.runMutation(async () => {
           const storage = this.store.listTasks();
           const itemIndexByKey = new Map<string, DesktopTaskRecord>();
+          const matchedStorageKeys = new Set<string>();
           let changed = false;
 
           storage.forEach((item) => {
@@ -1638,6 +1815,62 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
           });
 
           for (const item of collected) {
+            const scope = resolveManagedTaskScope(item.definition);
+            if (scope === "system") {
+              const candidates = storage.filter((candidate) =>
+                candidate.handler?.handlerId === item.handler.handlerId
+                && candidate.handler?.taskKey === item.definition.taskKey
+              );
+
+              candidates.forEach((candidate) => {
+                matchedStorageKeys.add(buildTaskStorageKey(candidate));
+              });
+
+              const current = this.pickCanonicalManagedTaskCandidate(candidates);
+              if (!current) {
+                this.store.upsertTask(this.createManagedTaskRecord(item.handler, item.definition));
+                changed = true;
+                continue;
+              }
+
+              const next = this.mergeManagedTaskRecord(current, item.handler, item.definition);
+              if (!compareJsonLike(current, next)) {
+                this.saveTaskRecord(current, next);
+                changed = true;
+              }
+
+              const runningCanonical = (current.status === "running" || next.status === "running")
+                ? current
+                : null;
+
+              for (const candidate of candidates) {
+                if (buildTaskStorageKey(candidate) === buildTaskStorageKey(current)) {
+                  continue;
+                }
+
+                if (runningCanonical) {
+                  const duplicate: DesktopTaskRecord = {
+                    ...candidate,
+                    surface: "system",
+                    visibility: "hidden",
+                    scope: "system",
+                    identityKey: buildManagedIdentityKey("system", item.handler.handlerId, item.definition.taskKey),
+                    deferredCompaction: true,
+                    updatedAt: nowIso(),
+                  };
+                  if (!compareJsonLike(candidate, duplicate)) {
+                    this.store.upsertTask(duplicate);
+                    changed = true;
+                  }
+                  continue;
+                }
+
+                this.deleteTaskRecord(candidate);
+                changed = true;
+              }
+              continue;
+            }
+
             const key = buildManagedLookupKey(
               item.definition.workspaceId,
               item.handler.handlerId,
@@ -1651,14 +1884,19 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
               continue;
             }
 
+            matchedStorageKeys.add(buildTaskStorageKey(current));
             const next = this.mergeManagedTaskRecord(current, item.handler, item.definition);
             if (!compareJsonLike(current, next)) {
-              this.store.upsertTask(next);
+              this.saveTaskRecord(current, next);
               changed = true;
             }
           }
 
           for (const current of storage) {
+            if (matchedStorageKeys.has(buildTaskStorageKey(current))) {
+              continue;
+            }
+
             const key = buildManagedLookupKeyForTask(current);
             if (!key || definitionMap.has(key)) {
               continue;
@@ -1789,7 +2027,7 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
       return null;
     }
 
-    const workspaceId = trimText(record.workspaceId);
+    const rawWorkspaceId = trimText(record.workspaceId);
     const schedule = normalizeTaskSchedule(record.schedule);
     const handler = normalizeHandlerBinding(record.handler);
     const metadata = asRecord(record.metadata) ?? undefined;
@@ -1803,12 +2041,21 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
     const status = normalizeTaskStatus(record.status, "queued");
     const title = trimText(record.title);
     const goal = trimText(record.goal);
+    const scope = record.scope === "system" || rawWorkspaceId === SYSTEM_WORKSPACE_ID
+      ? "system"
+      : "workspace";
+    const workspaceId = scope === "system" ? SYSTEM_WORKSPACE_ID : rawWorkspaceId;
 
     if (!workspaceId || !title || !goal) {
       return null;
     }
 
-    return {
+    const identityKey = trimText(record.identityKey)
+      ?? (scope === "system" && handler
+        ? buildManagedIdentityKey(scope, handler.handlerId, handler.taskKey)
+        : undefined);
+
+    return this.applyProjectedTaskCenterState({
       taskId: trimText(record.taskId) ?? `task_${randomUUID()}`,
       title,
       goal,
@@ -1844,8 +2091,23 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
       schedule,
       handler,
       source: normalizeSourceRecord(record.source),
+      surface: record.surface === "critical" || record.surface === "system" || record.surface === "internal"
+        ? record.surface
+        : scope === "system"
+          ? "system"
+          : undefined,
+      visibility: record.visibility === "visible" || record.visibility === "hidden"
+        ? record.visibility
+        : scope === "system"
+          ? "visible"
+          : undefined,
+      scope,
+      identityKey,
+      hiddenAt: trimText(record.hiddenAt),
+      purgeAfterAt: trimText(record.purgeAfterAt),
+      deferredCompaction: record.deferredCompaction === true,
       metadata,
-    };
+    });
   }
 
   private normalizeTaskRunRecord(value: unknown): DesktopTaskRunRecord | null {
@@ -1888,17 +2150,219 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
     };
   }
 
+  private buildManagedTaskClassification(
+    current: DesktopTaskRecord | undefined,
+    handler: DesktopScheduledTaskHandler,
+    definition: DesktopScheduledTaskDefinition,
+  ): Pick<
+    DesktopTaskRecord,
+    "workspaceId" | "surface" | "visibility" | "scope" | "identityKey" | "deferredCompaction"
+  > {
+    const scope = resolveManagedTaskScope(definition);
+    const shouldMoveToSystemWorkspace = scope === "system" && current?.status !== "running";
+
+    return {
+      workspaceId: scope === "system"
+        ? shouldMoveToSystemWorkspace
+          ? SYSTEM_WORKSPACE_ID
+          : current?.workspaceId ?? SYSTEM_WORKSPACE_ID
+        : definition.workspaceId,
+      surface: scope === "system" ? "system" : current?.surface ?? "internal",
+      visibility: scope === "system" ? "visible" : current?.visibility ?? "hidden",
+      scope,
+      identityKey: buildManagedIdentityKey(scope, handler.handlerId, definition.taskKey),
+      deferredCompaction: current?.deferredCompaction ?? false,
+    };
+  }
+
+  private pickCanonicalManagedTaskCandidate(
+    candidates: DesktopTaskRecord[],
+  ): DesktopTaskRecord | null {
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    return candidates
+      .slice()
+      .sort((left, right) => {
+        if (left.status === "running" && right.status !== "running") {
+          return -1;
+        }
+        if (left.status !== "running" && right.status === "running") {
+          return 1;
+        }
+        return compareByUpdatedAtDesc(left, right);
+      })[0] ?? null;
+  }
+
+  private saveTaskRecord(current: DesktopTaskRecord | undefined, next: DesktopTaskRecord): void {
+    this.store.upsertTask(next);
+    if (
+      current
+      && buildTaskStorageKey(current) !== buildTaskStorageKey(next)
+    ) {
+      this.store.deleteTaskRunsByTask(current.workspaceId, current.taskId);
+      this.store.deleteTask(current.workspaceId, current.taskId);
+    }
+  }
+
+  private deleteTaskRecord(item: DesktopTaskRecord): void {
+    this.store.deleteTaskRunsByTask(item.workspaceId, item.taskId);
+    this.store.deleteTask(item.workspaceId, item.taskId);
+  }
+
+  private applyProjectedTaskCenterState(item: DesktopTaskRecord): DesktopTaskRecord {
+    const projected = projectDesktopTaskRecordToTaskCenterItem(item);
+    return {
+      ...item,
+      surface: projected.surface,
+      visibility: projected.visibility,
+      scope: projected.scope,
+    };
+  }
+
+  private shouldBackfillTaskProjection(item: DesktopTaskRecord): boolean {
+    if (!item.surface || !item.visibility || !item.scope) {
+      return true;
+    }
+
+    return item.surface === "internal"
+      && item.visibility === "visible"
+      && item.scope !== "system"
+      && item.workspaceId !== SYSTEM_WORKSPACE_ID;
+  }
+
+  private buildBackfilledTaskProjection(item: DesktopTaskRecord): DesktopTaskRecord {
+    return this.applyProjectedTaskCenterState({
+      ...item,
+      surface: undefined,
+      visibility: item.visibility === "hidden" ? "hidden" : undefined,
+      scope: item.scope === "system" || item.workspaceId === SYSTEM_WORKSPACE_ID
+        ? "system"
+        : undefined,
+    });
+  }
+
+  private resolveTaskSessionId(item: DesktopTaskRecord): string | undefined {
+    return trimText(item.linkedSessionId) ?? trimText(asRecord(item.metadata)?.sessionId);
+  }
+
+  private buildArchivedTaskPurgeAfterAt(archivedAt: string): string {
+    return new Date(Date.parse(archivedAt) + ARCHIVED_SESSION_RETENTION_MS).toISOString();
+  }
+
+  private compactDeferredSystemTasks(at: string): void {
+    const grouped = new Map<string, DesktopTaskRecord[]>();
+
+    this.store.listTasks().forEach((item) => {
+      const identityKey = item.identityKey ?? buildManagedIdentityKeyForTask(item);
+      if (!identityKey) {
+        return;
+      }
+
+      if ((item.scope ?? "workspace") !== "system" && item.workspaceId !== SYSTEM_WORKSPACE_ID) {
+        return;
+      }
+
+      const current = grouped.get(identityKey);
+      if (current) {
+        current.push({
+          ...item,
+          identityKey,
+        });
+      } else {
+        grouped.set(identityKey, [{
+          ...item,
+          identityKey,
+        }]);
+      }
+    });
+
+    grouped.forEach((items, identityKey) => {
+      const canonical = this.pickCanonicalManagedTaskCandidate(items);
+      if (!canonical) {
+        return;
+      }
+
+      if (canonical.status === "running") {
+        items.forEach((item) => {
+          if (buildTaskStorageKey(item) === buildTaskStorageKey(canonical)) {
+            return;
+          }
+          const hiddenDuplicate: DesktopTaskRecord = {
+            ...item,
+            surface: "system",
+            visibility: "hidden",
+            scope: "system",
+            identityKey,
+            deferredCompaction: true,
+            updatedAt: at,
+          };
+          if (!compareJsonLike(item, hiddenDuplicate)) {
+            this.store.upsertTask(hiddenDuplicate);
+          }
+        });
+        return;
+      }
+
+      const canonicalNext: DesktopTaskRecord = {
+        ...canonical,
+        workspaceId: SYSTEM_WORKSPACE_ID,
+        surface: "system",
+        visibility: "visible",
+        scope: "system",
+        identityKey,
+        deferredCompaction: false,
+        updatedAt: at,
+      };
+      this.saveTaskRecord(canonical, canonicalNext);
+
+      items.forEach((item) => {
+        if (buildTaskStorageKey(item) === buildTaskStorageKey(canonical)) {
+          return;
+        }
+        this.deleteTaskRecord(item);
+      });
+    });
+  }
+
+  private purgeExpiredHiddenTasks(at: string): void {
+    const cutoff = Date.parse(at);
+    this.store.listTasks().forEach((item) => {
+      if (item.visibility !== "hidden" || !item.purgeAfterAt) {
+        return;
+      }
+
+      const purgeAt = Date.parse(item.purgeAfterAt);
+      if (!Number.isFinite(purgeAt) || purgeAt > cutoff) {
+        return;
+      }
+
+      this.deleteTaskRecord(item);
+    });
+  }
+
+  private trimSystemTaskRunHistory(): void {
+    this.store.listTasks().forEach((item) => {
+      if ((item.scope ?? "workspace") !== "system" && item.workspaceId !== SYSTEM_WORKSPACE_ID) {
+        return;
+      }
+      this.store.trimTaskRuns(item.workspaceId, item.taskId, SYSTEM_TASK_RUN_HISTORY_LIMIT);
+    });
+  }
+
   private createManagedTaskRecord(
     handler: DesktopScheduledTaskHandler,
     definition: DesktopScheduledTaskDefinition,
   ): DesktopTaskRecord {
     const timestamp = nowIso();
+    const classification = this.buildManagedTaskClassification(undefined, handler, definition);
 
     return {
       taskId: `task_${randomUUID()}`,
       title: definition.title,
       goal: definition.goal,
-      workspaceId: definition.workspaceId,
+      workspaceId: classification.workspaceId,
       taskType: "automation",
       executionMode: "background",
       runMode: "normal",
@@ -1910,6 +2374,11 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
       updatedAt: timestamp,
       runCount: 0,
       steps: [],
+      surface: classification.surface,
+      visibility: classification.visibility,
+      scope: classification.scope,
+      identityKey: classification.identityKey,
+      deferredCompaction: classification.deferredCompaction,
       schedule: mergeManagedSchedule(undefined, definition.schedule),
       handler: {
         handlerId: handler.handlerId,
@@ -1930,6 +2399,7 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
   ): DesktopTaskRecord {
     const shouldRestoreManagedSchedule =
       asRecord(current.metadata)?.managedScheduleDisabledBySync === true;
+    const classification = this.buildManagedTaskClassification(current, handler, definition);
     const schedule = shouldRestoreManagedSchedule
       ? {
         kind: definition.schedule.kind,
@@ -1948,6 +2418,7 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
 
     const candidate: DesktopTaskRecord = {
       ...current,
+      workspaceId: classification.workspaceId,
       title: definition.title,
       goal: definition.goal,
       taskType: "automation",
@@ -1955,6 +2426,11 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
       runMode: "normal",
       origin: "system",
       priority: definition.priority ?? current.priority,
+      surface: classification.surface,
+      visibility: classification.visibility,
+      scope: classification.scope,
+      identityKey: classification.identityKey,
+      deferredCompaction: classification.deferredCompaction,
       schedule,
       handler: {
         handlerId: handler.handlerId,
@@ -2007,6 +2483,7 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
         signal: controller.signal,
       });
       const item = await this.finishTaskRunSuccess(started, result, trigger);
+      await this.runMaintenanceNow();
       await this.logger.info("Desktop managed task run completed", {
         workspaceId: item.workspaceId,
         taskId: item.taskId,
@@ -2019,6 +2496,7 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
       return item;
     } catch (error) {
       const item = await this.finishTaskRunFailure(started, error, trigger);
+      await this.runMaintenanceNow();
       await this.logger.error("Desktop managed task run failed", {
         workspaceId: item.workspaceId,
         taskId: item.taskId,
@@ -2287,8 +2765,9 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
         },
         updatedAt: nowIso(),
       };
-      this.store.upsertTask(next);
-      return next;
+      const classified = this.applyProjectedTaskCenterState(next);
+      this.store.upsertTask(classified);
+      return classified;
     });
 
     if (item) {
@@ -2369,6 +2848,7 @@ implements DesktopTasksPort, DesktopScheduledTaskRegistryPort, DesktopConversati
           });
         }
       }
+      await this.runMaintenanceNow();
     })().finally(() => {
       this.schedulerTickPromise = null;
     });

@@ -32,19 +32,16 @@ function createDocTreeView(): FeishuDocTreeView {
     root: "document",
     nodes: [
       {
-        id: "doc-roadmap",
         docId: "doc-roadmap",
         title: "产品路线图",
         hasChild: false,
       },
       {
-        id: "doc-sync",
         docId: "doc-sync",
         title: "团队周报",
         hasChild: false,
       },
       {
-        id: "doc-empty",
         docId: "doc-empty",
         title: "未命中记录",
         hasChild: false,

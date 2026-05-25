@@ -71,6 +71,15 @@
   line-height: 1.4;
 }
 
+.models-page-model-name,
+.models-page-model-meta {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .models-page-base-url {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -142,12 +151,68 @@
   min-height: 0;
 }
 
+.models-page-inline-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 24px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--app-surface-subtle) 78%, transparent);
+}
+
+.models-page-inline-editor-header,
+.models-page-inline-editor-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.models-page-inline-editor-header {
+  justify-content: space-between;
+}
+
+.models-page-inline-editor-heading {
+  flex-wrap: wrap;
+}
+
+.models-page-custom-model-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.models-page-custom-model-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.models-page-custom-model-grid .ant-form-item:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+
+.models-page-custom-model-capabilities {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 16px;
+}
+
 .models-page-provider-doc-alert {
   margin-bottom: 16px;
 }
 
 .models-page-provider-env-grid {
+  width: 100%;
   margin-bottom: 8px;
+}
+
+.models-page-provider-env-grid .ant-col,
+.models-page-provider-env-grid .ant-form-item,
+.models-page-provider-env-grid .ant-form-item-control,
+.models-page-provider-env-grid .ant-form-item-control-input,
+.models-page-provider-env-grid .ant-form-item-control-input-content {
+  min-width: 0;
 }
 
 .models-page-modal .ant-modal-content {
@@ -158,6 +223,16 @@
 @media (max-width: 960px) {
   .models-page {
     padding: 16px;
+  }
+
+  .models-page-custom-model-grid,
+  .models-page-custom-model-capabilities {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .models-page-inline-editor-header {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .models-page-search,

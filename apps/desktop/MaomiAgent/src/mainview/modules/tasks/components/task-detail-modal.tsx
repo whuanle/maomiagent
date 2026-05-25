@@ -551,6 +551,7 @@ export function TaskDetailModal(props: Props) {
       title={props.t("任务页.标题.任务详情")}
       footer={null}
       className="tasks-page-detail-modal"
+      style={{ top: 40 }}
       onCancel={props.onClose}
     >
       <TaskDetailBody

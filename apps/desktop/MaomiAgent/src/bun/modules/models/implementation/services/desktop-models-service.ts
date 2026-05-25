@@ -2056,6 +2056,9 @@ export class DesktopModelsService implements DesktopModelsPort {
       modelId: selection.resolvedModelId,
       protocolFamily: provider.protocolFamily,
       apiStyle: provider.apiStyle,
+      ...(typeof modelMetadata?.supportsFunctionCall === "boolean"
+        ? { supportsFunctionCall: modelMetadata.supportsFunctionCall }
+        : {}),
       contextWindow: modelMetadata?.contextWindow,
       maxOutputTokens: modelMetadata?.maxOutputTokens,
       serviceConfig: {

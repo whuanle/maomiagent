@@ -44,6 +44,8 @@ export type DesktopFeishuDocContentCacheEntry = {
 };
 
 export type DesktopFeishuDocTreeCacheSnapshot = {
+  lastRootToken: string;
+  lastRootUpdatedAt: string;
   roots: Record<string, DesktopFeishuDocTreeRootCacheEntry>;
   branches: Record<string, DesktopFeishuDocTreeBranchCacheEntry>;
   contents: Record<string, DesktopFeishuDocContentCacheEntry>;

@@ -37,17 +37,10 @@ function createRuntimeContext(): WechatConversationRuntimeContextView {
 }
 
 test("desktop wechat capability provider exposes bound conversation tools", async () => {
-  const textCalls: Array<{ sessionId: string; text: string; contextToken?: string }> = [];
   const mediaCalls: Array<{ sessionId: string; filePath: string; caption?: string; contextToken?: string }> = [];
+  const captureCalls: Array<{ sessionId: string; contextToken?: string }> = [];
   const provider = new DesktopWechatConversationCapabilityProvider({
     getConversationRuntimeContext: async () => createRuntimeContext(),
-    sendConversationText: async (input) => {
-      textCalls.push(input);
-      return {
-        clientId: "text-client-1",
-        contextToken: input.contextToken,
-      };
-    },
     sendConversationMedia: async (input) => {
       mediaCalls.push(input);
       return {
@@ -58,7 +51,21 @@ test("desktop wechat capability provider exposes bound conversation tools", asyn
         contextToken: input.contextToken,
       };
     },
-  } satisfies Pick<DesktopWechatPort, "getConversationRuntimeContext" | "sendConversationText" | "sendConversationMedia">);
+    captureConversationDesktopAndSend: async (input) => {
+      captureCalls.push(input);
+      return {
+        clientId: "capture-client-1",
+        kind: "image",
+        filePath: "E:/workspace/capture.png",
+        fileName: "capture.png",
+        mimeType: "image/png",
+        contextToken: input.contextToken,
+      };
+    },
+  } satisfies Pick<
+    DesktopWechatPort,
+    "getConversationRuntimeContext" | "sendConversationMedia" | "captureConversationDesktopAndSend"
+  >);
 
   const contribution = await provider.resolveRuntimeContribution({
     workspaceId: "workspace-1",
@@ -82,22 +89,18 @@ test("desktop wechat capability provider exposes bound conversation tools", asyn
 
   expect(catalog.source.sourceId).toBe("desktop.wechat.conversation");
   expect(catalog.tools.map((tool) => tool.name)).toEqual([
-    "wechat_send_text",
     "wechat_send_media_file",
+    "wechat_capture_desktop_and_send",
   ]);
+  expect(catalog.tools.map((tool) => tool.name)).not.toContain("wechat_send_text");
 
-  const textHandler = contribution!.toolHandlers!.find((handler) => handler.descriptor.name === "wechat_send_text");
   const mediaHandler = contribution!.toolHandlers!.find((handler) => handler.descriptor.name === "wechat_send_media_file");
-  expect(textHandler).toBeTruthy();
+  const captureHandler = contribution!.toolHandlers!.find((handler) =>
+    handler.descriptor.name === "wechat_capture_desktop_and_send"
+  );
   expect(mediaHandler).toBeTruthy();
+  expect(captureHandler).toBeTruthy();
 
-  await textHandler!.execute({
-    call: {
-      input: {
-        text: "请回个收到",
-      },
-    },
-  } as any);
   await mediaHandler!.execute({
     call: {
       input: {
@@ -106,14 +109,12 @@ test("desktop wechat capability provider exposes bound conversation tools", asyn
       },
     },
   } as any);
-
-  expect(textCalls).toEqual([
-    {
-      sessionId: "wechat-session",
-      text: "请回个收到",
-      contextToken: undefined,
+  await captureHandler!.execute({
+    call: {
+      input: {},
     },
-  ]);
+  } as any);
+
   expect(mediaCalls).toEqual([
     {
       sessionId: "wechat-session",
@@ -122,19 +123,34 @@ test("desktop wechat capability provider exposes bound conversation tools", asyn
       contextToken: undefined,
     },
   ]);
+  expect(captureCalls).toEqual([
+    {
+      sessionId: "wechat-session",
+      contextToken: undefined,
+    },
+  ]);
 });
 
 test("desktop wechat capability provider stays disabled outside bound sessions", async () => {
   const provider = new DesktopWechatConversationCapabilityProvider({
     getConversationRuntimeContext: async () => undefined,
-    sendConversationText: async () => ({ clientId: "unused" }),
     sendConversationMedia: async () => ({
       clientId: "unused",
       kind: "image",
       fileName: "unused.png",
       mimeType: "image/png",
     }),
-  } satisfies Pick<DesktopWechatPort, "getConversationRuntimeContext" | "sendConversationText" | "sendConversationMedia">);
+    captureConversationDesktopAndSend: async () => ({
+      clientId: "unused",
+      kind: "image",
+      filePath: "E:/workspace/unused.png",
+      fileName: "unused.png",
+      mimeType: "image/png",
+    }),
+  } satisfies Pick<
+    DesktopWechatPort,
+    "getConversationRuntimeContext" | "sendConversationMedia" | "captureConversationDesktopAndSend"
+  >);
 
   const contribution = await provider.resolveRuntimeContribution({
     workspaceId: "workspace-1",
@@ -150,14 +166,23 @@ test("desktop wechat capability provider resolves wechat service lazily", async 
     resolveCount += 1;
     return {
       getConversationRuntimeContext: async () => undefined,
-      sendConversationText: async () => ({ clientId: "unused" }),
       sendConversationMedia: async () => ({
         clientId: "unused",
         kind: "image",
         fileName: "unused.png",
         mimeType: "image/png",
       }),
-    } satisfies Pick<DesktopWechatPort, "getConversationRuntimeContext" | "sendConversationText" | "sendConversationMedia">;
+      captureConversationDesktopAndSend: async () => ({
+        clientId: "unused",
+        kind: "image",
+        filePath: "E:/workspace/unused.png",
+        fileName: "unused.png",
+        mimeType: "image/png",
+      }),
+    } satisfies Pick<
+      DesktopWechatPort,
+      "getConversationRuntimeContext" | "sendConversationMedia" | "captureConversationDesktopAndSend"
+    >;
   });
 
   expect(resolveCount).toBe(0);

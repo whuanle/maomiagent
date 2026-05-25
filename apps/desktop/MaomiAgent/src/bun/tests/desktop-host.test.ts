@@ -3,6 +3,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { DESKTOP_FEISHU_OAUTH_CALLBACK_PATH } from "../../shared/desktop-feishu-oauth";
+
 import {
   DESKTOP_APP_INFO,
   DESKTOP_CONFIGURATION_PORT,
@@ -16,24 +18,33 @@ import {
   type DesktopWindowOptions,
 } from "../desktop-host";
 import { RUNTIME_LOGS_QUERY_PORT } from "../modules/logs";
-import type { SingleInstanceController } from "../single-instance";
+import type { SingleInstanceController, SingleInstanceHttpRoute } from "../single-instance";
 
 type FakeSingleInstanceController = SingleInstanceController & {
   triggerActivation: () => Promise<void>;
   isDisposed: () => boolean;
+  routes: SingleInstanceHttpRoute[];
 };
 
 function createFakeSingleInstanceController(): FakeSingleInstanceController {
   let activationHandler: (() => void | Promise<void>) | null = null;
   let disposed = false;
+  const routes: SingleInstanceHttpRoute[] = [];
 
   return {
     kind: "primary",
+    routes,
     setActivationHandler(handler) {
       activationHandler = handler;
     },
-    registerHttpRoute() {
-      return () => {};
+    registerHttpRoute(route) {
+      routes.push(route);
+      return () => {
+        const index = routes.indexOf(route);
+        if (index >= 0) {
+          routes.splice(index, 1);
+        }
+      };
     },
     async dispose() {
       disposed = true;
@@ -228,6 +239,21 @@ describe("startDesktopApplication", () => {
       });
       expect(workspaceLogs.items.map((item) => item.message)).toContain(
         "Desktop workspace module started",
+      );
+
+      const wechatLogs = host.container.resolve(RUNTIME_LOGS_QUERY_PORT).query({
+        module: "desktop.wechat",
+      });
+      expect(wechatLogs.items.map((item) => item.message)).toContain(
+        "Desktop wechat module started",
+      );
+      expect(singleInstance.routes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            method: "GET",
+            path: DESKTOP_FEISHU_OAUTH_CALLBACK_PATH,
+          }),
+        ]),
       );
       expect((await host.container.resolve(DESKTOP_WORKSPACE_PORT).list()).items).toEqual([]);
 

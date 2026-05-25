@@ -1,6 +1,5 @@
 import type {
   FeishuConnectionProfileKind,
-  FeishuDocsAccessKind,
   FeishuSmartAssistantActionRiskLevel,
   FeishuSmartAssistantActionStatus,
   FeishuSmartAssistantActionTransport,
@@ -20,19 +19,60 @@ import type {
   FeishuStateView,
   FeishuSupportedTool,
 } from "../../../../../shared/desktop-feishu";
+import {
+  normalizeDesktopFeishuRedirectUri,
+  resolveDesktopFeishuOAuthCallbackOrigin,
+} from "../../../../../shared/desktop-feishu-oauth";
 
 const DEFAULT_DEVELOPER_SCOPES = [
   "offline_access",
   "calendar:calendar:readonly",
   "calendar:calendar.event:read",
+  "calendar:calendar.free_busy:read",
+  "calendar:calendar.event:create",
+  "calendar:calendar.event:update",
   "base:field:read",
   "base:record:create",
+  "base:table:read",
   "base:record:update",
+  "base:view:read",
+  "base:record:read",
   "contact:user:search",
+  "contact:contact.base:readonly",
+  "contact:user.base:readonly",
+  "docs:document.media:download",
+  "docs:document.comment:read",
+  "docs:document.comment:create",
+  "docs:document.comment:write_only",
+  "board:whiteboard:node:read",
+  "board:whiteboard:node:create",
+  "search:docs:read",
   "docx:document:readonly",
+  "docx:document:create",
+  "docx:document:write_only",
+  "wiki:wiki:readonly",
+  "wiki:node:read",
+  "wiki:node:create",
   "search:message",
+  "drive:file:upload",
+  "drive:file:download",
+  "docs:document.media:upload",
+  "task:task:read",
   "task:task:write",
   "task:task:writeonly",
+  "im:chat:read",
+  "im:message:readonly",
+  "sheets:spreadsheet:read",
+  "sheets:spreadsheet:write_only",
+  "mail:user_mailbox.message:readonly",
+  "mail:user_mailbox.message.subject:read",
+  "mail:user_mailbox.message.body:read",
+  "mail:user_mailbox.message:send",
+  "mail:user_mailbox.message:modify",
+  "vc:meeting.search:read",
+  "vc:note:read",
+  "minutes:minutes:readonly",
+  "minutes:minutes.artifacts:read",
   "wiki:node:update",
 ] as const;
 
@@ -115,7 +155,7 @@ const DOMAIN_CATALOG: readonly DomainCatalogDefinition[] = [
     transport: "remote_mcp",
     credentialKind: "user_access_token",
     primaryConnectionKind: "developer_oauth",
-    supportedConnectionKinds: ["personal_docs_mcp", "developer_oauth"],
+    supportedConnectionKinds: ["developer_oauth"],
     contextKind: "resource_anchor",
     associationLabel: "docId / 文档树节点 / 可选本地草稿缓存",
     workbenchKind: "docs_workspace",
@@ -140,7 +180,7 @@ const DOMAIN_CATALOG: readonly DomainCatalogDefinition[] = [
         placeholder: "doccnxxxxxxxx",
       },
     ],
-    contextNotes: ["个人文档 MCP 也可以承接 docs 域。"],
+    contextNotes: ["文档能力通过智能助手 OAuth 接入。"],
   },
   {
     key: "calendar",
@@ -527,23 +567,12 @@ function cloneConnectionProfile(profile: FeishuSmartAssistantConnectionProfileVi
 }
 
 function buildConnectionProfiles(state: FeishuStateView): FeishuSmartAssistantConnectionProfileView[] {
-  const personalConfigured = state.personalDocs.enabled && Boolean(state.personalDocs.docsMcp?.mcpId);
   const oauthConfigured = Boolean(
     state.smartAssistant.appId?.trim()
       || state.developer?.appId?.trim(),
   );
 
   const profiles: FeishuSmartAssistantConnectionProfileView[] = [
-    {
-      kind: "personal_docs_mcp",
-      title: "个人文档 MCP",
-      summary: "只填个人远程 MCP 地址，不走 OAuth，只覆盖 docs 域。",
-      status: "ready",
-      authMode: "url_only",
-      configured: personalConfigured,
-      supportedDomains: ["docs"],
-      notes: ["适合个人云文档读写。"],
-    },
     {
       kind: "developer_oauth",
       title: "智能助手 OAuth",
@@ -642,13 +671,9 @@ function buildStatusNotice(
 
 function mergeDocsCapabilities(
   state: FeishuStateView,
-  accessKind: FeishuDocsAccessKind,
 ) {
   if (state.smartAssistant.docsMcp) {
     return state.smartAssistant.docsMcp;
-  }
-  if (accessKind === "personal_mcp") {
-    return state.personalDocs.docsMcp;
   }
   return null;
 }
@@ -695,40 +720,56 @@ export function hydrateDesktopFeishuStateView(state: FeishuStateView): FeishuSta
       ? state.smartAssistant.allowedTools
       : developerAllowedTools,
   );
+  const smartAssistantRedirectUri = normalizeDesktopFeishuRedirectUri(
+    state.smartAssistant.redirectUri || state.developer?.redirectUri,
+  );
+  const smartAssistantRedirectOrigin = resolveDesktopFeishuOAuthCallbackOrigin(
+    smartAssistantRedirectUri,
+  );
   const developer = state.developer
-    ? {
-        ...state.developer,
-        scopes: normalizeUniqueStrings(
-          state.developer.scopes.length > 0
-            ? state.developer.scopes
-            : developerScopes,
-        ),
-        allowedTools: normalizeUniqueStrings(
-          state.developer.allowedTools.length > 0
-            ? state.developer.allowedTools
-            : developerAllowedTools,
-        ),
-        ...(buildStatusNotice(
-          state.developer.authStatus,
-          state.developer.hasRefreshToken,
-          state.developer.statusNotice,
-        )
-          ? {
-              statusNotice: buildStatusNotice(
-                state.developer.authStatus,
-                state.developer.hasRefreshToken,
-                state.developer.statusNotice,
-              ),
-            }
-          : {}),
-      }
+    ? (() => {
+        const developerRedirectUri = normalizeDesktopFeishuRedirectUri(
+          state.developer.redirectUri || state.smartAssistant.redirectUri,
+        );
+        const developerRedirectOrigin = resolveDesktopFeishuOAuthCallbackOrigin(
+          developerRedirectUri,
+        );
+        return {
+          ...state.developer,
+          redirectUri: developerRedirectUri,
+          redirectOrigin: developerRedirectOrigin,
+          scopes: normalizeUniqueStrings(
+            state.developer.scopes.length > 0
+              ? state.developer.scopes
+              : developerScopes,
+          ),
+          allowedTools: normalizeUniqueStrings(
+            state.developer.allowedTools.length > 0
+              ? state.developer.allowedTools
+              : developerAllowedTools,
+          ),
+          ...(buildStatusNotice(
+            state.developer.authStatus,
+            state.developer.hasRefreshToken,
+            state.developer.statusNotice,
+          )
+            ? {
+                statusNotice: buildStatusNotice(
+                  state.developer.authStatus,
+                  state.developer.hasRefreshToken,
+                  state.developer.statusNotice,
+                ),
+              }
+            : {}),
+        };
+      })()
     : null;
-  const accessKind: FeishuDocsAccessKind = state.personalDocs.enabled ? "personal_mcp" : "developer_oauth";
-
   return {
     ...state,
     smartAssistant: {
       ...state.smartAssistant,
+      redirectUri: smartAssistantRedirectUri,
+      redirectOrigin: smartAssistantRedirectOrigin,
       scopes: smartAssistantScopes,
       allowedTools: smartAssistantAllowedTools,
       statusNotice: buildStatusNotice(
@@ -742,7 +783,7 @@ export function hydrateDesktopFeishuStateView(state: FeishuStateView): FeishuSta
         domainMounting: "lazy_by_domain",
         actionExecution: "registry_first",
       },
-      docsMcp: mergeDocsCapabilities(state, accessKind),
+      docsMcp: mergeDocsCapabilities(state),
       connectionProfiles: buildConnectionProfiles(state),
       domainModels,
       contextTemplates,

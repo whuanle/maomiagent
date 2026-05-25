@@ -37,9 +37,12 @@ import {
 } from "./components/panels";
 import { SkillEditorModal } from "./components/skill-editor-modal";
 import {
+  buildDiscoverySourceSummaries,
   buildTabLabel,
   initialSkillFormValues,
   normalizeError,
+  resolvePreferredDiscoverySource,
+  resolveSkillsTabLoadPlan,
   rowKeyForDiscovery,
   toSkillPayload,
   type SourceSummary,
@@ -145,44 +148,10 @@ export function SkillsPage(props: SkillsPageProps) {
     };
   }, []);
 
-  const sourceSummaries = useMemo<SourceSummary[]>(() => {
-    const summaryMap = new Map<string, SourceSummary>();
-
-    for (const source of discoverySources) {
-      summaryMap.set(source.source, {
-        source: source.source,
-        label: source.label,
-        strategy: source.strategy,
-        candidatePaths: source.candidatePaths,
-        existingPaths: source.existingPaths,
-        count: 0,
-        managedCount: 0,
-      });
-    }
-
-    for (const item of discoveryItems) {
-      const current = summaryMap.get(item.source) ?? {
-        source: item.source,
-        label: item.source,
-        strategy: "",
-        candidatePaths: [],
-        existingPaths: [],
-        count: 0,
-        managedCount: 0,
-      };
-
-      current.count += 1;
-      if (item.managed) {
-        current.managedCount += 1;
-      }
-
-      summaryMap.set(item.source, current);
-    }
-
-    return [...summaryMap.values()]
-      .filter((item) => item.count > 0)
-      .sort((left, right) => left.label.localeCompare(right.label, "en", { sensitivity: "base" }));
-  }, [discoveryItems, discoverySources]);
+  const sourceSummaries = useMemo<SourceSummary[]>(
+    () => buildDiscoverySourceSummaries(discoverySources, discoveryItems),
+    [discoveryItems, discoverySources],
+  );
 
   const selectedSourceItems = useMemo(() => {
     if (!selectedSource) {
@@ -288,27 +257,25 @@ export function SkillsPage(props: SkillsPageProps) {
     if (!props.active || !bridgeAvailable) {
       return;
     }
-    if (activeTab === "managed") {
+
+    const loadPlan = resolveSkillsTabLoadPlan(activeTab);
+
+    if (loadPlan.managed) {
       void loadManaged();
-      return;
     }
-    if (activeTab === "discovery") {
+    if (loadPlan.discovery) {
       void loadDiscovery();
       return;
     }
-    if (activeTab === "market") {
+    if (loadPlan.marketProviders) {
       void loadMarketProviders();
     }
   }, [activeTab, bridgeAvailable, loadDiscovery, loadManaged, loadMarketProviders, props.active]);
 
   useEffect(() => {
-    if (sourceSummaries.length === 0) {
-      setSelectedSource("");
-      return;
-    }
-
-    if (!selectedSource || !sourceSummaries.some((item) => item.source === selectedSource)) {
-      setSelectedSource(sourceSummaries[0]?.source ?? "");
+    const nextSelectedSource = resolvePreferredDiscoverySource(sourceSummaries, selectedSource);
+    if (nextSelectedSource !== selectedSource) {
+      setSelectedSource(nextSelectedSource);
     }
   }, [selectedSource, sourceSummaries]);
 

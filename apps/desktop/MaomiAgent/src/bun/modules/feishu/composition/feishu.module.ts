@@ -30,6 +30,7 @@ import { FeishuDocTreeRemoteSource } from "../implementation/services/feishu-doc
 import { DesktopFeishuSmartAssistantActionRegistry } from "../implementation/services/desktop-feishu-smart-assistant-action-registry";
 import { DesktopFeishuSmartAssistantActionExecutor } from "../implementation/services/desktop-feishu-smart-assistant-action-executor";
 import { DesktopFeishuOpenApiClient } from "../implementation/services/desktop-feishu-openapi-client";
+import { ensureDesktopFeishuDeveloperAccessToken } from "../implementation/services/desktop-feishu-developer-token";
 import { DesktopFeishuService } from "../implementation/services/desktop-feishu-service";
 import { DesktopFeishuStore } from "../implementation/stores/desktop-feishu-store";
 
@@ -66,11 +67,10 @@ export class DesktopFeishuModule extends DependencyModuleBase {
         const treeCache = new FeishuDocTreeCache(store);
         const remoteSource = new FeishuDocTreeRemoteSource(openApiClient);
         const accessToken = async () => {
-          const snapshot = await store.read();
-          if (!snapshot.developerToken.accessToken) {
-            throw new Error("请先完成飞书授权");
-          }
-          return snapshot.developerToken.accessToken;
+          return ensureDesktopFeishuDeveloperAccessToken({
+            store,
+            openApiClient,
+          });
         };
         const treeLoader = new FeishuDocTreeLoader({
           scopeId: () => "desktop.feishu.smart-assistant",

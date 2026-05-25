@@ -36,6 +36,9 @@ function buildExecutionProfile(input: {
       channelId: input.target.channelId,
       ...(input.target.protocolFamily ? { protocolFamily: input.target.protocolFamily } : {}),
       ...(input.target.apiStyle ? { apiStyle: input.target.apiStyle } : {}),
+      ...(typeof input.target.supportsFunctionCall === "boolean"
+        ? { supportsFunctionCall: input.target.supportsFunctionCall }
+        : {}),
       ...(typeof input.target.contextWindow === "number" ? { contextWindow: input.target.contextWindow } : {}),
       ...(typeof input.target.maxOutputTokens === "number" ? { maxOutputTokens: input.target.maxOutputTokens } : {}),
       ...(input.scope ? { scope: input.scope } : {}),
@@ -74,6 +77,7 @@ implements DesktopAiExecutionProfileMaterializerPort {
       modelId: resolved.modelId,
       protocolFamily: resolved.protocolFamily,
       apiStyle: resolved.apiStyle,
+      supportsFunctionCall: resolved.supportsFunctionCall,
       contextWindow: resolved.contextWindow,
       maxOutputTokens: resolved.maxOutputTokens,
     };

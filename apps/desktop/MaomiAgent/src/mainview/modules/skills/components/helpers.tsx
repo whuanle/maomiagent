@@ -12,6 +12,13 @@ import type {
 
 const { Text } = Typography;
 
+export type { SourceSummary } from "./page-state";
+export {
+  buildDiscoverySourceSummaries,
+  resolvePreferredDiscoverySource,
+  resolveSkillsTabLoadPlan,
+} from "./page-state";
+
 export type SkillFormValues = {
   skillId: string;
   name: string;
@@ -20,16 +27,6 @@ export type SkillFormValues = {
   sourcePath: string;
   tagsText: string;
   description: string;
-};
-
-export type SourceSummary = {
-  source: string;
-  label: string;
-  strategy: string;
-  candidatePaths: string[];
-  existingPaths: string[];
-  count: number;
-  managedCount: number;
 };
 
 export const skillIdPattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]{1,63}$/;

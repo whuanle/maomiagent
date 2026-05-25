@@ -1,8 +1,11 @@
 import type {
   DesktopTaskPriority,
   DesktopTaskRecord,
+  DesktopTaskScope,
   DesktopTaskScheduleKind,
   DesktopTaskStatus,
+  DesktopTaskSurface,
+  DesktopTaskVisibility,
 } from "./desktop-tasks";
 
 export const DESKTOP_TASK_CENTER_SOURCE_KIND_VALUES = [
@@ -38,6 +41,7 @@ export type DesktopTaskCenterExposure =
 
 export type DesktopTaskCenterAttentionState =
   (typeof DESKTOP_TASK_CENTER_ATTENTION_STATE_VALUES)[number];
+export type DesktopTaskCenterSurface = DesktopTaskSurface;
 
 export type DesktopTaskCenterScopeFilter = "root" | "all";
 
@@ -65,6 +69,10 @@ export type DesktopTaskCenterItem = {
   updatedAt: string;
   linkedSessionId?: string;
   rootTaskId?: string;
+  surface: DesktopTaskCenterSurface;
+  visibility: DesktopTaskVisibility;
+  scope: DesktopTaskScope;
+  identityKey?: string;
   hasSchedule: boolean;
   scheduleKind?: DesktopTaskScheduleKind;
   scheduleIntervalMinutes?: number;
@@ -76,6 +84,8 @@ export type DesktopTaskCenterItem = {
 
 export type DesktopTaskCenterListQuery = {
   workspaceId?: string;
+  surface?: DesktopTaskCenterSurface | "all";
+  visibility?: DesktopTaskVisibility | "all";
   sourceKind?: DesktopTaskCenterSourceKind | "all";
   exposure?: DesktopTaskCenterExposure | "all";
   attentionState?: DesktopTaskCenterAttentionState | "all";
@@ -144,6 +154,14 @@ function resolveRootTaskId(item: DesktopTaskRecord): string | undefined {
   }
 
   return metadata?.rootTask === true ? item.taskId : undefined;
+}
+
+function resolveScope(item: DesktopTaskRecord): DesktopTaskScope {
+  if (item.scope === "system" || item.workspaceId === "system") {
+    return "system";
+  }
+
+  return "workspace";
 }
 
 function isManagedExecutionTask(item: DesktopTaskRecord): boolean {
@@ -340,6 +358,68 @@ function resolveAttention(item: DesktopTaskRecord): ProjectionAttention {
   };
 }
 
+function needsUserAttention(attention: ProjectionAttention): boolean {
+  return attention.attentionState === "blocked"
+    || attention.attentionState === "takeover_required"
+    || attention.attentionState === "verification_required"
+    || attention.attentionState === "wrap_up_required"
+    || attention.attentionState === "failed";
+}
+
+function resolveSurface(
+  item: DesktopTaskRecord,
+  sourceKind: DesktopTaskCenterSourceKind,
+  attention: ProjectionAttention,
+): DesktopTaskSurface {
+  if (item.surface === "system" || resolveScope(item) === "system") {
+    return "system";
+  }
+
+  if (item.surface === "critical") {
+    return "critical";
+  }
+
+  if (item.surface === "internal") {
+    return "internal";
+  }
+
+  const rootTaskId = resolveRootTaskId(item);
+  const isRootTask = Boolean(rootTaskId) && rootTaskId === item.taskId;
+  if (!isRootTask) {
+    return "internal";
+  }
+
+  if (sourceKind !== "managed_execution" && sourceKind !== "automation") {
+    return needsUserAttention(attention) ? "critical" : "internal";
+  }
+
+  if (
+    item.status === "running"
+    || item.status === "queued"
+    || item.status === "failed"
+    || needsUserAttention(attention)
+  ) {
+    return "critical";
+  }
+
+  return "internal";
+}
+
+function resolveVisibility(
+  item: DesktopTaskRecord,
+  surface: DesktopTaskSurface,
+): DesktopTaskVisibility {
+  if (item.visibility === "hidden") {
+    return "hidden";
+  }
+
+  if (item.visibility === "visible") {
+    return "visible";
+  }
+
+  return surface === "internal" ? "hidden" : "visible";
+}
+
 function buildSummary(item: DesktopTaskRecord, attentionReason: string | undefined): string {
   return attentionReason
     ?? summarizeText(item.outputs?.[0]?.value)
@@ -351,13 +431,18 @@ export function projectDesktopTaskRecordToTaskCenterItem(
   item: DesktopTaskRecord,
 ): DesktopTaskCenterItem {
   const attention = resolveAttention(item);
+  const sourceKind = resolveSourceKind(item);
+  const scope = resolveScope(item);
+  const surface = resolveSurface(item, sourceKind, attention);
+  const visibility = resolveVisibility(item, surface);
+
   return {
     centerId: buildCenterId(item),
     workspaceId: item.workspaceId,
     taskId: item.taskId,
     title: item.title,
     summary: buildSummary(item, attention.reason),
-    sourceKind: resolveSourceKind(item),
+    sourceKind,
     exposure: attention.exposure,
     attentionState: attention.attentionState,
     attentionReason: attention.reason,
@@ -368,6 +453,10 @@ export function projectDesktopTaskRecordToTaskCenterItem(
     updatedAt: item.updatedAt,
     linkedSessionId: trimText(item.linkedSessionId),
     rootTaskId: resolveRootTaskId(item),
+    surface,
+    visibility,
+    scope,
+    identityKey: trimText(item.identityKey),
     hasSchedule: Boolean(item.schedule),
     scheduleKind: item.schedule?.kind,
     scheduleIntervalMinutes: item.schedule?.intervalMinutes,
@@ -376,4 +465,9 @@ export function projectDesktopTaskRecordToTaskCenterItem(
     handlerId: trimText(item.handler?.handlerId),
     moduleId: trimText(item.handler?.moduleId),
   };
+}
+
+export function isTaskCenterVisibleSurface(item: DesktopTaskCenterItem): boolean {
+  return item.visibility === "visible"
+    && (item.surface === "critical" || item.surface === "system");
 }

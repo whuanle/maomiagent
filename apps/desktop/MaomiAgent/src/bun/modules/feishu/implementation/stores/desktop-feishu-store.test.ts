@@ -66,6 +66,8 @@ describe("DesktopFeishuStore", () => {
       const snapshot = await fixture.store.read();
 
       expect(snapshot.docTreeCache).toEqual({
+        lastRootToken: "",
+        lastRootUpdatedAt: "",
         roots: {},
         branches: {},
         contents: {},
@@ -101,6 +103,8 @@ describe("DesktopFeishuStore", () => {
         },
         docTreeCache: {
           ...initial.docTreeCache,
+          lastRootToken: "root_token",
+          lastRootUpdatedAt: "2026-05-21T00:00:00.000Z",
           roots: {
             root_token: {
               token: "root_token",
@@ -126,6 +130,8 @@ describe("DesktopFeishuStore", () => {
         rootNodeId: "doc_1",
         title: "Existing Doc",
       });
+      expect(persisted.docTreeCache.lastRootToken).toBe("root_token");
+      expect(persisted.docTreeCache.lastRootUpdatedAt).toBe("2026-05-21T00:00:00.000Z");
 
       const reloaded = await fixture.store.read();
       expect(reloaded.docs.doc_1).toMatchObject({
@@ -137,6 +143,7 @@ describe("DesktopFeishuStore", () => {
         kind: "document",
         rootNodeId: "doc_1",
       });
+      expect(reloaded.docTreeCache.lastRootToken).toBe("root_token");
     } finally {
       await fixture.cleanup();
     }

@@ -108,6 +108,8 @@ function createInitialDeveloperToken(): DesktopFeishuDeveloperTokenSnapshot {
 
 function createInitialDocTreeCache(): DesktopFeishuDocTreeCacheSnapshot {
   return {
+    lastRootToken: "",
+    lastRootUpdatedAt: "",
     roots: {},
     branches: {},
     contents: {},
@@ -160,6 +162,8 @@ export class DesktopFeishuStore implements DesktopFeishuStorePort {
           ...(parsed.developerToken ?? {}),
         },
         docTreeCache: {
+          lastRootToken: parsed.docTreeCache?.lastRootToken ?? initial.docTreeCache.lastRootToken,
+          lastRootUpdatedAt: parsed.docTreeCache?.lastRootUpdatedAt ?? initial.docTreeCache.lastRootUpdatedAt,
           roots: parsed.docTreeCache?.roots ?? initial.docTreeCache.roots,
           branches: parsed.docTreeCache?.branches ?? initial.docTreeCache.branches,
           contents: parsed.docTreeCache?.contents ?? initial.docTreeCache.contents,

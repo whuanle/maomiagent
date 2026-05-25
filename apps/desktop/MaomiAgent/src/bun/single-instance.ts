@@ -7,9 +7,9 @@ import {
 
 import {
   DESKTOP_LOCAL_CONTROL_HOST,
-  DESKTOP_LOCAL_CONTROL_PORT,
   DESKTOP_LOCAL_CONTROL_PROTOCOL,
   resolveDesktopLocalControlBaseUrl,
+  resolveDesktopLocalControlPort,
 } from "../shared/desktop-feishu-oauth";
 
 const ACTIVATION_TIMEOUT_MS = 1_500;
@@ -40,6 +40,7 @@ export type SingleInstanceHttpResponse = {
   status: number;
   headers?: Record<string, string>;
   body?: string;
+  bodyBytes?: Uint8Array;
 };
 
 export type SingleInstanceHttpRoute = {
@@ -67,7 +68,7 @@ export type SingleInstanceOptions = {
 export async function activateExistingInstance(
   options: Pick<SingleInstanceOptions, "appKey" | "port">,
 ): Promise<boolean> {
-  const port = options.port ?? DESKTOP_LOCAL_CONTROL_PORT;
+  const port = resolveDesktopLocalControlPort(options.port);
   const response = await postJson<ActivationResponse>(
     `${resolveDesktopLocalControlBaseUrl(port)}${ACTIVATION_ROUTE_PATH}`,
     {
@@ -85,7 +86,7 @@ export async function createSingleInstanceCoordinator(
   options: SingleInstanceOptions,
 ): Promise<SingleInstanceController> {
   const logger = options.logger ?? console;
-  const port = options.port ?? DESKTOP_LOCAL_CONTROL_PORT;
+  const port = resolveDesktopLocalControlPort(options.port);
 
   if (await activateExistingInstance({ appKey: options.appKey, port })) {
     logger.log(
@@ -154,6 +155,7 @@ async function createPrimaryController(
         request,
         response,
         appKey: options.appKey,
+        port: options.port,
         activate,
         routes,
       });
@@ -208,15 +210,16 @@ async function createPrimaryController(
 
 async function handleControlPlaneRequest(input: {
   request: IncomingMessage;
-  response: ServerResponse<IncomingMessage>;
+  response: ServerResponse;
   appKey: string;
+  port: number;
   activate: ActivationHandler;
   routes: Map<string, SingleInstanceHttpRoute["handler"]>;
 }): Promise<void> {
   const method = normalizeHttpMethod(input.request.method);
   const url = new URL(
     input.request.url ?? "/",
-    `${resolveDesktopLocalControlBaseUrl()}${input.request.url?.startsWith("/") ? "" : "/"}`,
+    `${resolveDesktopLocalControlBaseUrl(input.port)}${input.request.url?.startsWith("/") ? "" : "/"}`,
   );
   const requestPayload = await toSingleInstanceHttpRequest(input.request, url, method);
 
@@ -335,7 +338,7 @@ function normalizeHeaders(
 }
 
 async function readRequestBody(request: IncomingMessage): Promise<string> {
-  const chunks: Buffer[] = [];
+  const chunks: Uint8Array[] = [];
 
   for await (const chunk of request) {
     chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
@@ -345,10 +348,14 @@ async function readRequestBody(request: IncomingMessage): Promise<string> {
 }
 
 function writeHttpResponse(
-  response: ServerResponse<IncomingMessage>,
+  response: ServerResponse,
   payload: SingleInstanceHttpResponse,
 ): void {
   response.writeHead(payload.status, payload.headers ?? {});
+  if (payload.bodyBytes) {
+    response.end(payload.bodyBytes);
+    return;
+  }
   response.end(payload.body ?? "");
 }
 

@@ -142,6 +142,7 @@ async function createFixture(workspaceNames: Array<{ workspaceId: string; name: 
   return {
     tempRoot,
     database,
+    store,
     logs,
     service,
   };
@@ -525,9 +526,17 @@ describe("DesktopTasksService", () => {
         moduleId: "desktop.test",
         taskKey: "daily-sync",
       });
+      expect(list.items[0]).toMatchObject({
+        surface: "internal",
+        visibility: "hidden",
+        scope: "workspace",
+        identityKey: "workspace::test-handler::daily-sync",
+      });
 
       const taskCenter = await fixture.service.listTaskCenter({
         workspaceId: "default",
+        surface: "internal",
+        visibility: "hidden",
         sourceKind: "automation",
         exposure: "hidden",
         scope: "all",
@@ -541,7 +550,16 @@ describe("DesktopTasksService", () => {
         sourceKind: "automation",
         exposure: "hidden",
         attentionState: "scheduled",
+        surface: "internal",
+        visibility: "hidden",
       });
+
+      const visibleTaskCenter = await fixture.service.listTaskCenter({
+        workspaceId: "default",
+        limit: 10,
+        offset: 0,
+      });
+      expect(visibleTaskCenter.items).toHaveLength(0);
 
       const workspaces = await fixture.service.listWorkspaces();
       expect(workspaces.items.find((item) => item.workspaceId === "default")).toMatchObject({
@@ -683,6 +701,395 @@ describe("DesktopTasksService", () => {
       });
       expect(detail?.item.outputs?.[0]).toMatchObject({ name: "result" });
       expect(detail?.item.metadata?.phase).toBe("completed");
+    } finally {
+      fixture.database.dispose();
+      await rm(fixture.tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("archives non-critical session tasks and retains critical roots", async () => {
+    const fixture = await createFixture([{ workspaceId: "default", name: "Default Workspace" }]);
+    const archivedAt = "2026-05-01T00:00:00.000Z";
+    const purgeAfterAt = "2026-05-08T00:00:00.000Z";
+
+    try {
+      await fixture.service.ensureConversationTaskRunning({
+        workspaceId: "default",
+        sessionId: "session-archive",
+        runId: "run_archive",
+        title: "Agent task: assistant",
+        goal: "Handle a routine request",
+        agentId: "assistant",
+      });
+      await fixture.service.syncManagedConversationRootTask({
+        workspaceId: "default",
+        sessionId: "session-archive",
+        rootTaskId: "managed-root-session-archive",
+        runId: "run_archive",
+        title: "Managed intake",
+        goal: "Collect managed task confirmation",
+        agentId: "managed-autopilot",
+        executionMode: "background",
+        runMode: "hosted_autopilot",
+        progress: 65,
+        metadata: {
+          managedExecution: true,
+          rootTask: true,
+          phase: "awaiting_task_confirmation",
+          managedExecutionStage: "ready",
+          executionAgentId: "managed-autopilot",
+        },
+      });
+
+      await fixture.service.archiveConversationSessionTasks({
+        workspaceId: "default",
+        sessionId: "session-archive",
+        archivedAt,
+      });
+
+      const archivedConversationTask = await fixture.service.get("default", "conversation-run_archive");
+      expect(archivedConversationTask).toMatchObject({
+        taskId: "conversation-run_archive",
+        visibility: "hidden",
+        hiddenAt: archivedAt,
+        purgeAfterAt,
+      });
+
+      const rootTask = await fixture.service.get("default", "managed-root-session-archive");
+      expect(rootTask?.hiddenAt).toBeUndefined();
+      expect(rootTask?.purgeAfterAt).toBeUndefined();
+
+      const visibleTaskCenter = await fixture.service.listTaskCenter({
+        workspaceId: "default",
+        scope: "root",
+        limit: 10,
+        offset: 0,
+      });
+      expect(visibleTaskCenter.items.map((item) => item.taskId)).toContain("managed-root-session-archive");
+      expect(visibleTaskCenter.items.map((item) => item.taskId)).not.toContain("conversation-run_archive");
+    } finally {
+      fixture.database.dispose();
+      await rm(fixture.tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("purges archived hidden tasks after retention expires", async () => {
+    const fixture = await createFixture([{ workspaceId: "default", name: "Default Workspace" }]);
+
+    try {
+      fixture.store.upsertTask({
+        taskId: "archived-hidden-task",
+        workspaceId: "default",
+        title: "Archived hidden task",
+        goal: "Should be cleaned after retention",
+        taskType: "conversation",
+        executionMode: "interactive",
+        runMode: "normal",
+        origin: "chat",
+        priority: "normal",
+        status: "success",
+        progress: 100,
+        createdAt: "2026-04-20T00:00:00.000Z",
+        updatedAt: "2026-04-20T00:00:00.000Z",
+        runCount: 1,
+        steps: [],
+        visibility: "hidden",
+        hiddenAt: "2026-05-01T00:00:00.000Z",
+        purgeAfterAt: "2026-05-08T00:00:00.000Z",
+      });
+      fixture.store.upsertTaskRun({
+        runId: "run-archived-hidden-task",
+        workspaceId: "default",
+        taskId: "archived-hidden-task",
+        status: "success",
+        mode: "normal",
+        executor: "assistant",
+        trigger: "manual",
+        startedAt: "2026-04-20T00:00:00.000Z",
+        finishedAt: "2026-04-20T00:05:00.000Z",
+      });
+
+      await fixture.service.runMaintenanceNow("2026-05-09T00:00:00.000Z");
+
+      expect(await fixture.service.get("default", "archived-hidden-task")).toBeNull();
+      expect(fixture.store.listTaskRuns("default", "archived-hidden-task")).toHaveLength(0);
+    } finally {
+      fixture.database.dispose();
+      await rm(fixture.tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("backfills legacy projection metadata for historical root tasks", async () => {
+    const fixture = await createFixture([{ workspaceId: "default", name: "Default Workspace" }]);
+
+    try {
+      const workspaceDb = fixture.database.getConnection("workspace");
+      const legacyTask = {
+        taskId: "legacy-managed-root",
+        workspaceId: "default",
+        title: "Legacy managed root",
+        goal: "Continue the managed conversation",
+        taskType: "conversation" as const,
+        executionMode: "background" as const,
+        runMode: "hosted_autopilot" as const,
+        origin: "chat" as const,
+        linkedSessionId: "session-legacy",
+        agentId: "managed-autopilot",
+        priority: "normal" as const,
+        status: "failed" as const,
+        progress: 0,
+        createdAt: "2026-05-18T00:00:00.000Z",
+        updatedAt: "2026-05-19T00:00:00.000Z",
+        runCount: 1,
+        steps: [],
+        error: {
+          message: "Legacy failure",
+        },
+        metadata: {
+          rootTask: true,
+          managedExecution: true,
+          managedExecutionStage: "ready",
+        },
+      };
+
+      workspaceDb.run(
+        `INSERT INTO desktop_tasks (
+          workspace_id, task_id, title, goal, status, priority, task_type, execution_mode,
+          run_mode, origin, linked_session_id, agent_id, progress, run_count, last_run_id,
+          root_task_id, handler_id, handler_module_id, handler_task_key, surface, visibility,
+          scope, identity_key, hidden_at, purge_after_at, deferred_compaction, created_at,
+          updated_at, started_at, finished_at, payload_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        legacyTask.workspaceId,
+        legacyTask.taskId,
+        legacyTask.title,
+        legacyTask.goal,
+        legacyTask.status,
+        legacyTask.priority,
+        legacyTask.taskType,
+        legacyTask.executionMode,
+        legacyTask.runMode,
+        legacyTask.origin,
+        legacyTask.linkedSessionId,
+        legacyTask.agentId,
+        legacyTask.progress,
+        legacyTask.runCount,
+        null,
+        legacyTask.taskId,
+        null,
+        null,
+        null,
+        "internal",
+        "visible",
+        "workspace",
+        null,
+        null,
+        null,
+        0,
+        legacyTask.createdAt,
+        legacyTask.updatedAt,
+        null,
+        null,
+        JSON.stringify(legacyTask),
+      );
+
+      const before = fixture.store.getTask("default", "legacy-managed-root");
+      expect(before).toMatchObject({
+        taskId: "legacy-managed-root",
+      });
+      expect(before?.surface).toBeUndefined();
+      expect(before?.visibility).toBeUndefined();
+      expect(before?.scope).toBeUndefined();
+
+      const center = await fixture.service.listTaskCenter({
+        surface: "critical",
+        limit: 20,
+        offset: 0,
+      });
+
+      expect(center.items.some((item) => item.taskId === "legacy-managed-root")).toBe(true);
+
+      const after = fixture.store.getTask("default", "legacy-managed-root");
+      expect(after).toMatchObject({
+        taskId: "legacy-managed-root",
+        surface: "critical",
+        visibility: "visible",
+        scope: "workspace",
+      });
+    } finally {
+      fixture.database.dispose();
+      await rm(fixture.tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("reprojects stale internal-visible legacy roots into critical tasks", async () => {
+    const fixture = await createFixture([{ workspaceId: "default", name: "Default Workspace" }]);
+
+    try {
+      fixture.store.upsertTask({
+        taskId: "stale-visible-root",
+        workspaceId: "default",
+        title: "Stale visible root",
+        goal: "Recover the managed run",
+        taskType: "conversation",
+        executionMode: "background",
+        runMode: "hosted_autopilot",
+        origin: "chat",
+        linkedSessionId: "session-stale",
+        agentId: "managed-autopilot",
+        priority: "normal",
+        status: "failed",
+        progress: 0,
+        createdAt: "2026-05-18T00:00:00.000Z",
+        updatedAt: "2026-05-19T00:00:00.000Z",
+        runCount: 1,
+        steps: [],
+        surface: "internal",
+        visibility: "visible",
+        scope: "workspace",
+        error: {
+          message: "Needs recovery",
+        },
+        metadata: {
+          rootTask: true,
+          managedExecution: true,
+          managedExecutionStage: "ready",
+        },
+      });
+
+      const before = fixture.store.getTask("default", "stale-visible-root");
+      expect(before).toMatchObject({
+        surface: "internal",
+        visibility: "visible",
+        scope: "workspace",
+      });
+
+      const center = await fixture.service.listTaskCenter({
+        surface: "critical",
+        limit: 20,
+        offset: 0,
+      });
+
+      expect(center.items.some((item) => item.taskId === "stale-visible-root")).toBe(true);
+
+      const after = fixture.store.getTask("default", "stale-visible-root");
+      expect(after).toMatchObject({
+        surface: "critical",
+        visibility: "visible",
+        scope: "workspace",
+      });
+    } finally {
+      fixture.database.dispose();
+      await rm(fixture.tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("compacts system scheduled tasks by key into a single visible record", async () => {
+    const fixture = await createFixture([{ workspaceId: "default", name: "Default Workspace" }]);
+    const schedule = {
+      kind: "interval" as const,
+      intervalMinutes: 30,
+      nextRunAt: "2026-05-19T00:30:00.000Z",
+      enabled: true,
+    };
+
+    try {
+      fixture.store.upsertTask({
+        taskId: "legacy-feishu-refresh-1",
+        workspaceId: "default",
+        title: "Feishu token refresh",
+        goal: "Refresh Feishu token",
+        taskType: "automation",
+        executionMode: "background",
+        runMode: "normal",
+        origin: "system",
+        priority: "high",
+        status: "queued",
+        progress: 0,
+        createdAt: "2026-05-18T00:00:00.000Z",
+        updatedAt: "2026-05-18T00:00:00.000Z",
+        runCount: 0,
+        steps: [],
+        schedule,
+        handler: {
+          handlerId: "feishu-refresh",
+          moduleId: "desktop.feishu",
+          taskKey: "refresh-token",
+          displayName: "Feishu Refresh",
+        },
+      });
+      fixture.store.upsertTask({
+        taskId: "legacy-feishu-refresh-2",
+        workspaceId: "workspace-legacy",
+        title: "Feishu token refresh duplicate",
+        goal: "Refresh Feishu token again",
+        taskType: "automation",
+        executionMode: "background",
+        runMode: "normal",
+        origin: "system",
+        priority: "high",
+        status: "success",
+        progress: 100,
+        createdAt: "2026-05-17T00:00:00.000Z",
+        updatedAt: "2026-05-17T00:00:00.000Z",
+        runCount: 2,
+        steps: [],
+        schedule,
+        handler: {
+          handlerId: "feishu-refresh",
+          moduleId: "desktop.feishu",
+          taskKey: "refresh-token",
+          displayName: "Feishu Refresh",
+        },
+      });
+
+      fixture.service.register({
+        handlerId: "feishu-refresh",
+        moduleId: "desktop.feishu",
+        displayName: "Feishu Refresh",
+        listDefinitions: () => [{
+          taskKey: "refresh-token",
+          workspaceId: "default",
+          scope: "system",
+          title: "Feishu token refresh",
+          goal: "Refresh the Feishu access token",
+          schedule,
+          priority: "high",
+        }],
+        execute: async () => ({
+          summary: "refreshed",
+        }),
+      });
+
+      await fixture.service.syncManagedTasks();
+
+      const compactedTasks = fixture.store.listTasks().filter((item) => item.handler?.taskKey === "refresh-token");
+      expect(compactedTasks).toHaveLength(1);
+      expect(compactedTasks[0]).toMatchObject({
+        workspaceId: "system",
+        scope: "system",
+        surface: "system",
+        visibility: "visible",
+        identityKey: "system::feishu-refresh::refresh-token",
+        title: "Feishu token refresh",
+        goal: "Refresh the Feishu access token",
+      });
+
+      const systemCenter = await fixture.service.listTaskCenter({
+        surface: "system",
+        limit: 10,
+        offset: 0,
+      });
+      expect(systemCenter.items).toHaveLength(1);
+      expect(systemCenter.items[0]).toMatchObject({
+        workspaceId: "system",
+        scope: "system",
+        surface: "system",
+        identityKey: "system::feishu-refresh::refresh-token",
+      });
+
+      const workspaces = await fixture.service.listWorkspaces();
+      expect(workspaces.items.some((item) => item.workspaceId === "system")).toBe(false);
     } finally {
       fixture.database.dispose();
       await rm(fixture.tempRoot, { recursive: true, force: true });

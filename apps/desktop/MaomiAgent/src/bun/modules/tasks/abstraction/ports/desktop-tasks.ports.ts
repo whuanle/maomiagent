@@ -1,4 +1,5 @@
 import type {
+  DesktopConversationTaskArchiveInput,
   DesktopConversationTaskBlockedInput,
   DesktopConversationTaskCompleteInput,
   DesktopConversationTaskFailInput,
@@ -16,6 +17,7 @@ import type {
   DesktopTaskListResponse,
   DesktopTaskRecord,
   DesktopTaskRunsResponse,
+  DesktopTaskWorkspacePurgeResult,
   DesktopTaskWorkspacesResponse,
 } from "../models/desktop-tasks.models";
 
@@ -45,6 +47,7 @@ export interface DesktopConversationTaskBridgePort {
   markConversationTaskBlocked(input: DesktopConversationTaskBlockedInput): Promise<DesktopTaskRecord | null>;
   completeConversationTask(input: DesktopConversationTaskCompleteInput): Promise<DesktopTaskRecord | null>;
   failConversationTask(input: DesktopConversationTaskFailInput): Promise<DesktopTaskRecord | null>;
+  archiveConversationSessionTasks(input: DesktopConversationTaskArchiveInput): Promise<void>;
 }
 
 export interface DesktopTasksQueryPort {
@@ -72,6 +75,7 @@ export interface DesktopTasksCommandPort {
   retry(workspaceId: string, taskId: string): Promise<DesktopTaskRecord | null>;
   pauseSchedule(workspaceId: string, taskId: string): Promise<DesktopTaskRecord | null>;
   resumeSchedule(workspaceId: string, taskId: string): Promise<DesktopTaskRecord | null>;
+  purgeWorkspaceTasks(workspaceId: string): Promise<DesktopTaskWorkspacePurgeResult>;
 }
 
 export type DesktopTasksPort = DesktopTasksQueryPort & DesktopTasksCommandPort;

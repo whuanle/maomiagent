@@ -3,6 +3,7 @@ import {
   CONCISE_AGENT_ID,
   DEFAULT_DESKTOP_PRIMARY_AGENT_ID,
   FULLY_MANAGED_AGENT_ID,
+  WECHAT_AGENT_ID,
 } from "../../../../../shared/conversation/managed-execution"
 
 export const MAOMI_COORDINATOR_AGENT_ID = "dev-coordinator"
@@ -84,6 +85,15 @@ const CONCISE_PRIMARY_PROMPT = buildPrompt([
   "当用户主要是在要示例、实现思路、接口写法、文档片段、排查建议或解释说明时，通常直接在回复里给结果就够了，不要默认再去本地落盘、启动程序、补一轮测试或额外委派。",
   "当确实需要动手操作时，保持动作克制，优先选择能解决当前问题的最小路径；完成后不要无故继续追加周边工作。",
   "输出风格保持简洁自然，先给有用结果，再补必要说明；除非用户要求，不要把回复写成冗长计划、流程清单或验收报告。",
+])
+
+const WECHAT_PRIMARY_PROMPT = buildPrompt([
+  "你是微信轻量执行器，负责处理来自微信渠道的终端用户请求。",
+  "微信只处理短回复、收图分析、发图回传和桌面截图发回，不承担复杂工程任务。",
+  "当用户发送图片时，基于附件直接做轻量分析并用简短自然语言回答。",
+  "当用户需要把图片发回微信时，优先使用当前会话可用的微信图片能力；当用户需要桌面截图时，优先调用专用截图发回工具，不要自己编排长链路 terminal 步骤。",
+  "如果任务涉及代码修改、仓库排查、多步自动化或长流程调试，直接简短说明这类任务请到桌面继续。",
+  "最终回复只包含终端用户可见结果，不要输出 reasoning、tool trace、执行摘要、路径日志，或 <tool_call>、<function=...> 这类伪工具标记。",
 ])
 
 const FULLY_MANAGED_PRIMARY_PROMPT = buildPrompt([
@@ -290,6 +300,24 @@ export const BUILTIN_MAOMI_AGENTS: AgentItem[] = [
     subAgentPolicy: {
       mode: "allow_list",
       allowedAgentIds: [...REPO_DOCUMENTATION_MASTER_DELEGATE_AGENT_IDS],
+    },
+  }),
+  createBuiltinAgent({
+    agentId: WECHAT_AGENT_ID,
+    name: "微信专用",
+    description: "面向微信终端用户，优先执行动作并隐藏内部执行痕迹。",
+    mode: "primary",
+    prompt: WECHAT_PRIMARY_PROMPT,
+    metadata: {
+      capability: "wechat-channel",
+      category: "primary",
+      channel: "wechat",
+      hidesInternalExecution: true,
+      prefersActionExecution: true,
+    },
+    subAgentPolicy: {
+      mode: "allow_list",
+      allowedAgentIds: [],
     },
   }),
   createBuiltinAgent({

@@ -52,6 +52,7 @@ type Props = {
   assistantAppId: string
   assistantAppSecret: string
   assistantRedirectUri: string
+  assistantDraftDirty: boolean
   saving: boolean
   authorizing: boolean
   refreshingToken: boolean
@@ -173,10 +174,7 @@ function renderCredentialTag(value: FeishuSmartAssistantDomainView["credentialKi
   return <Tag variant="filled">Mixed</Tag>
 }
 
-function renderConnectionKindTag(value: FeishuSmartAssistantConnectionProfileView["kind"]) {
-  if (value === "personal_docs_mcp") {
-    return <Tag color="blue" variant="filled">个人文档 MCP</Tag>
-  }
+function renderConnectionKindTag(_value: FeishuSmartAssistantConnectionProfileView["kind"]) {
   return <Tag color="green" variant="filled">智能助手 OAuth</Tag>
 }
 
@@ -240,43 +238,18 @@ function formatAssistantTimestamp(value?: string): string | null {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
 
-function renderAutoRefreshTaskTag(task: FeishuStateView["smartAssistant"]["autoRefreshTask"]) {
-  if (!task?.taskId) {
-    return <Tag variant="filled">未创建</Tag>
-  }
-  if (task.enabled === false) {
-    return <Tag color="orange" variant="filled">已停用</Tag>
-  }
-  if (task.status === "running") {
-    return <Tag color="blue" variant="filled">执行中</Tag>
-  }
-  if (task.status === "queued") {
-    return <Tag color="blue" variant="filled">待执行</Tag>
-  }
-  if (task.status === "failed" || task.status === "cancelled") {
-    return <Tag color="red" variant="filled">异常</Tag>
-  }
-  return <Tag color="green" variant="filled">已启用</Tag>
-}
-
 function resolveAutoRefreshTaskSummary(state?: FeishuStateView["smartAssistant"] | null): string {
   if (!state?.appId) {
-    return "保存配置并完成授权后自动创建"
+    return "保存配置后可授权"
   }
   if (!state.hasRefreshToken) {
-    return "当前没有 refresh_token，暂不能自动续期"
+    return "授权后可续期"
   }
-  if (!state.autoRefreshTask.taskId) {
-    return "授权成功后自动创建"
+  if (state.authStatus === "authorized") {
+    const accessTokenText = formatAssistantTimestamp(state.accessTokenExpiresAt)
+    return accessTokenText ? `请求前自动续期，Access Token 到期 ${accessTokenText}` : "请求前自动续期"
   }
-  if (state.autoRefreshTask.enabled === false) {
-    return "任务存在但当前已停用"
-  }
-
-  const nextRunText = formatAssistantTimestamp(state.autoRefreshTask.nextRunAt)
-  return nextRunText
-    ? `每 60 分钟自动刷新一次，下次执行 ${nextRunText}`
-    : "每 60 分钟自动刷新一次"
+  return "需要重新授权"
 }
 
 function createActionDraft(action?: FeishuSmartAssistantActionView | null): SmartAssistantActionDraft {
@@ -525,6 +498,18 @@ export function FeishuSmartAssistantPanel(props: Props) {
       },
     }, null, 2)
   }, [assistantScopes, assistantTenantScopes])
+  const hasSavedAssistantSecret = assistant?.hasAppSecret === true
+  const hasAssistantDraftSecret = props.assistantAppSecret.trim().length > 0
+  const hasAssistantDraftAppId = props.assistantAppId.trim().length > 0
+  const assistantConfigured = Boolean(assistant?.appId && hasSavedAssistantSecret)
+  const canSaveAssistant = hasAssistantDraftAppId && (hasSavedAssistantSecret || hasAssistantDraftSecret)
+  const canAuthorizeAssistant = hasAssistantDraftAppId && (hasSavedAssistantSecret || hasAssistantDraftSecret)
+  const saveButtonLabel = "保存配置"
+  const authorizeButtonLabel = props.assistantDraftDirty || !assistantConfigured
+    ? "保存并授权"
+    : assistant?.authStatus === "authorized"
+      ? "重新授权"
+      : "发起授权"
 
   useEffect(() => {
     const statusNotice = assistant?.statusNotice?.trim() ?? ""
@@ -1662,7 +1647,12 @@ export function FeishuSmartAssistantPanel(props: Props) {
                 }}
               >
                 <div className="feishu-assistant-access-field">
-                  <Text strong>智能助手应用 App ID</Text>
+                  <div className="feishu-assistant-access-field-head">
+                    <Text strong>智能助手应用 App ID</Text>
+                    <Tag color={assistant?.appId ? "green" : "default"} variant="filled">
+                      {assistant?.appId ? "已保存" : "未保存"}
+                    </Tag>
+                  </div>
                   <Input
                     size="large"
                     className="feishu-assistant-access-input"
@@ -1674,7 +1664,12 @@ export function FeishuSmartAssistantPanel(props: Props) {
                   />
                 </div>
                 <div className="feishu-assistant-access-field">
-                  <Text strong>智能助手应用 App Secret</Text>
+                  <div className="feishu-assistant-access-field-head">
+                    <Text strong>智能助手应用 App Secret</Text>
+                    <Tag color={hasSavedAssistantSecret ? "green" : "default"} variant="filled">
+                      {hasSavedAssistantSecret ? "已保存" : "未保存"}
+                    </Tag>
+                  </div>
                   <Input.Password
                     size="large"
                     className="feishu-assistant-access-input"
@@ -1704,19 +1699,20 @@ export function FeishuSmartAssistantPanel(props: Props) {
                     type="primary"
                     icon={<SaveOutlined />}
                     loading={props.saving}
+                    disabled={!canSaveAssistant}
                     onClick={props.onSave}
                   >
-                    保存配置
+                    {saveButtonLabel}
                   </Button>
                   <Button
                     size="large"
                     className="feishu-assistant-access-action-button is-third-row"
                     icon={<LinkOutlined />}
                     loading={props.authorizing}
-                    disabled={!assistant?.appId || !assistant.hasAppSecret}
+                    disabled={!canAuthorizeAssistant}
                     onClick={props.onAuthorize}
                   >
-                    发起授权
+                    {authorizeButtonLabel}
                   </Button>
                   <Popconfirm
                     title="确认重置飞书智能助手配置？"
@@ -1767,8 +1763,12 @@ export function FeishuSmartAssistantPanel(props: Props) {
                   </div>
                   <div className="feishu-assistant-access-metric">
                     <Text type="secondary">自动续期任务</Text>
-                    {assistant ? renderAutoRefreshTaskTag(assistant.autoRefreshTask) : <Tag variant="filled">未配置</Tag>}
+                    {assistant?.hasRefreshToken ? <Tag color="green" variant="filled">已启用</Tag> : <Tag variant="filled">未启用</Tag>}
                     <Text type="secondary">{resolveAutoRefreshTaskSummary(assistant)}</Text>
+                  </div>
+                  <div className="feishu-assistant-access-metric">
+                    <Text type="secondary">Refresh Token 到期</Text>
+                    <Text>{formatAssistantTimestamp(assistant?.refreshTokenExpiresAt) ?? "未授权"}</Text>
                   </div>
                   <div className="feishu-assistant-access-metric">
                     <Text type="secondary">文档域接入</Text>

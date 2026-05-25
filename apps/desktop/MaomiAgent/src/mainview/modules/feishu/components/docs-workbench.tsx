@@ -59,6 +59,7 @@ export type FeishuDocWorkspaceMode = "workspace"
 
 export type FeishuDocsWorkbenchUiState = {
   activeDocId?: string
+  treeQuery: string
   treeRootDocId: string
   workspaceMode: FeishuDocWorkspaceMode
 }
@@ -80,6 +81,7 @@ type Props = {
   loadError: string
   t: Translate
   initialDocId?: string
+  initialTreeQuery?: string
   initialTreeRootDocId?: string
   onReloadState?: () => void
   onBackToSettings?: () => void
@@ -330,15 +332,9 @@ function extractFeishuWhiteboardTokens(markdown: string): string[] {
 }
 
 function getDocsMcp(state: FeishuStateView | null) {
-  const smartAssistantActive = state?.smartAssistant.enabled === true || state?.mode === "developer"
-  if (smartAssistantActive) {
-    return state?.smartAssistant.docsMcp
-      ?? state?.managedMcp
-      ?? null
-  }
-
-  return state?.personalDocs.docsMcp
-    ?? (state?.mode === "personal" ? state.managedMcp : null)
+  return state?.smartAssistant.docsMcp
+    ?? state?.managedMcp
+    ?? null
 }
 
 function isRemoteDocsReady(state: FeishuStateView | null): boolean {
@@ -347,22 +343,17 @@ function isRemoteDocsReady(state: FeishuStateView | null): boolean {
 
 function resolveRemoteDocsBlockedMessage(input: {
   state: FeishuStateView | null
-  t: Translate
 }): string {
-  const smartAssistantActive =
-    input.state?.smartAssistant.enabled === true || input.state?.mode === "developer"
-  if (
-    smartAssistantActive
-    && input.state?.smartAssistant.authStatus !== "authorized"
-    && input.state?.developer?.authStatus !== "authorized"
-  ) {
+  const smartAssistantAuthorized =
+    input.state?.smartAssistant.authStatus === "authorized"
+    || input.state?.developer?.authStatus === "authorized"
+
+  if (!smartAssistantAuthorized) {
     return "请先完成飞书智能助手授权。"
   }
 
   if (!getDocsMcp(input.state)?.mcpId?.trim()) {
-    return smartAssistantActive
-      ? "飞书文档工作区正在等待智能助手文档能力就绪，请刷新授权状态后重试。"
-      : "飞书文档工作区未找到可用的文档接入，请先完成飞书接入。"
+    return "飞书文档工作区未就绪，请先完成飞书智能助手配置。"
   }
 
   return ""
@@ -374,11 +365,16 @@ export function FeishuDocsWorkbench(props: Props) {
   const remoteDocsReady = isRemoteDocsReady(props.state)
   const remoteDocsBlockedMessage = resolveRemoteDocsBlockedMessage({
     state: props.state,
-    t: props.t,
   })
   const statePending = Boolean(props.baseUrl.trim()) && !props.state && !props.loadError.trim()
-  const [treeQuery, setTreeQuery] = useState(props.initialTreeRootDocId ?? "")
-  const [treeRootDocId, setTreeRootDocId] = useState(props.initialTreeRootDocId ?? "")
+  const restoredTreeQuery = props.initialTreeQuery ?? props.initialTreeRootDocId ?? ""
+  const restoredTreeRootDocId = props.initialTreeRootDocId?.trim() ? props.initialTreeRootDocId : restoredTreeQuery
+  const [treeQuery, setTreeQuery] = useState(restoredTreeQuery)
+  const [treeRootDocId, setTreeRootDocId] = useState(restoredTreeRootDocId)
+  const appliedInitialTreeStateRef = useRef({
+    treeQuery: restoredTreeQuery,
+    treeRootDocId: restoredTreeRootDocId,
+  })
   const [capabilityLoading, setCapabilityLoading] = useState(false)
   const [capabilityError, setCapabilityError] = useState("")
   const [capabilities, setCapabilities] = useState<Awaited<ReturnType<typeof fetchFeishuDocsCapabilities>> | null>(null)
@@ -412,6 +408,7 @@ export function FeishuDocsWorkbench(props: Props) {
   const lastLoadErrorNoticeRef = useRef("")
   const lastAccessNoticeRef = useRef("")
   const loadingTreeNodeKeysRef = useRef<Set<string>>(new Set())
+  const treeHydrationRunIdRef = useRef(0)
   const treeNodesLengthRef = useRef(0)
 
   const persistDraftIfDirty = useCallback(async () => {
@@ -461,10 +458,76 @@ export function FeishuDocsWorkbench(props: Props) {
     }
   }, [props.baseUrl, remoteDocsReady])
 
+  const hydrateTreeBranches = useCallback((rootToken: string, nodes: DocsTreeNode[], options?: { forceRefresh?: boolean }) => {
+    const runId = ++treeHydrationRunIdRef.current
+    const visitedKeys = new Set<string>()
+
+    const visitNode = async (node: DocsTreeNode, lineage: Set<string>): Promise<void> => {
+      if (treeHydrationRunIdRef.current !== runId || node.isLeaf || !node.key || lineage.has(node.key)) {
+        return
+      }
+
+      const parentKey = node.key
+      if (visitedKeys.has(parentKey) || loadingTreeNodeKeysRef.current.has(parentKey)) {
+        return
+      }
+
+      visitedKeys.add(parentKey)
+      loadingTreeNodeKeysRef.current.add(parentKey)
+
+      try {
+        const result = await loadFeishuDocTreeBranch(props.baseUrl, {
+          rootToken,
+          parentToken: parentKey,
+          forceRefresh: options?.forceRefresh,
+        })
+
+        if (treeHydrationRunIdRef.current !== runId) {
+          return
+        }
+
+        const childNodes = mapTreeNodes(result.nodes)
+        setTreeNodes((previous) => replaceChildren(previous, parentKey, childNodes))
+        setExpandedKeys((previous) => mergeExpandedKeyLists(previous, [parentKey]))
+        if (result.error) {
+          return
+        }
+
+        const nextLineage = new Set(lineage)
+        nextLineage.add(parentKey)
+        for (const childNode of childNodes) {
+          await visitNode(childNode, nextLineage)
+        }
+      } catch (error) {
+        void error
+      } finally {
+        loadingTreeNodeKeysRef.current.delete(parentKey)
+      }
+    }
+
+    void (async () => {
+      for (const node of nodes) {
+        await visitNode(node, new Set())
+      }
+    })()
+  }, [props.baseUrl])
+
   const loadTree = useCallback(async (
     rootDocId: string,
     options?: { forceRefresh?: boolean },
   ) => {
+    const normalizedRootDocId = rootDocId.trim()
+    if (!normalizedRootDocId) {
+      treeHydrationRunIdRef.current += 1
+      loadingTreeNodeKeysRef.current.clear()
+      setTreeNodes([])
+      setExpandedKeys([])
+      setTreeError("")
+      setTreeLoading(false)
+      setTreeStatus("idle")
+      return
+    }
+
     if (!props.baseUrl || !remoteDocsReady) {
       setTreeNodes([])
       setExpandedKeys([])
@@ -486,9 +549,10 @@ export function FeishuDocsWorkbench(props: Props) {
       setTreeLoading(true)
       setTreeStatus("loading")
       setTreeError("")
+      treeHydrationRunIdRef.current += 1
       loadingTreeNodeKeysRef.current.clear()
       const result = await loadFeishuDocTreeRoot(props.baseUrl, {
-        token: rootDocId,
+        token: normalizedRootDocId,
         forceRefresh: options?.forceRefresh,
       })
       const nextNodes = mapTreeNodes(result.nodes)
@@ -496,6 +560,9 @@ export function FeishuDocsWorkbench(props: Props) {
       setExpandedKeys((previous) => result.source === "cache" ? previous : collectExpandableKeys(nextNodes))
       setTreeError(result.error ?? "")
       setTreeStatus(result.source === "cache" ? "cached" : result.refreshing ? "refreshing" : "ready")
+      if (!result.error) {
+        hydrateTreeBranches(normalizedRootDocId, nextNodes, { forceRefresh: options?.forceRefresh })
+      }
     } catch (error) {
       setTreeError(error instanceof Error ? error.message : String(error))
       setTreeStatus("error")
@@ -507,6 +574,7 @@ export function FeishuDocsWorkbench(props: Props) {
     }
   }, [
     capabilities,
+    hydrateTreeBranches,
     props.baseUrl,
     props.t,
     remoteDocsBlockedMessage,
@@ -641,6 +709,30 @@ export function FeishuDocsWorkbench(props: Props) {
     void loadTree(nextRoot, { forceRefresh: true })
   }, [loadTree, treeQuery])
 
+  const handleTreeQueryChange = useCallback((value: string) => {
+    setTreeQuery(value)
+  }, [])
+
+  useEffect(() => {
+    const nextTreeQuery = props.initialTreeQuery ?? props.initialTreeRootDocId ?? ""
+    const nextTreeRootDocId = props.initialTreeRootDocId?.trim() ? props.initialTreeRootDocId : nextTreeQuery
+    const previousInitial = appliedInitialTreeStateRef.current
+
+    if (
+      !nextTreeRootDocId.trim()
+      || (previousInitial.treeQuery === nextTreeQuery && previousInitial.treeRootDocId === nextTreeRootDocId)
+    ) {
+      return
+    }
+
+    appliedInitialTreeStateRef.current = {
+      treeQuery: nextTreeQuery,
+      treeRootDocId: nextTreeRootDocId,
+    }
+    setTreeQuery((previous) => previous.trim() ? previous : nextTreeQuery)
+    setTreeRootDocId((previous) => previous.trim() ? previous : nextTreeRootDocId)
+  }, [props.initialTreeQuery, props.initialTreeRootDocId])
+
   const handleLoadTreeData = useCallback<NonNullable<TreeProps["loadData"]>>(async (node) => {
     if (!remoteDocsReady || (capabilities && !capabilities.canBrowseTree)) {
       return
@@ -664,6 +756,7 @@ export function FeishuDocsWorkbench(props: Props) {
       const childNodes = mapTreeNodes(result.nodes)
       setTreeNodes((previous) => replaceChildren(previous, current.key, childNodes))
       setExpandedKeys((previous) => mergeExpandedKeyLists(previous, [current.key]))
+      hydrateTreeBranches(treeRootDocId || current.key, childNodes)
       if (result.error) {
         setTreeError(result.error)
         setTreeStatus("error")
@@ -706,8 +799,8 @@ export function FeishuDocsWorkbench(props: Props) {
       return
     }
 
-    void loadTree(props.initialTreeRootDocId ?? "")
-  }, [loadTree, props.initialTreeRootDocId, remoteDocsBlockedMessage, remoteDocsReady, statePending])
+    void loadTree(treeRootDocId.trim())
+  }, [loadTree, remoteDocsBlockedMessage, remoteDocsReady, statePending, treeRootDocId])
 
   useEffect(() => {
     treeNodesLengthRef.current = treeNodes.length
@@ -729,10 +822,11 @@ export function FeishuDocsWorkbench(props: Props) {
   useEffect(() => {
     props.onUiStateChange?.({
       activeDocId: currentDoc?.docId ?? activeDoc?.docId ?? activeDoc?.id,
+      treeQuery,
       treeRootDocId,
       workspaceMode: "workspace",
     })
-  }, [activeDoc?.docId, activeDoc?.id, currentDoc?.docId, props, treeRootDocId])
+  }, [activeDoc?.docId, activeDoc?.id, currentDoc?.docId, props, treeQuery, treeRootDocId])
 
   useEffect(() => {
     if (!currentDoc) {
@@ -1158,7 +1252,7 @@ export function FeishuDocsWorkbench(props: Props) {
                   value={treeQuery}
                   placeholder={props.t("飞书页.文档.导航.根文档占位")}
                   className="feishu-docs-page-root-input"
-                  onChange={(event) => setTreeQuery(event.target.value)}
+                  onChange={(event) => handleTreeQueryChange(event.target.value)}
                   onPressEnter={handleTreeSubmit}
                 />
                 <Button

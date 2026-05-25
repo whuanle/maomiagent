@@ -31,10 +31,12 @@ import type {
   FeishuWorkspaceDocInput,
 } from "../../../../../shared/desktop-feishu";
 import {
+  mergeDesktopFeishuOAuthScopes,
   normalizeDesktopFeishuRedirectUri,
   resolveDesktopFeishuOAuthCallbackOrigin,
 } from "../../../../../shared/desktop-feishu-oauth";
 import type { DesktopFeishuOpenApiClient } from "./desktop-feishu-openapi-client";
+import { refreshDesktopFeishuDeveloperToken } from "./desktop-feishu-developer-token";
 import { hydrateDesktopFeishuStateView } from "./desktop-feishu-state-hydrator";
 
 function escapeHtml(value: string): string {
@@ -64,9 +66,34 @@ export class DesktopFeishuService implements DesktopFeishuPort {
     return hydrateDesktopFeishuStateView(state);
   }
 
+  private hydrateStoreState(store: DesktopFeishuStoreSnapshot): FeishuStateView {
+    const state = this.hydrateState(store.state as FeishuStateView);
+    const lastRootToken = store.docTreeCache.lastRootToken.trim();
+    const lastRoot = lastRootToken
+      ? Object.values(store.docTreeCache.roots).find((item) => item.token === lastRootToken)
+      : Object.values(store.docTreeCache.roots)
+        .filter((item) => item.token.trim())
+        .sort((left, right) => right.loadedAt.localeCompare(left.loadedAt))[0];
+    const restoredRootToken = lastRootToken || lastRoot?.token;
+
+    if (!restoredRootToken) {
+      return state;
+    }
+
+    return {
+      ...state,
+      docsWorkspace: {
+        ...state.docsWorkspace,
+        lastRootToken: restoredRootToken,
+        lastRootTitle: lastRoot?.title,
+        lastRootLoadedAt: lastRoot?.loadedAt ?? store.docTreeCache.lastRootUpdatedAt,
+      },
+    };
+  }
+
   async getState(): Promise<FeishuStateView> {
     const store = await this.store.read();
-    return this.hydrateState(store.state as FeishuStateView);
+    return this.hydrateStoreState(store);
   }
 
   async savePersonalConfig(input: FeishuPersonalConfigInput): Promise<FeishuStateView> {
@@ -176,6 +203,9 @@ export class DesktopFeishuService implements DesktopFeishuPort {
     const authUrl = new URL("https://open.feishu.cn/open-apis/authen/v1/index");
     authUrl.searchParams.set("app_id", appId);
     authUrl.searchParams.set("redirect_uri", redirectUri);
+    authUrl.searchParams.set("scope", mergeDesktopFeishuOAuthScopes(
+      this.hydrateState(store.state as FeishuStateView).smartAssistant.scopes,
+    ).join(" "));
 
     return {
       item: this.hydrateState(store.state as FeishuStateView),
@@ -237,8 +267,14 @@ export class DesktopFeishuService implements DesktopFeishuPort {
     );
 
     try {
-      if (!appId || !appSecret) {
-        throw new Error("缺少飞书应用凭证，请重新保存配置。");
+      if (!appId && !appSecret) {
+        throw new Error("缺少飞书应用 App ID 和 App Secret，请重新保存配置。");
+      }
+      if (!appId) {
+        throw new Error("缺少飞书应用 App ID，请重新保存配置。");
+      }
+      if (!appSecret) {
+        throw new Error("缺少飞书应用 App Secret，请重新保存配置。");
       }
 
       const tokens = await this.openApiClient.exchangeOAuthCode({
@@ -249,21 +285,26 @@ export class DesktopFeishuService implements DesktopFeishuPort {
       });
 
       store.developerToken = tokens;
+      const hasRefreshToken = Boolean(tokens.refreshToken);
 
       if (store.state.developer) {
         store.state.developer.authStatus = "authorized";
-        store.state.developer.hasRefreshToken = true;
+        store.state.developer.hasRefreshToken = hasRefreshToken;
         store.state.developer.accessTokenExpiresAt = tokens.accessTokenExpiresAt;
         store.state.developer.refreshTokenExpiresAt = tokens.refreshTokenExpiresAt;
         store.state.developer.lastAuthorizedAt = now;
-        store.state.developer.lastError = undefined;
+        store.state.developer.lastError = hasRefreshToken
+          ? undefined
+          : "当前未保存 refresh_token，请确认应用已开通 offline_access 权限。";
       }
       store.state.smartAssistant.authStatus = "authorized";
-      store.state.smartAssistant.hasRefreshToken = true;
+      store.state.smartAssistant.hasRefreshToken = hasRefreshToken;
       store.state.smartAssistant.accessTokenExpiresAt = tokens.accessTokenExpiresAt;
       store.state.smartAssistant.refreshTokenExpiresAt = tokens.refreshTokenExpiresAt;
       store.state.smartAssistant.lastAuthorizedAt = now;
-      store.state.smartAssistant.lastError = undefined;
+      store.state.smartAssistant.lastError = hasRefreshToken
+        ? undefined
+        : "当前未保存 refresh_token，请确认应用已开通 offline_access 权限。";
       await this.store.write(store);
 
       return {
@@ -294,18 +335,10 @@ export class DesktopFeishuService implements DesktopFeishuPort {
   }
 
   async refreshDeveloperToken(): Promise<FeishuStateView> {
-    const store = await this.store.read();
-    const now = new Date().toISOString();
-    if (store.state.developer) {
-      store.state.developer.authStatus = "authorized";
-      store.state.developer.hasRefreshToken = true;
-      store.state.developer.lastRefreshedAt = now;
-    }
-    store.state.smartAssistant.authStatus = "authorized";
-    store.state.smartAssistant.hasRefreshToken = true;
-    store.state.smartAssistant.lastRefreshedAt = now;
-    await this.store.write(store);
-    return this.hydrateState(store.state as FeishuStateView);
+    return refreshDesktopFeishuDeveloperToken({
+      store: this.store,
+      openApiClient: this.openApiClient,
+    });
   }
 
   async clearSmartAssistantConfig(): Promise<FeishuStateView> {

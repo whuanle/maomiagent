@@ -171,6 +171,20 @@ export type WechatConversationMediaSendResult = {
   contextToken?: string;
 };
 
+export type WechatConversationDesktopCaptureInput = {
+  sessionId: string;
+  contextToken?: string;
+};
+
+export type WechatConversationDesktopCaptureResult = {
+  clientId: string;
+  kind: "image";
+  filePath: string;
+  fileName: string;
+  mimeType: string;
+  contextToken?: string;
+};
+
 export type WechatModuleConfigView = {
   baseUrl: string;
   cdnBaseUrl: string;

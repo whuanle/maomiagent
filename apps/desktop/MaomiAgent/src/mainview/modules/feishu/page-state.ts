@@ -2,9 +2,8 @@ import type { WorkspaceRestoreState } from "../../lib/workspace"
 import type { FeishuDocsWorkbenchUiState } from "./components/docs-workbench"
 
 export type FeishuPageView =
-  | "personal-docs"
-  | "personal-docs-workspace"
   | "bot"
+  | "docs-workspace"
   | "smart-assistant"
 
 export type FeishuPagePersistentState = {
@@ -15,8 +14,10 @@ export type FeishuPagePersistentState = {
 export const FEISHU_DOCS_WORKSPACE_UI_KEY = "feishuDocsWorkspace"
 
 const FEISHU_PAGE_STATE_STORAGE_PREFIX = "maomi.feishu.page-state"
+const FEISHU_DOCS_ROOT_TOKEN_STORAGE_KEY = "maomi.feishu.docs.root-token"
 
 export const DEFAULT_FEISHU_DOCS_UI_STATE: FeishuDocsWorkbenchUiState = {
+  treeQuery: "",
   treeRootDocId: "",
   workspaceMode: "workspace",
 }
@@ -37,11 +38,13 @@ function readWorkspaceDocsUiState(
   const ui = asRecord(restoreState?.ui)
   const docsUi = asRecord(ui[FEISHU_DOCS_WORKSPACE_UI_KEY])
   const activeDocId = normalizeText(docsUi.activeDocId)
+  const treeQuery = normalizeText(docsUi.treeQuery)
   const treeRootDocId = normalizeText(docsUi.treeRootDocId)
   const workspaceMode = docsUi.workspaceMode === "workspace" ? "workspace" : undefined
 
   return {
     ...(activeDocId ? { activeDocId } : {}),
+    ...(treeQuery ? { treeQuery } : {}),
     ...(treeRootDocId ? { treeRootDocId } : {}),
     ...(workspaceMode ? { workspaceMode } : {}),
   }
@@ -53,6 +56,7 @@ export function isSameDocsUiState(
 ): boolean {
   return (
     (previous.activeDocId ?? "") === (next.activeDocId ?? "")
+    && previous.treeQuery === next.treeQuery
     && previous.treeRootDocId === next.treeRootDocId
     && previous.workspaceMode === next.workspaceMode
   )
@@ -62,20 +66,46 @@ export function getFeishuPageStorageKey(workspaceId?: string): string {
   return `${FEISHU_PAGE_STATE_STORAGE_PREFIX}:${workspaceId?.trim() || "global"}`
 }
 
+function readSavedDocsRootToken(): string {
+  if (typeof window === "undefined") {
+    return ""
+  }
+
+  return normalizeText(window.localStorage.getItem(FEISHU_DOCS_ROOT_TOKEN_STORAGE_KEY))
+}
+
+function writeSavedDocsRootToken(token: string): void {
+  if (typeof window === "undefined") {
+    return
+  }
+
+  const normalized = normalizeText(token)
+  if (!normalized) {
+    return
+  }
+
+  window.localStorage.setItem(FEISHU_DOCS_ROOT_TOKEN_STORAGE_KEY, normalized)
+}
+
 export function readFeishuPagePersistentState(workspaceId?: string): FeishuPagePersistentState {
   if (typeof window === "undefined") {
     return {
-      pageView: "personal-docs",
+      pageView: "bot",
       docs: DEFAULT_FEISHU_DOCS_UI_STATE,
     }
   }
 
   try {
     const rawValue = window.localStorage.getItem(getFeishuPageStorageKey(workspaceId))
+    const savedDocsRootToken = readSavedDocsRootToken()
     if (!rawValue) {
       return {
-        pageView: "personal-docs",
-        docs: DEFAULT_FEISHU_DOCS_UI_STATE,
+        pageView: "bot",
+        docs: {
+          ...DEFAULT_FEISHU_DOCS_UI_STATE,
+          treeQuery: savedDocsRootToken,
+          treeRootDocId: savedDocsRootToken,
+        },
       }
     }
 
@@ -83,25 +113,34 @@ export function readFeishuPagePersistentState(workspaceId?: string): FeishuPageP
       pageView?: string
       docs?: Partial<FeishuDocsWorkbenchUiState>
     }
+    const treeQuery = typeof parsed.docs?.treeQuery === "string" && parsed.docs.treeQuery.trim()
+      ? parsed.docs.treeQuery
+      : typeof parsed.docs?.treeRootDocId === "string" && parsed.docs.treeRootDocId.trim()
+        ? parsed.docs.treeRootDocId
+        : savedDocsRootToken
+    const treeRootDocId = typeof parsed.docs?.treeRootDocId === "string" && parsed.docs.treeRootDocId.trim()
+      ? parsed.docs.treeRootDocId
+      : treeQuery
 
     return {
       pageView:
         parsed.pageView === "smart-assistant"
           ? "smart-assistant"
-          : parsed.pageView === "personal-docs-workspace"
-          ? "personal-docs-workspace"
+          : parsed.pageView === "docs-workspace" || parsed.pageView === "personal-docs-workspace"
+          ? "docs-workspace"
           : parsed.pageView === "bot"
             ? "bot"
-            : "personal-docs",
+            : "bot",
       docs: {
         activeDocId: typeof parsed.docs?.activeDocId === "string" ? parsed.docs.activeDocId : undefined,
-        treeRootDocId: typeof parsed.docs?.treeRootDocId === "string" ? parsed.docs.treeRootDocId : "",
+        treeQuery,
+        treeRootDocId,
         workspaceMode: "workspace",
       },
     }
   } catch {
     return {
-      pageView: "personal-docs",
+      pageView: "bot",
       docs: DEFAULT_FEISHU_DOCS_UI_STATE,
     }
   }
@@ -115,9 +154,24 @@ export function writeFeishuPagePersistentState(
     return
   }
 
+  const previousState = readFeishuPagePersistentState(workspaceId)
+  const treeQuery = normalizeText(state.docs.treeQuery)
+  const treeRootDocId = normalizeText(state.docs.treeRootDocId)
+  const previousTreeQuery = normalizeText(previousState.docs.treeQuery)
+  const previousTreeRootDocId = normalizeText(previousState.docs.treeRootDocId)
+  const nextState: FeishuPagePersistentState = {
+    ...state,
+    docs: {
+      ...state.docs,
+      treeQuery: treeQuery || (treeRootDocId ? state.docs.treeQuery : previousTreeQuery),
+      treeRootDocId: treeRootDocId || previousTreeRootDocId,
+    },
+  }
+  writeSavedDocsRootToken(nextState.docs.treeRootDocId || nextState.docs.treeQuery)
+
   window.localStorage.setItem(
     getFeishuPageStorageKey(workspaceId),
-    JSON.stringify(state),
+    JSON.stringify(nextState),
   )
 }
 
@@ -127,13 +181,18 @@ export function mergeFeishuDocsUiStateWithWorkspaceRestore(
 ): FeishuDocsWorkbenchUiState {
   const workspaceState = readWorkspaceDocsUiState(restoreState)
   const localActiveDocId = normalizeText(localState.activeDocId)
+  const localTreeQuery = normalizeText(localState.treeQuery)
   const localTreeRootDocId = normalizeText(localState.treeRootDocId)
+  const workspaceTreeQuery = normalizeText(workspaceState.treeQuery)
+  const workspaceTreeRootDocId = normalizeText(workspaceState.treeRootDocId)
+  const treeRootDocId = localTreeRootDocId || workspaceTreeRootDocId || localTreeQuery || workspaceTreeQuery || ""
 
   return {
     ...(localActiveDocId || workspaceState.activeDocId
       ? { activeDocId: localActiveDocId || workspaceState.activeDocId }
       : {}),
-    treeRootDocId: localTreeRootDocId || workspaceState.treeRootDocId || "",
+    treeQuery: localTreeQuery || workspaceTreeQuery || treeRootDocId,
+    treeRootDocId,
     workspaceMode: "workspace",
   }
 }

@@ -909,7 +909,15 @@ export class ManagedSkillsService implements DesktopSkillsQueryPort, DesktopSkil
     }
   }
 
-  private shouldHideDiscoveryDirectory(pathname: string, managedSkillRoots: string[]) {
+  private shouldHideDiscoveryDirectory(
+    pathname: string,
+    managedSkillRoots: string[],
+    source: string,
+  ) {
+    if (source === "antigravity") {
+      return false;
+    }
+
     return managedSkillRoots.some((root) =>
       normalizePathForCompare(pathname) === normalizePathForCompare(root),
     );
@@ -949,7 +957,11 @@ export class ManagedSkillsService implements DesktopSkillsQueryPort, DesktopSkil
 
     for (const definition of environment.discoveryDefinitions) {
       const candidatePaths = resolveCandidateSkillPaths(definition)
-        .filter((dirPath) => !this.shouldHideDiscoveryDirectory(dirPath, environment.managedSkillRoots));
+        .filter((dirPath) => !this.shouldHideDiscoveryDirectory(
+          dirPath,
+          environment.managedSkillRoots,
+          definition.source,
+        ));
       const existingPaths: string[] = [];
       let sourceItemsCount = 0;
 

@@ -1,5 +1,7 @@
 import type {
   WechatAccountStatusInput,
+  WechatConversationDesktopCaptureInput,
+  WechatConversationDesktopCaptureResult,
   WechatConversationMediaSendInput,
   WechatConversationMediaSendResult,
   WechatConversationRuntimeContextView,
@@ -34,6 +36,9 @@ export interface DesktopWechatConversationPort {
   sendConversationMedia(
     input: WechatConversationMediaSendInput,
   ): Promise<WechatConversationMediaSendResult>;
+  captureConversationDesktopAndSend(
+    input: WechatConversationDesktopCaptureInput,
+  ): Promise<WechatConversationDesktopCaptureResult>;
 }
 
 export type DesktopWechatPort =

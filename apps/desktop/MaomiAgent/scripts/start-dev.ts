@@ -8,6 +8,7 @@ import {
   normalizeDesktopAppUpdatePublicBaseUrl,
 } from "../src/bun/desktop-app-update/config";
 import { activateExistingInstance } from "../src/bun/single-instance";
+import { DESKTOP_LOCAL_CONTROL_PORT } from "../src/shared/desktop-feishu-oauth";
 
 const APP_NAME = "MaomiAgent";
 const APP_IDENTIFIER = "com.maomiagent.desktop";
@@ -30,6 +31,7 @@ const devInstanceScope = createHash("sha256")
   .digest("hex")
   .slice(0, 12);
 const DEV_APP_KEY = `${APP_IDENTIFIER}:dev:${devInstanceMode}:${devInstanceScope}`;
+const DEV_LOCAL_CONTROL_PORT = DESKTOP_LOCAL_CONTROL_PORT;
 
 await main().catch((error) => {
   console.error(error);
@@ -37,7 +39,10 @@ await main().catch((error) => {
 });
 
 async function main(): Promise<void> {
-  if (await activateExistingInstance({ appKey: DEV_APP_KEY })) {
+  if (await activateExistingInstance({
+    appKey: DEV_APP_KEY,
+    port: DEV_LOCAL_CONTROL_PORT,
+  })) {
     console.log(`Activated existing MaomiAgent ${devInstanceMode} dev instance.`);
     return;
   }
@@ -267,6 +272,7 @@ function buildDevEnvironment(
 ): Record<string, string> {
   return {
     MAOMI_DESKTOP_DEV_APP_KEY: DEV_APP_KEY,
+    MAOMI_DESKTOP_LOCAL_CONTROL_PORT: String(DEV_LOCAL_CONTROL_PORT),
     MAOMI_DESKTOP_DEV_BUILD_FOLDER: buildFolder,
     ...(devServerUrl ? { MAOMI_DESKTOP_DEV_SERVER_URL: devServerUrl } : {}),
   };

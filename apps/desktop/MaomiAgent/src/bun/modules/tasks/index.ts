@@ -2,6 +2,7 @@ export type {
   DesktopConversationTaskBlockedInput,
   DesktopConversationTaskCompleteInput,
   DesktopConversationTaskFailInput,
+  DesktopConversationTaskArchiveInput,
   DesktopManagedConversationRootTaskPatchInput,
   DesktopConversationTaskRunInput,
   DesktopManagedConversationRootTaskSyncInput,
@@ -27,10 +28,14 @@ export type {
   DesktopTaskRunsResponse,
   DesktopTaskRunStatus,
   DesktopTaskSchedule,
+  DesktopTaskScope,
   DesktopTaskSourceRecord,
   DesktopTaskStatus,
   DesktopTaskStep,
+  DesktopTaskSurface,
   DesktopTaskType,
+  DesktopTaskVisibility,
+  DesktopTaskWorkspacePurgeResult,
   DesktopTaskWorkspaceSummary,
   DesktopTaskWorkspacesResponse,
 } from "./abstraction/models/desktop-tasks.models";
@@ -38,6 +43,7 @@ export type {
   DesktopTaskCenterAttentionState,
   DesktopTaskCenterExposure,
   DesktopTaskCenterItem,
+  DesktopTaskCenterSurface,
   DesktopTaskCenterSourceKind,
 } from "../../../shared/desktop-task-center";
 export type {

@@ -6,6 +6,7 @@ import type {
 
 export const FULLY_MANAGED_AGENT_ID = "managed-autopilot";
 export const CONCISE_AGENT_ID = "concise";
+export const WECHAT_AGENT_ID = "wechat.agent";
 export const DEFAULT_DESKTOP_PRIMARY_AGENT_ID = CONCISE_AGENT_ID;
 const CONVERSATION_SETTINGS_KEY = "conversationSettings";
 

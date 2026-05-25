@@ -52,9 +52,21 @@ type FeishuDocumentResponse = {
 
 type FeishuDocumentBlockPayload = {
   block_id?: string;
+  block_type?: number;
   text?: {
     content?: string;
+    elements?: unknown[];
   };
+  heading1?: { elements?: unknown[]; content?: string };
+  heading2?: { elements?: unknown[]; content?: string };
+  heading3?: { elements?: unknown[]; content?: string };
+  heading4?: { elements?: unknown[]; content?: string };
+  heading5?: { elements?: unknown[]; content?: string };
+  heading6?: { elements?: unknown[]; content?: string };
+  bullet?: { elements?: unknown[]; content?: string };
+  ordered?: { elements?: unknown[]; content?: string };
+  todo?: { elements?: unknown[]; content?: string };
+  quote?: { elements?: unknown[]; content?: string };
 };
 
 type FeishuDocumentBlocksResponse = {
@@ -105,22 +117,173 @@ function shouldFallbackToDocument(error: unknown): boolean {
     message.includes("230027") ||
     message.includes("not found") ||
     message.includes("not_found") ||
+    message.includes("bad request") ||
+    message.includes("field validation") ||
     message.includes("wrong kind") ||
     message.includes("wrong-kind")
   );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function firstStringField(record: Record<string, unknown>, fields: readonly string[]): string {
+  for (const field of fields) {
+    const value = record[field];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return "";
+}
+
+function extractInlineTextFromElement(element: unknown): string {
+  if (!isRecord(element)) {
+    return "";
+  }
+
+  const direct = firstStringField(element, ["content", "text", "title", "name"]);
+  if (direct) {
+    return direct;
+  }
+
+  const knownElementFields = [
+    "text_run",
+    "mention_user",
+    "mention_doc",
+    "reminder",
+    "equation",
+    "file",
+    "jira_issue",
+    "wiki_catalog",
+  ];
+
+  for (const field of knownElementFields) {
+    const value = element[field];
+    if (!isRecord(value)) {
+      continue;
+    }
+
+    const nested = firstStringField(value, ["content", "text", "title", "name", "file_name", "url"]);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return "";
+}
+
+function extractTextContainerText(container: unknown): string {
+  if (!isRecord(container)) {
+    return "";
+  }
+
+  const direct = firstStringField(container, ["content", "text"]);
+  if (direct) {
+    return direct;
+  }
+
+  const elements = Array.isArray(container.elements) ? container.elements : [];
+  return elements
+    .map(extractInlineTextFromElement)
+    .filter((content) => content.length > 0)
+    .join("");
+}
+
+function blockTextContainer(block: FeishuDocumentBlockPayload): { key: string; text: string } {
+  const candidateKeys = [
+    "heading1",
+    "heading2",
+    "heading3",
+    "heading4",
+    "heading5",
+    "heading6",
+    "text",
+    "bullet",
+    "ordered",
+    "todo",
+    "quote",
+  ] as const;
+
+  for (const key of candidateKeys) {
+    const text = extractTextContainerText(block[key]);
+    if (text.trim().length > 0) {
+      return { key, text: text.trim() };
+    }
+  }
+
+  return { key: "text", text: "" };
+}
+
+function formatBlockMarkdown(block: FeishuDocumentBlockPayload): string {
+  const { key, text } = blockTextContainer(block);
+  if (!text) {
+    return "";
+  }
+
+  const headingLevelByKey: Record<string, number> = {
+    heading1: 1,
+    heading2: 2,
+    heading3: 3,
+    heading4: 4,
+    heading5: 5,
+    heading6: 6,
+  };
+  const headingLevel = headingLevelByKey[key];
+  if (headingLevel) {
+    return `${"#".repeat(headingLevel)} ${text}`;
+  }
+
+  if (key === "bullet") {
+    return `- ${text}`;
+  }
+  if (key === "ordered") {
+    return `1. ${text}`;
+  }
+  if (key === "todo") {
+    return `- [ ] ${text}`;
+  }
+  if (key === "quote") {
+    return text.split("\n").map((line) => `> ${line}`).join("\n");
+  }
+
+  return text;
 }
 
 export class FeishuDocTreeRemoteSource {
   constructor(private readonly reader: FeishuOpenApiReader) {}
 
   async readDocumentContent(accessToken: string, docId: string): Promise<FeishuDocContentView> {
+    try {
+      return await this.readDocxDocumentContent(accessToken, docId, "document_id");
+    } catch (error) {
+      if (!shouldFallbackToDocument(error)) {
+        throw error;
+      }
+
+      return this.readDocxDocumentContent(accessToken, docId, "wiki_node_token");
+    }
+  }
+
+  private async readDocxDocumentContent(
+    accessToken: string,
+    docId: string,
+    documentIdType: "document_id" | "wiki_node_token",
+  ): Promise<FeishuDocContentView> {
+    const documentQuery = documentIdType === "wiki_node_token"
+      ? { document_id_type: documentIdType }
+      : {};
     const [documentResponse, blocksResponse] = await Promise.all([
       this.reader.getJson<FeishuDocumentResponse>(
-        openApiUrl(`/docx/v1/documents/${encodeURIComponent(docId)}`),
+        openApiUrl(`/docx/v1/documents/${encodeURIComponent(docId)}`, documentQuery),
         accessToken,
       ),
       this.reader.getJson<FeishuDocumentBlocksResponse>(
-        openApiUrl(`/docx/v1/documents/${encodeURIComponent(docId)}/blocks`, { page_size: 500 }),
+        openApiUrl(`/docx/v1/documents/${encodeURIComponent(docId)}/blocks`, {
+          page_size: 500,
+          ...documentQuery,
+        }),
         accessToken,
       ),
     ]);
@@ -130,7 +293,7 @@ export class FeishuDocTreeRemoteSource {
     const title = valueOrFallback(document.title, resolvedDocId);
     const blocks = blocksResponse.items ?? [];
     const markdown = blocks
-      .map((block) => typeof block.text?.content === "string" ? block.text.content.trim() : "")
+      .map(formatBlockMarkdown)
       .filter((content) => content.length > 0)
       .join("\n\n");
 

@@ -2,6 +2,7 @@ import {
   DependencyModuleBase,
   createServiceToken,
   type DependencyModuleContext,
+  type DependencyModuleRuntimeContext,
 } from "../../../shared/ioc";
 import type { DesktopConversationCapabilityProvider } from "../../conversation/abstraction/ports/desktop-conversation-capabilities.ports";
 import { DESKTOP_CONVERSATION_CAPABILITY_PROVIDER } from "../../conversation/abstraction/tokens/desktop-conversation.tokens";
@@ -78,5 +79,21 @@ export class DesktopWechatModule extends DependencyModuleBase {
         source: context.module.moduleId,
       },
     );
+  }
+
+  override async onStart(context: DependencyModuleRuntimeContext): Promise<void> {
+    const logger = context.container.resolve(RUNTIME_LOGGER_FACTORY_PORT).createLogger({
+      source: "desktop",
+      module: "desktop.wechat",
+    });
+    const wechat = context.container.resolve(DESKTOP_WECHAT_PORT);
+    const state = await wechat.getState();
+
+    await logger.info("Desktop wechat module started", {
+      context: {
+        accountCount: state.accounts.length,
+        enabledAccountCount: state.accounts.filter((item) => item.enabled).length,
+      },
+    });
   }
 }

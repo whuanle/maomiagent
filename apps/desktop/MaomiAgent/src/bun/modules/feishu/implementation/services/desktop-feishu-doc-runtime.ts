@@ -114,7 +114,25 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
   }
 
   async loadDocTreeRoot(input: FeishuDocTreeLoadInput): Promise<FeishuDocTreeLoadResult> {
+    await this.rememberDocTreeRootToken(input.token);
     return this.loader.loadRoot(input);
+  }
+
+  private async rememberDocTreeRootToken(token: string): Promise<void> {
+    const normalizedToken = token.trim();
+    if (!this.store || !normalizedToken) {
+      return;
+    }
+
+    const snapshot = await this.store.read();
+    await this.store.write({
+      ...snapshot,
+      docTreeCache: {
+        ...snapshot.docTreeCache,
+        lastRootToken: normalizedToken,
+        lastRootUpdatedAt: new Date().toISOString(),
+      },
+    });
   }
 
   async loadDocTreeBranch(input: FeishuDocTreeBranchInput): Promise<FeishuDocTreeBranchResult> {

@@ -29,6 +29,7 @@ export type DesktopAiOneShotTarget = {
   modelId: string;
   protocolFamily?: DesktopModelProviderProtocolFamily;
   apiStyle?: DesktopModelProviderApiStyle;
+  supportsFunctionCall?: boolean;
   contextWindow?: number;
   maxOutputTokens?: number;
 };

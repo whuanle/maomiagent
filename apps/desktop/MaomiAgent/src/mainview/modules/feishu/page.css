@@ -419,6 +419,14 @@
   gap: 8px;
 }
 
+.feishu-assistant-access-field-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .feishu-assistant-access-actions {
   gap: 12px;
   padding-top: 16px;

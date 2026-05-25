@@ -38,6 +38,25 @@ export class FeishuDocTreeCache {
     return snapshot.docTreeCache.roots[rootKey(scopeId, token)] ?? null;
   }
 
+  async rememberRootToken(token: string): Promise<void> {
+    const normalizedToken = token.trim();
+    if (!normalizedToken) {
+      return;
+    }
+
+    return this.enqueueWrite(async () => {
+      const snapshot = await this.store.read();
+      await this.store.write({
+        ...snapshot,
+        docTreeCache: {
+          ...snapshot.docTreeCache,
+          lastRootToken: normalizedToken,
+          lastRootUpdatedAt: new Date().toISOString(),
+        },
+      });
+    });
+  }
+
   async saveRoot(scopeId: string, entry: DesktopFeishuDocTreeRootCacheEntry): Promise<void> {
     return this.enqueueWrite(async () => {
       const snapshot = await this.store.read();
@@ -45,6 +64,8 @@ export class FeishuDocTreeCache {
         ...snapshot,
         docTreeCache: {
           ...snapshot.docTreeCache,
+          lastRootToken: entry.token,
+          lastRootUpdatedAt: entry.loadedAt,
           roots: {
             ...snapshot.docTreeCache.roots,
             [rootKey(scopeId, entry.token)]: entry,

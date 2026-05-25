@@ -158,4 +158,74 @@ describe("FeishuDocTreeRemoteSource", () => {
       expect.stringContaining("/docx/v1/documents/doc_1/blocks?page_size=500"),
     ]));
   });
+
+  test("reads document content from docx rich text elements", async () => {
+    const source = createSource({
+      "/docx/v1/documents/doc_1/blocks": {
+        items: [
+          {
+            block_id: "heading_1",
+            heading1: {
+              elements: [
+                { text_run: { content: "项目标题" } },
+              ],
+            },
+          },
+          {
+            block_id: "text_1",
+            text: {
+              elements: [
+                { text_run: { content: "第一段" } },
+                { text_run: { content: "正文" } },
+              ],
+            },
+          },
+          {
+            block_id: "bullet_1",
+            bullet: {
+              elements: [
+                { text_run: { content: "列表项" } },
+              ],
+            },
+          },
+        ],
+      },
+      "/docx/v1/documents/doc_1": {
+        document: { document_id: "doc_1", title: "远端文档" },
+      },
+    });
+
+    const content = await source.readDocumentContent("access", "doc_1");
+
+    expect(content.markdown).toBe("# 项目标题\n\n第一段正文\n\n- 列表项");
+    expect(content.length).toBe(content.markdown.length);
+    expect(content.totalLength).toBe(content.markdown.length);
+  });
+
+  test("falls back to reading docx content by wiki node token when document id lookup fails", async () => {
+    const requests: RequestRecord[] = [];
+    const source = createSource({
+      "/docx/v1/documents/wiki_node_1?document_id_type=wiki_node_token": {
+        document: { document_id: "doc_1", title: "Wiki 文档" },
+      },
+      "/docx/v1/documents/wiki_node_1/blocks?page_size=500&document_id_type=wiki_node_token": {
+        items: [{ block_id: "block_1", text: { content: "wiki 正文" } }],
+      },
+      "/docx/v1/documents/wiki_node_1": new Error("Feishu API HTTP error 400: Bad Request"),
+    }, requests);
+
+    const content = await source.readDocumentContent("access", "wiki_node_1");
+
+    expect(content).toMatchObject({
+      docId: "doc_1",
+      title: "Wiki 文档",
+      markdown: "wiki 正文",
+    });
+    expect(requests.map((item) => item.url)).toEqual([
+      expect.stringContaining("/docx/v1/documents/wiki_node_1"),
+      expect.stringContaining("/docx/v1/documents/wiki_node_1/blocks?page_size=500"),
+      expect.stringContaining("/docx/v1/documents/wiki_node_1?document_id_type=wiki_node_token"),
+      expect.stringContaining("/docx/v1/documents/wiki_node_1/blocks?page_size=500&document_id_type=wiki_node_token"),
+    ]);
+  });
 });

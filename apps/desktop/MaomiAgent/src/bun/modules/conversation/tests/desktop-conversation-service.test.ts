@@ -19,12 +19,14 @@ import { DesktopMcpConversationCapabilityProvider } from "../../mcp/implementati
 import { DesktopSkillsConversationCapabilityProvider } from "../../skills/implementation/services/desktop-skills-conversation-capability-provider";
 import type { DesktopRuntimeContext } from "../../foundation";
 import type { AgentItem } from "../../agents";
+import { BUILTIN_MAOMI_AGENTS } from "../../agents/implementation/services/builtin-agents";
 import type { DesktopConversationCapabilityProvider } from "../abstraction/ports/desktop-conversation-capabilities.ports";
 import type { DesktopConversationTaskBridgePort, DesktopTaskRecord, DesktopTasksQueryPort } from "../../tasks";
 import {
   CONCISE_AGENT_ID,
   DEFAULT_DESKTOP_PRIMARY_AGENT_ID,
   FULLY_MANAGED_AGENT_ID,
+  WECHAT_AGENT_ID,
 } from "../../../../shared/conversation/managed-execution";
 import type { DesktopConversationRuntimeEventsUpdateEvent } from "../../../../shared/desktop-conversation";
 import { createDesktopConversationBuiltinToolBundle } from "../implementation/services/desktop-conversation-builtin-tools";
@@ -368,7 +370,8 @@ function createRuntimeBackedConversationService(input: {
   agentsList?: AgentItem[];
   taskBridge?: Partial<Pick<
     DesktopConversationTaskBridgePort,
-    "completeConversationTask"
+    "archiveConversationSessionTasks"
+    | "completeConversationTask"
     | "ensureConversationTaskRunning"
     | "failConversationTask"
     | "patchManagedConversationRootTask"
@@ -451,7 +454,8 @@ function createRuntimeBackedConversationService(input: {
       },
       taskBridge: input.taskBridge as Pick<
         DesktopConversationTaskBridgePort,
-        "completeConversationTask"
+        "archiveConversationSessionTasks"
+        | "completeConversationTask"
         | "ensureConversationTaskRunning"
         | "failConversationTask"
         | "patchManagedConversationRootTask"
@@ -627,6 +631,69 @@ describe("DesktopConversationService", () => {
       });
       expect(archived?.archivedAt).toBeTruthy();
     } finally {
+      database.dispose();
+      cleanupTempRoot(tempRoot);
+    }
+  });
+
+  test("archives linked session tasks through the task bridge", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "maomi-desktop-conversation-archive-bridge-"));
+    const configuration = new DesktopConfigurationService(createRuntimeContext(tempRoot));
+    const database = new DesktopDatabaseService(configuration);
+    const logger = new RuntimeLogsService(
+      new RuntimeLogsStore(database.getConnection("runtimeLogs")),
+    ).createLogger({
+      source: "desktop",
+      module: "desktop.conversation.archive-bridge-test",
+    });
+    const archivedTasks: Array<Record<string, unknown>> = [];
+    const service = new DesktopConversationService(
+      new DesktopConversationStore(database.getConnection("conversation")),
+      logger,
+      {
+        taskBridge: {
+          async archiveConversationSessionTasks(input) {
+            archivedTasks.push({ ...input });
+          },
+          async completeConversationTask() {
+            return null;
+          },
+          async ensureConversationTaskRunning() {
+            throw new Error("not used");
+          },
+          async failConversationTask() {
+            return null;
+          },
+          async syncManagedConversationRootTask() {
+            throw new Error("not used");
+          },
+          async markConversationTaskBlocked() {
+            return null;
+          },
+        },
+      },
+    );
+
+    try {
+      const created = await service.createSession({
+        workspaceId: "workspace-1",
+        title: "Archive bridge session",
+      });
+
+      const hidden = await service.hideSession(created.item.sessionId);
+      expect(hidden).toEqual({
+        sessionId: created.item.sessionId,
+        hidden: true,
+      });
+
+      expect(archivedTasks).toHaveLength(1);
+      expect(archivedTasks[0]).toMatchObject({
+        workspaceId: "workspace-1",
+        sessionId: created.item.sessionId,
+      });
+      expect(typeof archivedTasks[0]?.archivedAt).toBe("string");
+    } finally {
+      service.dispose();
       database.dispose();
       cleanupTempRoot(tempRoot);
     }
@@ -3654,6 +3721,41 @@ describe("DesktopConversationService", () => {
         linkedRootTaskId: `managed-root-${created.item.sessionId}`,
         managedExecutionStage: "intake_locked",
       });
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  test("injects the dedicated wechat agent prompt when the session selects wechat.agent", async () => {
+    const turnPort = new RecordingPromptTurnPort();
+    const fixture = createRuntimeBackedConversationService({
+      tempPrefix: "maomi-desktop-conversation-wechat-agent-",
+      turnPort,
+      agentsList: BUILTIN_MAOMI_AGENTS,
+    });
+
+    try {
+      const created = await fixture.service.createSession({
+        workspaceId: "workspace-1",
+        title: "WeChat agent session",
+        selectedAgentId: WECHAT_AGENT_ID,
+      });
+
+      const sent = await fixture.service.sendMessage({
+        sessionId: created.item.sessionId,
+        text: "使用 easytouch 把桌面截图发我",
+        scope: "workspace",
+        selectedChannelId: "kimi",
+        selectedModelId: "moonshot-v1-8k",
+      });
+
+      expect(sent.detail.runs[0]?.metadata).toMatchObject({
+        selectedAgentId: WECHAT_AGENT_ID,
+      });
+      expect(turnPort.prompts[0]?.systemBlocks.some((block) =>
+        block.metadata?.source === "desktop.agent"
+        && block.metadata?.agentId === WECHAT_AGENT_ID
+        && block.content.includes("微信专用智能体"))).toBe(true);
     } finally {
       fixture.dispose();
     }

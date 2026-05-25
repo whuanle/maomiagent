@@ -24,6 +24,13 @@ type TaskRow = {
   handler_id: string | null;
   handler_module_id: string | null;
   handler_task_key: string | null;
+  surface: string | null;
+  visibility: string | null;
+  scope: string | null;
+  identity_key: string | null;
+  hidden_at: string | null;
+  purge_after_at: string | null;
+  deferred_compaction: number | null;
   created_at: string;
   updated_at: string;
   started_at: string | null;
@@ -78,6 +85,13 @@ CREATE TABLE IF NOT EXISTS desktop_tasks (
   handler_id TEXT,
   handler_module_id TEXT,
   handler_task_key TEXT,
+  surface TEXT NOT NULL DEFAULT 'internal',
+  visibility TEXT NOT NULL DEFAULT 'visible',
+  scope TEXT NOT NULL DEFAULT 'workspace',
+  identity_key TEXT,
+  hidden_at TEXT,
+  purge_after_at TEXT,
+  deferred_compaction INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   started_at TEXT,
@@ -116,6 +130,16 @@ CREATE INDEX IF NOT EXISTS idx_desktop_task_runs_task
 ON desktop_task_runs(workspace_id, task_id, started_at DESC);
 `;
 
+const TASKS_SURFACE_INDEX_SQL = `
+CREATE INDEX IF NOT EXISTS idx_desktop_tasks_visible_surface
+ON desktop_tasks(surface, visibility, updated_at DESC);
+`;
+
+const TASKS_IDENTITY_INDEX_SQL = `
+CREATE INDEX IF NOT EXISTS idx_desktop_tasks_identity_key
+ON desktop_tasks(identity_key, updated_at DESC);
+`;
+
 function trimText(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
@@ -126,6 +150,13 @@ function trimText(value: unknown): string | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function hasOwnRecordKey(
+  value: Record<string, unknown> | undefined,
+  key: string,
+): boolean {
+  return Boolean(value) && Object.prototype.hasOwnProperty.call(value, key);
 }
 
 function parseJson<TValue>(value: string | null | undefined): TValue | undefined {
@@ -148,13 +179,54 @@ function resolveTaskRootTaskId(item: DesktopTaskRecord): string | undefined {
   return metadata?.rootTask === true ? item.taskId : undefined;
 }
 
-function mapTaskRow(row: TaskRow): DesktopTaskRecord {
-  const parsed = parseJson<DesktopTaskRecord>(row.payload_json);
-  if (parsed) {
-    return parsed;
+function normalizeTaskSurface(value: unknown): DesktopTaskRecord["surface"] {
+  return value === "critical" || value === "system" || value === "internal"
+    ? value
+    : undefined;
+}
+
+function normalizeTaskVisibility(value: unknown): DesktopTaskRecord["visibility"] {
+  return value === "visible" || value === "hidden"
+    ? value
+    : undefined;
+}
+
+function normalizeTaskScope(value: unknown): DesktopTaskRecord["scope"] {
+  return value === "system" || value === "workspace"
+    ? value
+    : undefined;
+}
+
+function shouldIgnoreLegacyProjectionColumns(
+  row: TaskRow,
+  parsed: DesktopTaskRecord | undefined,
+): boolean {
+  const parsedRecord = isRecord(parsed) ? parsed : undefined;
+  if (
+    hasOwnRecordKey(parsedRecord, "surface")
+    || hasOwnRecordKey(parsedRecord, "visibility")
+    || hasOwnRecordKey(parsedRecord, "scope")
+    || hasOwnRecordKey(parsedRecord, "identityKey")
+    || hasOwnRecordKey(parsedRecord, "hiddenAt")
+    || hasOwnRecordKey(parsedRecord, "purgeAfterAt")
+    || hasOwnRecordKey(parsedRecord, "deferredCompaction")
+  ) {
+    return false;
   }
 
-  return {
+  return normalizeTaskSurface(row.surface) === "internal"
+    && normalizeTaskVisibility(row.visibility) === "visible"
+    && normalizeTaskScope(row.scope) === "workspace"
+    && !trimText(row.identity_key)
+    && !trimText(row.hidden_at)
+    && !trimText(row.purge_after_at)
+    && (row.deferred_compaction ?? 0) === 0;
+}
+
+function mapTaskRow(row: TaskRow): DesktopTaskRecord {
+  const parsed = parseJson<DesktopTaskRecord>(row.payload_json);
+  const ignoreLegacyProjectionColumns = shouldIgnoreLegacyProjectionColumns(row, parsed);
+  const fallback: DesktopTaskRecord = {
     taskId: row.task_id,
     workspaceId: row.workspace_id,
     title: row.title,
@@ -175,6 +247,45 @@ function mapTaskRow(row: TaskRow): DesktopTaskRecord {
     runCount: row.run_count,
     lastRunId: row.last_run_id ?? undefined,
     steps: [],
+  };
+
+  const base = parsed ? { ...fallback, ...parsed } : fallback;
+  return {
+    ...base,
+    taskId: row.task_id,
+    workspaceId: row.workspace_id,
+    title: row.title,
+    goal: row.goal,
+    taskType: row.task_type as DesktopTaskRecord["taskType"],
+    executionMode: row.execution_mode as DesktopTaskRecord["executionMode"],
+    runMode: row.run_mode as DesktopTaskRecord["runMode"],
+    origin: row.origin as DesktopTaskRecord["origin"],
+    linkedSessionId: row.linked_session_id ?? base.linkedSessionId,
+    agentId: row.agent_id ?? base.agentId,
+    priority: row.priority as DesktopTaskRecord["priority"],
+    status: row.status as DesktopTaskRecord["status"],
+    progress: row.progress,
+    runCount: row.run_count,
+    lastRunId: row.last_run_id ?? base.lastRunId,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    startedAt: row.started_at ?? base.startedAt,
+    finishedAt: row.finished_at ?? base.finishedAt,
+    surface: ignoreLegacyProjectionColumns
+      ? base.surface
+      : normalizeTaskSurface(row.surface) ?? base.surface,
+    visibility: ignoreLegacyProjectionColumns
+      ? base.visibility
+      : normalizeTaskVisibility(row.visibility) ?? base.visibility,
+    scope: ignoreLegacyProjectionColumns
+      ? base.scope
+      : normalizeTaskScope(row.scope) ?? base.scope,
+    identityKey: row.identity_key ?? base.identityKey,
+    hiddenAt: row.hidden_at ?? base.hiddenAt,
+    purgeAfterAt: row.purge_after_at ?? base.purgeAfterAt,
+    deferredCompaction: row.deferred_compaction === null
+      ? base.deferredCompaction
+      : row.deferred_compaction !== 0,
   };
 }
 
@@ -210,9 +321,50 @@ export class DesktopTasksStore {
     this.connection.execute(TASK_WORKSPACES_TABLE_SQL);
     this.connection.execute(TASKS_TABLE_SQL);
     this.connection.execute(TASK_RUNS_TABLE_SQL);
+    this.ensureTaskSchema();
     this.connection.execute(TASKS_UPDATED_AT_INDEX_SQL);
     this.connection.execute(TASKS_STATUS_INDEX_SQL);
     this.connection.execute(TASK_RUNS_TASK_INDEX_SQL);
+    this.connection.execute(TASKS_SURFACE_INDEX_SQL);
+    this.connection.execute(TASKS_IDENTITY_INDEX_SQL);
+  }
+
+  private ensureTaskSchema(): void {
+    const existingColumns = new Set(
+      this.connection
+        .all<{ name: string }>("PRAGMA table_info(desktop_tasks)")
+        .map((row) => row.name),
+    );
+
+    const alterStatements = [
+      !existingColumns.has("surface")
+        ? "ALTER TABLE desktop_tasks ADD COLUMN surface TEXT NOT NULL DEFAULT 'internal'"
+        : null,
+      !existingColumns.has("visibility")
+        ? "ALTER TABLE desktop_tasks ADD COLUMN visibility TEXT NOT NULL DEFAULT 'visible'"
+        : null,
+      !existingColumns.has("scope")
+        ? "ALTER TABLE desktop_tasks ADD COLUMN scope TEXT NOT NULL DEFAULT 'workspace'"
+        : null,
+      !existingColumns.has("identity_key")
+        ? "ALTER TABLE desktop_tasks ADD COLUMN identity_key TEXT"
+        : null,
+      !existingColumns.has("hidden_at")
+        ? "ALTER TABLE desktop_tasks ADD COLUMN hidden_at TEXT"
+        : null,
+      !existingColumns.has("purge_after_at")
+        ? "ALTER TABLE desktop_tasks ADD COLUMN purge_after_at TEXT"
+        : null,
+      !existingColumns.has("deferred_compaction")
+        ? "ALTER TABLE desktop_tasks ADD COLUMN deferred_compaction INTEGER NOT NULL DEFAULT 0"
+        : null,
+    ];
+
+    for (const statement of alterStatements) {
+      if (statement) {
+        this.connection.execute(statement);
+      }
+    }
   }
 
   isEmpty(): boolean {
@@ -270,9 +422,10 @@ export class DesktopTasksStore {
       `INSERT INTO desktop_tasks (
         workspace_id, task_id, title, goal, status, priority, task_type, execution_mode,
         run_mode, origin, linked_session_id, agent_id, progress, run_count, last_run_id,
-        root_task_id, handler_id, handler_module_id, handler_task_key, created_at, updated_at,
-        started_at, finished_at, payload_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        root_task_id, handler_id, handler_module_id, handler_task_key, surface, visibility,
+        scope, identity_key, hidden_at, purge_after_at, deferred_compaction, created_at,
+        updated_at, started_at, finished_at, payload_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(workspace_id, task_id) DO UPDATE SET
         title = excluded.title,
         goal = excluded.goal,
@@ -291,6 +444,13 @@ export class DesktopTasksStore {
         handler_id = excluded.handler_id,
         handler_module_id = excluded.handler_module_id,
         handler_task_key = excluded.handler_task_key,
+        surface = excluded.surface,
+        visibility = excluded.visibility,
+        scope = excluded.scope,
+        identity_key = excluded.identity_key,
+        hidden_at = excluded.hidden_at,
+        purge_after_at = excluded.purge_after_at,
+        deferred_compaction = excluded.deferred_compaction,
         updated_at = excluded.updated_at,
         started_at = excluded.started_at,
         finished_at = excluded.finished_at,
@@ -314,6 +474,14 @@ export class DesktopTasksStore {
       item.handler?.handlerId ?? null,
       item.handler?.moduleId ?? null,
       item.handler?.taskKey ?? null,
+      item.surface ?? "internal",
+      item.visibility
+        ?? (item.surface === "critical" || item.surface === "system" ? "visible" : "hidden"),
+      item.scope ?? (item.workspaceId === "system" ? "system" : "workspace"),
+      item.identityKey ?? null,
+      item.hiddenAt ?? null,
+      item.purgeAfterAt ?? null,
+      item.deferredCompaction === true ? 1 : 0,
       item.createdAt,
       item.updatedAt,
       item.startedAt ?? null,
@@ -359,6 +527,57 @@ export class DesktopTasksStore {
       name,
       updatedAt,
     );
+  }
+
+  deleteTask(workspaceId: string, taskId: string): void {
+    this.connection.run(
+      "DELETE FROM desktop_tasks WHERE workspace_id = ? AND task_id = ?",
+      workspaceId,
+      taskId,
+    );
+  }
+
+  deleteTaskRunsByTask(workspaceId: string, taskId: string): void {
+    this.connection.run(
+      "DELETE FROM desktop_task_runs WHERE workspace_id = ? AND task_id = ?",
+      workspaceId,
+      taskId,
+    );
+  }
+
+  trimTaskRuns(workspaceId: string, taskId: string, keepLatest: number): void {
+    const rows = this.connection.all<{ run_id: string }>(
+      `SELECT run_id FROM desktop_task_runs
+       WHERE workspace_id = ? AND task_id = ?
+       ORDER BY started_at DESC, run_id DESC
+       LIMIT -1 OFFSET ?`,
+      workspaceId,
+      taskId,
+      keepLatest,
+    );
+
+    rows.forEach((row) => {
+      this.connection.run("DELETE FROM desktop_task_runs WHERE run_id = ?", row.run_id);
+    });
+  }
+
+  deleteTasksByWorkspace(workspaceId: string): { taskCount: number; runCount: number } {
+    const taskCount = this.connection.get<{ total: number }>(
+      "SELECT COUNT(*) AS total FROM desktop_tasks WHERE workspace_id = ?",
+      workspaceId,
+    )?.total ?? 0;
+    const runCount = this.connection.get<{ total: number }>(
+      "SELECT COUNT(*) AS total FROM desktop_task_runs WHERE workspace_id = ?",
+      workspaceId,
+    )?.total ?? 0;
+
+    this.connection.transaction(() => {
+      this.connection.run("DELETE FROM desktop_task_runs WHERE workspace_id = ?", workspaceId);
+      this.connection.run("DELETE FROM desktop_tasks WHERE workspace_id = ?", workspaceId);
+      this.connection.run("DELETE FROM desktop_task_workspaces WHERE workspace_id = ?", workspaceId);
+    });
+
+    return { taskCount, runCount };
   }
 
   replaceAll(input: {

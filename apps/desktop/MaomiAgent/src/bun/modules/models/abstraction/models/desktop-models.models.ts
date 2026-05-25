@@ -47,6 +47,7 @@ export type DesktopModelResolvedRuntimeTarget = {
   modelId: string;
   protocolFamily?: import("../../../../../shared/desktop-models").DesktopModelProviderProtocolFamily;
   apiStyle?: import("../../../../../shared/desktop-models").DesktopModelProviderApiStyle;
+  supportsFunctionCall?: boolean;
   contextWindow?: number;
   maxOutputTokens?: number;
   serviceConfig: DesktopAiProviderServiceConfig;

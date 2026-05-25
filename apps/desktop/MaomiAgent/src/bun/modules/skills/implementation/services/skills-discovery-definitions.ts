@@ -12,10 +12,13 @@ export function createSkillsDiscoveryDefinitions(userHomeDir: string): Discovery
   return [
     {
       source: "antigravity",
-      label: "Antigravity (.agent/skills)",
-      envCandidates: ["ANTIGRAVITY_HOME", "AGENT_HOME"],
-      fallbackPaths: [join(userHomeDir, ".agent", "skills")],
-      strategy: "ANTIGRAVITY_HOME/AGENT_HOME + ~/.agent/skills",
+      label: "Antigravity (.agent/.agents/skills)",
+      envCandidates: ["ANTIGRAVITY_HOME", "AGENT_HOME", "AGENTS_HOME"],
+      fallbackPaths: [
+        join(userHomeDir, ".agent", "skills"),
+        join(userHomeDir, ".agents", "skills"),
+      ],
+      strategy: "ANTIGRAVITY_HOME/AGENT_HOME/AGENTS_HOME + ~/.agent/skills + ~/.agents/skills",
     },
     {
       source: "augment",

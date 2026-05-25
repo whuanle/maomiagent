@@ -91,7 +91,8 @@ type DesktopConversationServiceOptions = {
   materializer?: Pick<DesktopAiExecutionProfileMaterializerPort, "materialize">;
   taskBridge?: Pick<
     DesktopConversationTaskBridgePort,
-    "completeConversationTask"
+    "archiveConversationSessionTasks"
+    | "completeConversationTask"
     | "ensureConversationTaskRunning"
     | "failConversationTask"
     | "syncManagedConversationRootTask"
@@ -867,6 +868,11 @@ export class DesktopConversationService implements DesktopConversationPort {
         status: "archived",
         archivedAt,
         updatedAt: archivedAt,
+      });
+      await this.options.taskBridge?.archiveConversationSessionTasks({
+        workspaceId: current.workspaceId,
+        sessionId: normalizedSessionId,
+        archivedAt,
       });
 
       await this.logger.warn("Desktop conversation session archived", {

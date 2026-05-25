@@ -5,28 +5,9 @@ import type { ToolSource } from "#maomiagent/kernel/src/host/tools";
 import type { DesktopConversationCapabilityProvider } from "../../../conversation/abstraction/ports/desktop-conversation-capabilities.ports";
 import type { DesktopWechatPort } from "../../abstraction/ports/desktop-wechat.ports";
 
-const WECHAT_SEND_TEXT_DESCRIPTOR: ToolDescriptor = {
-  name: "wechat_send_text",
-  description: "Send a text message to the current bound WeChat conversation.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      text: { type: "string" },
-      contextToken: { type: "string" },
-    },
-    required: ["text"],
-    additionalProperties: false,
-  },
-  metadata: {
-    toolSourceKind: "desktop-wechat",
-    operationKind: "tool_execution",
-    operationLabel: "Send WeChat text",
-  },
-};
-
 const WECHAT_SEND_MEDIA_DESCRIPTOR: ToolDescriptor = {
   name: "wechat_send_media_file",
-  description: "Send a local image, video, audio, or file from filePath to the current bound WeChat conversation.",
+  description: "Send a local image file from filePath to the current bound WeChat conversation.",
   inputSchema: {
     type: "object",
     properties: {
@@ -40,7 +21,24 @@ const WECHAT_SEND_MEDIA_DESCRIPTOR: ToolDescriptor = {
   metadata: {
     toolSourceKind: "desktop-wechat",
     operationKind: "tool_execution",
-    operationLabel: "Send WeChat media",
+    operationLabel: "Send WeChat image",
+  },
+};
+
+const WECHAT_CAPTURE_DESKTOP_DESCRIPTOR: ToolDescriptor = {
+  name: "wechat_capture_desktop_and_send",
+  description: "Capture the current desktop and send the resulting image to the current bound WeChat conversation.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      contextToken: { type: "string" },
+    },
+    additionalProperties: false,
+  },
+  metadata: {
+    toolSourceKind: "desktop-wechat",
+    operationKind: "tool_execution",
+    operationLabel: "Capture desktop and send WeChat image",
   },
 };
 
@@ -77,7 +75,7 @@ class DesktopWechatConversationToolSource implements ToolSource {
           recentMediaCount: this.recentMediaCount,
         },
       },
-      tools: [WECHAT_SEND_TEXT_DESCRIPTOR, WECHAT_SEND_MEDIA_DESCRIPTOR],
+      tools: [WECHAT_SEND_MEDIA_DESCRIPTOR, WECHAT_CAPTURE_DESKTOP_DESCRIPTOR],
     };
   }
 }
@@ -88,11 +86,11 @@ export class DesktopWechatConversationCapabilityProvider
     private readonly wechat:
       | Pick<
           DesktopWechatPort,
-          "getConversationRuntimeContext" | "sendConversationText" | "sendConversationMedia"
+          "getConversationRuntimeContext" | "sendConversationMedia" | "captureConversationDesktopAndSend"
         >
       | (() => Pick<
           DesktopWechatPort,
-          "getConversationRuntimeContext" | "sendConversationText" | "sendConversationMedia"
+          "getConversationRuntimeContext" | "sendConversationMedia" | "captureConversationDesktopAndSend"
         >),
   ) {}
 
@@ -130,29 +128,6 @@ export class DesktopWechatConversationCapabilityProvider
     );
     const toolHandlers: RegisteredToolHandler[] = [
       {
-        descriptor: WECHAT_SEND_TEXT_DESCRIPTOR,
-        execute: async ({ call }) => {
-          const toolInput = call.input as Record<string, unknown>;
-          const text = typeof toolInput.text === "string" ? toolInput.text.trim() : "";
-          if (!text) {
-            throw {
-              code: "invalid_argument",
-              message: "text is required",
-              retryable: false,
-            };
-          }
-
-          return wechat.sendConversationText({
-            sessionId: runtimeContext.sessionId,
-            text,
-            contextToken:
-              typeof toolInput.contextToken === "string" && toolInput.contextToken.trim()
-                ? toolInput.contextToken.trim()
-                : undefined,
-          });
-        },
-      },
-      {
         descriptor: WECHAT_SEND_MEDIA_DESCRIPTOR,
         execute: async ({ call }) => {
           const toolInput = call.input as Record<string, unknown>;
@@ -172,6 +147,19 @@ export class DesktopWechatConversationCapabilityProvider
               typeof toolInput.caption === "string" && toolInput.caption.trim()
                 ? toolInput.caption.trim()
                 : undefined,
+            contextToken:
+              typeof toolInput.contextToken === "string" && toolInput.contextToken.trim()
+                ? toolInput.contextToken.trim()
+                : undefined,
+          });
+        },
+      },
+      {
+        descriptor: WECHAT_CAPTURE_DESKTOP_DESCRIPTOR,
+        execute: async ({ call }) => {
+          const toolInput = call.input as Record<string, unknown>;
+          return wechat.captureConversationDesktopAndSend({
+            sessionId: runtimeContext.sessionId,
             contextToken:
               typeof toolInput.contextToken === "string" && toolInput.contextToken.trim()
                 ? toolInput.contextToken.trim()

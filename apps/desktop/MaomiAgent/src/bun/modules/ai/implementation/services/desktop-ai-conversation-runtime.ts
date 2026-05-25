@@ -236,6 +236,67 @@ export function applyConversationThinkingPreferenceToServiceConfig(input: {
   };
 }
 
+export function applyConversationFunctionCallPreferenceToTurnRequest(input: {
+  executionProfile: AiExecutionProfileRef;
+  request: AiTurnRequest;
+}): AiTurnRequest {
+  if (readExecutionProfileBooleanMetadata(input.executionProfile, "supportsFunctionCall") !== false) {
+    return input.request;
+  }
+
+  const sanitizedMessages = input.request.prompt.messages
+    .filter((message) => message.message.role !== "tool")
+    .map((message) => ({
+      ...message,
+      parts: message.parts.filter((part) =>
+        part.type !== "tool_call_ref" && part.type !== "tool_result_ref"
+      ),
+    }))
+    .filter((message) => message.message.role !== "assistant" || message.parts.length > 0);
+
+  const toolsAlreadyDisabled = input.request.prompt.tools.length === 0
+    && input.request.settings.toolChoice === "none";
+  const historyAlreadySanitized = sanitizedMessages.length === input.request.prompt.messages.length
+    && sanitizedMessages.every((message, index) => message.parts.length === input.request.prompt.messages[index]?.parts.length);
+  if (toolsAlreadyDisabled && historyAlreadySanitized) {
+    return input.request;
+  }
+
+  return {
+    ...input.request,
+    prompt: {
+      ...input.request.prompt,
+      messages: sanitizedMessages,
+      tools: [],
+    },
+    settings: {
+      ...input.request.settings,
+      toolChoice: "none",
+    },
+  };
+}
+
+export function mergeConversationExecutionProfile(input: {
+  requestedExecutionProfile: AiExecutionProfileRef;
+  materializedExecutionProfile: AiExecutionProfileRef;
+}): AiExecutionProfileRef {
+  const requestedMetadata = isRecord(input.requestedExecutionProfile.metadata)
+    ? input.requestedExecutionProfile.metadata
+    : undefined;
+  const materializedMetadata = isRecord(input.materializedExecutionProfile.metadata)
+    ? input.materializedExecutionProfile.metadata
+    : undefined;
+  const mergedMetadata = {
+    ...(requestedMetadata ?? {}),
+    ...(materializedMetadata ?? {}),
+  };
+
+  return {
+    ...input.materializedExecutionProfile,
+    metadata: Object.keys(mergedMetadata).length > 0 ? mergedMetadata : undefined,
+  };
+}
+
 function readRunCompactionSummary(run: RunRecord): DesktopConversationCompactionStatusSummary | undefined {
   const compaction = isRecord(run.metadata?.compaction)
     ? run.metadata.compaction as Record<string, unknown>
@@ -2701,24 +2762,39 @@ class DesktopConversationTurnPort implements AiTurnPort {
         return;
       }
 
-      const contextBudget = buildContextBudgetSummary({
-        runId: input.trace?.runId ?? "runtime-turn",
-        prompt: input.prompt,
-        modelId: input.executionProfile.modelId ?? materialized.target.modelId,
-        channelId: isRecord(input.executionProfile.metadata)
-          ? normalizeOptionalText(input.executionProfile.metadata.channelId)
-          : undefined,
-        contextWindowTokens:
-          readExecutionProfileNumericMetadata(input.executionProfile, "contextWindow")
-          ?? materialized.target.contextWindow,
-        maxOutputTokens:
-          normalizeOptionalPositiveFiniteNumber(input.settings.maxOutputTokens)
-          ?? readExecutionProfileNumericMetadata(input.executionProfile, "maxOutputTokens")
-          ?? materialized.target.maxOutputTokens,
-        compressionThresholdPercent: readExecutionProfileCompressionThresholdPercent(input.executionProfile),
+      const effectiveExecutionProfile = mergeConversationExecutionProfile({
+        requestedExecutionProfile: input.executionProfile,
+        materializedExecutionProfile: materialized.executionProfile,
+      });
+      const requestWithEffectiveExecutionProfile: AiTurnRequest = {
+        ...input,
+        executionProfile: effectiveExecutionProfile,
+      };
+
+      const normalizedInput = applyConversationFunctionCallPreferenceToTurnRequest({
+        executionProfile: effectiveExecutionProfile,
+        request: requestWithEffectiveExecutionProfile,
       });
 
-      if (contextBudget.shouldAutoCompress && !shouldSkipExecutionProfileBudgetPrecheck(input.executionProfile)) {
+      const contextBudget = buildContextBudgetSummary({
+        runId: normalizedInput.trace?.runId ?? "runtime-turn",
+        prompt: normalizedInput.prompt,
+        modelId: normalizedInput.executionProfile.modelId ?? materialized.target.modelId,
+        channelId: isRecord(normalizedInput.executionProfile.metadata)
+          ? normalizeOptionalText(normalizedInput.executionProfile.metadata.channelId)
+          : undefined,
+        contextWindowTokens:
+          readExecutionProfileNumericMetadata(normalizedInput.executionProfile, "contextWindow")
+          ?? materialized.target.contextWindow,
+        maxOutputTokens:
+          normalizeOptionalPositiveFiniteNumber(normalizedInput.settings.maxOutputTokens)
+          ?? readExecutionProfileNumericMetadata(normalizedInput.executionProfile, "maxOutputTokens")
+          ?? materialized.target.maxOutputTokens,
+        compressionThresholdPercent: readExecutionProfileCompressionThresholdPercent(normalizedInput.executionProfile),
+      });
+
+      if (contextBudget.shouldAutoCompress
+        && !shouldSkipExecutionProfileBudgetPrecheck(normalizedInput.executionProfile)) {
         yield {
           type: "error",
           error: {
@@ -2774,7 +2850,7 @@ class DesktopConversationTurnPort implements AiTurnPort {
         return;
       }
 
-      const iterator = turnPort.stream(input)[Symbol.asyncIterator]();
+      const iterator = turnPort.stream(normalizedInput)[Symbol.asyncIterator]();
 
       try {
         while (true) {

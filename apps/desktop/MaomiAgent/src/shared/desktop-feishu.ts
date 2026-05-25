@@ -562,6 +562,11 @@ export type FeishuSmartAssistantView = {
 export type FeishuStateView = {
   personalDocs: FeishuPersonalDocsView
   smartAssistant: FeishuSmartAssistantView
+  docsWorkspace?: {
+    lastRootToken?: string
+    lastRootTitle?: string
+    lastRootLoadedAt?: string
+  }
   // Legacy compatibility view. New code should prefer personalDocs/smartAssistant.
   mode: FeishuMode
   personal: {

@@ -17,11 +17,14 @@ export type {
   DesktopTaskRunsResponse,
   DesktopTaskRunStatus,
   DesktopTaskSchedule,
+  DesktopTaskScope,
   DesktopTaskSourceRecord,
   DesktopTaskStatus,
   DesktopTaskStep,
   DesktopTaskStepStatus,
+  DesktopTaskSurface,
   DesktopTaskType,
+  DesktopTaskVisibility,
   DesktopTaskWorkspaceSummary,
   DesktopTaskWorkspacesResponse,
 } from "../../../../../shared/desktop-tasks";
@@ -31,6 +34,7 @@ export type {
   DesktopTaskCenterItem,
   DesktopTaskCenterListQuery,
   DesktopTaskCenterListResponse,
+  DesktopTaskCenterSurface,
   DesktopTaskCenterSourceKind,
 } from "../../../../../shared/desktop-task-center";
 
@@ -42,9 +46,12 @@ import type {
   DesktopTaskRunMode,
   DesktopTaskRunRecord,
   DesktopTaskSchedule,
+  DesktopTaskScope,
   DesktopTaskSourceRecord,
   DesktopTaskStatus,
   DesktopTaskStep,
+  DesktopTaskSurface,
+  DesktopTaskVisibility,
 } from "../../../../../shared/desktop-tasks";
 
 export type DesktopConversationTaskRunInput = {
@@ -117,9 +124,21 @@ export type DesktopConversationTaskFailInput = {
   metadata?: Record<string, unknown>;
 };
 
+export type DesktopConversationTaskArchiveInput = {
+  workspaceId: string;
+  sessionId: string;
+  archivedAt: string;
+};
+
+export type DesktopTaskWorkspacePurgeResult = {
+  taskCount: number;
+  runCount: number;
+};
+
 export type DesktopScheduledTaskDefinition = {
   taskKey: string;
   workspaceId: string;
+  scope?: DesktopTaskScope;
   title: string;
   goal: string;
   schedule: DesktopTaskSchedule;

@@ -1,4 +1,6 @@
 import {
+  DeleteOutlined,
+  EditOutlined,
   RollbackOutlined,
   CheckCircleOutlined,
   CloudDownloadOutlined,
@@ -24,6 +26,13 @@ import {
   buildDesktopChannelModelRows,
   type DesktopChannelModelRow,
 } from "../services/channel-models";
+import {
+  mergeCustomChannelModelMetadata,
+  removeCustomChannelModelMetadata,
+  stripCustomModelsMetadata,
+  type EditableCustomChannelModel,
+} from "../services/custom-model-metadata";
+import { CustomModelInlineEditor } from "./CustomModelInlineEditor";
 import type { ModelsModalFilter } from "../types";
 
 function getErrorMessage(error: unknown) {
@@ -32,16 +41,6 @@ function getErrorMessage(error: unknown) {
 
 function normalizeText(value?: string) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
-}
-
-function stripCustomModelsMetadata(metadata: DesktopModelChannelItem["metadata"]) {
-  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
-    return {};
-  }
-
-  const nextMetadata = { ...metadata };
-  delete nextMetadata.customModels;
-  return Object.keys(nextMetadata).length > 0 ? nextMetadata : {};
 }
 
 function formatModelKind(kind: DesktopChannelModelRow["kind"], language: LanguageCode) {
@@ -104,6 +103,25 @@ function buildCapabilityLabels(row: DesktopChannelModelRow, language: LanguageCo
   return labels;
 }
 
+function projectEditableCustomChannelModel(row: DesktopChannelModelRow): EditableCustomChannelModel {
+  return {
+    modelId: row.modelId,
+    displayName: row.displayName,
+    family: row.family,
+    contextWindow: row.contextWindow,
+    maxOutputTokens: row.maxOutputTokens,
+    supportsAttachments: row.supportsAttachments === true,
+    supportsReasoning: row.supportsReasoning === true,
+    supportsFunctionCall: row.supportsFunctionCall === true,
+    supportsStructuredOutput: row.supportsStructuredOutput === true,
+    supportsTemperature: row.supportsTemperature === true,
+    modalities: {
+      input: [...(row.modalities?.input ?? [])],
+      output: [...(row.modalities?.output ?? [])],
+    },
+  };
+}
+
 type ChannelModelsModalProps = {
   open: boolean;
   channel: DesktopModelChannelItem | null;
@@ -123,6 +141,9 @@ export function ChannelModelsModal(props: ChannelModelsModalProps) {
   const [batchBusy, setBatchBusy] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [resettingDefaults, setResettingDefaults] = useState(false);
+  const [customEditor, setCustomEditor] = useState<EditableCustomChannelModel | null>(null);
+  const [savingCustomModel, setSavingCustomModel] = useState(false);
+  const [deletingCustomModelId, setDeletingCustomModelId] = useState<string | null>(null);
   const deferredSearchText = useDeferredValue(searchText);
 
   const provider = useMemo(
@@ -160,6 +181,14 @@ export function ChannelModelsModal(props: ChannelModelsModalProps) {
     () => rows.some((item) => item.customModel || item.enabled),
     [rows],
   );
+
+  const hasCustomModels = useMemo(
+    () => rows.some((item) => item.customModel),
+    [rows],
+  );
+
+  const editingModelId = customEditor?.modelId ?? null;
+  const inlineEditing = customEditor !== null;
 
   const handleToggleModel = async (row: DesktopChannelModelRow, enabled: boolean) => {
     if (!channel) {
@@ -283,16 +312,90 @@ export function ChannelModelsModal(props: ChannelModelsModalProps) {
     }
   };
 
+  const handleOpenCustomEditor = (row: DesktopChannelModelRow) => {
+    if (!channel || !row.customModel) {
+      return;
+    }
+
+    setCustomEditor((current) => (
+      current?.modelId === row.modelId ? null : projectEditableCustomChannelModel(row)
+    ));
+  };
+
+  const handleCancelCustomEditor = () => {
+    setCustomEditor(null);
+  };
+
+  const handleSaveCustomModel = async (model: EditableCustomChannelModel) => {
+    if (!channel) {
+      return;
+    }
+
+    setSavingCustomModel(true);
+    try {
+      await updateDesktopModelChannel(
+        channel.providerType,
+        channel.channelId,
+        {
+          metadata: mergeCustomChannelModelMetadata(channel.metadata, model),
+        },
+      );
+      message.success(t("模型页.反馈.自定义模型保存成功"));
+      setCustomEditor(null);
+      await onSnapshotRefresh();
+    } catch (error) {
+      message.error(`${t("模型页.反馈.加载失败")}: ${getErrorMessage(error)}`);
+    } finally {
+      setSavingCustomModel(false);
+    }
+  };
+
+  const handleDeleteCustomModel = async (row: DesktopChannelModelRow) => {
+    if (!channel || !row.customModel) {
+      return;
+    }
+
+    setDeletingCustomModelId(row.modelId);
+    try {
+      if (row.enabled) {
+        await setDesktopChannelModelEnabled(
+          channel.providerType,
+          channel.channelId,
+          row.modelId,
+          false,
+        );
+      }
+
+      await updateDesktopModelChannel(
+        channel.providerType,
+        channel.channelId,
+        {
+          metadata: removeCustomChannelModelMetadata(channel.metadata, row.modelId),
+        },
+      );
+
+      message.success(t("模型页.反馈.自定义模型删除成功"));
+      setCustomEditor((current) => (current?.modelId === row.modelId ? null : current));
+      await onSnapshotRefresh();
+    } catch (error) {
+      message.error(`${t("模型页.反馈.加载失败")}: ${getErrorMessage(error)}`);
+    } finally {
+      setDeletingCustomModelId(null);
+    }
+  };
+
   const columns = useMemo(() => {
-    return [
+    const nextColumns = [
       {
         title: t("模型页.模型列.模型"),
         dataIndex: "displayName",
         key: "model",
-        width: 360,
+        width: 280,
         render: (_value: string, row: DesktopChannelModelRow) => (
           <div className="models-page-model-cell">
-            <Typography.Text strong>{row.displayName}</Typography.Text>
+            <Typography.Text strong className="models-page-model-name">
+              {row.displayName}
+            </Typography.Text>
             <Typography.Text type="secondary" className="models-page-model-meta">
               {row.family ? `${row.family} / ` : ""}
               {row.modelId}
@@ -304,7 +407,7 @@ export function ChannelModelsModal(props: ChannelModelsModalProps) {
         title: t("模型页.模型列.类型"),
         dataIndex: "kind",
         key: "kind",
-        width: 110,
+        width: 88,
         align: "center" as const,
         render: (value: DesktopChannelModelRow["kind"]) => (
           <Tag className="models-page-tag models-page-tag-kind" bordered={false}>
@@ -334,7 +437,7 @@ export function ChannelModelsModal(props: ChannelModelsModalProps) {
       {
         title: t("模型页.模型列.来源"),
         key: "source",
-        width: 120,
+        width: 92,
         align: "center" as const,
         render: (_value: unknown, row: DesktopChannelModelRow) => (
           <Tag
@@ -348,12 +451,13 @@ export function ChannelModelsModal(props: ChannelModelsModalProps) {
       {
         title: t("模型页.模型列.状态"),
         key: "status",
-        width: 136,
+        width: 110,
         align: "center" as const,
         render: (_value: unknown, row: DesktopChannelModelRow) => (
           <Switch
             checked={row.enabled}
             loading={busyModelId === row.modelId}
+            disabled={inlineEditing}
             checkedChildren={t("设置页.值.是")}
             unCheckedChildren={t("设置页.值.否")}
             onChange={(checked) => void handleToggleModel(row, checked)}
@@ -361,7 +465,78 @@ export function ChannelModelsModal(props: ChannelModelsModalProps) {
         ),
       },
     ];
-  }, [busyModelId, handleToggleModel, language, t]);
+
+    if (hasCustomModels) {
+      nextColumns.push({
+        title: t("模型页.列.操作"),
+        key: "actions",
+        width: 84,
+        align: "center" as const,
+        render: (_value: unknown, row: DesktopChannelModelRow) => {
+          if (!row.customModel) {
+            return <Typography.Text type="secondary">-</Typography.Text>;
+          }
+
+          const deleting = deletingCustomModelId === row.modelId;
+          const disabled =
+            batchBusy
+            || discovering
+            || resettingDefaults
+            || savingCustomModel
+            || (inlineEditing && editingModelId !== row.modelId)
+            || busyModelId === row.modelId;
+
+          return (
+            <Space size={4} className="models-page-actions">
+              <Button
+                type="text"
+                size="small"
+                className="models-page-action-btn"
+                icon={<EditOutlined />}
+                disabled={disabled || deleting}
+                onClick={() => handleOpenCustomEditor(row)}
+              />
+              <Popconfirm
+                title={t("模型页.弹窗.删除模型标题")}
+                description={t("模型页.弹窗.删除模型说明")}
+                okText={t("工作区页.按钮.删除")}
+                cancelText={t("工作区页.按钮.取消")}
+                okButtonProps={{ danger: true, loading: deleting }}
+                onConfirm={() => void handleDeleteCustomModel(row)}
+              >
+                <Button
+                  type="text"
+                  danger
+                  size="small"
+                  className="models-page-action-btn"
+                  icon={<DeleteOutlined />}
+                  disabled={disabled || deleting}
+                />
+              </Popconfirm>
+            </Space>
+          );
+        },
+      });
+    }
+
+    return nextColumns;
+  }, [
+    batchBusy,
+    busyModelId,
+    deletingCustomModelId,
+    editingModelId,
+    discovering,
+    handleDeleteCustomModel,
+    handleCancelCustomEditor,
+    handleOpenCustomEditor,
+    handleToggleModel,
+    hasCustomModels,
+    inlineEditing,
+    language,
+    resettingDefaults,
+    savingCustomModel,
+    t,
+  ]);
 
   const filterOptions = useMemo(() => [
     { value: "all", label: t("模型页.筛选.全部") },
@@ -380,7 +555,10 @@ export function ChannelModelsModal(props: ChannelModelsModalProps) {
       styles={{ body: { height: "80vh", overflow: "hidden", display: "flex", flexDirection: "column" } }}
       className="models-page-modal models-page-models-modal"
       title={channel ? `${channel.name} · ${t("模型页.弹窗.模型标题")}` : t("模型页.弹窗.模型标题")}
-      onCancel={onClose}
+      onCancel={() => {
+        setCustomEditor(null);
+        onClose();
+      }}
     >
       <div className="models-page-models-modal-body">
         <AppTableCard
@@ -391,28 +569,29 @@ export function ChannelModelsModal(props: ChannelModelsModalProps) {
           loading={false}
           loadingText={t("模型页.提示.加载中")}
           emptyDescription={t("模型页.提示.无模型")}
-          scrollX={1120}
           toolbar={(
             <div className="models-page-toolbar models-page-toolbar-modal">
               <Input
                 className="models-page-search"
                 placeholder={t("模型页.字段.模型搜索占位")}
                 value={searchText}
+                disabled={inlineEditing}
                 onChange={(event) => setSearchText(event.target.value)}
               />
               <Select
                 className="models-page-select"
                 value={filterMode}
                 options={filterOptions}
+                disabled={inlineEditing}
                 onChange={(value) => setFilterMode(value)}
               />
               <div className="models-page-toolbar-actions">
-                <Button icon={<ReloadOutlined />} onClick={() => void onSnapshotRefresh()}>
+                <Button icon={<ReloadOutlined />} disabled={inlineEditing} onClick={() => void onSnapshotRefresh()}>
                   {t("工作区页.按钮.刷新")}
                 </Button>
                 <Button
                   icon={<CloudDownloadOutlined />}
-                  disabled={!provider?.supportsRemoteModelDiscovery}
+                  disabled={!provider?.supportsRemoteModelDiscovery || inlineEditing}
                   loading={discovering}
                   onClick={() => void handleDiscover()}
                 >
@@ -428,7 +607,7 @@ export function ChannelModelsModal(props: ChannelModelsModalProps) {
                 >
                   <Button
                     icon={<RollbackOutlined />}
-                    disabled={!canResetDefaults || batchBusy || discovering || resettingDefaults}
+                    disabled={!canResetDefaults || batchBusy || discovering || resettingDefaults || inlineEditing}
                     loading={resettingDefaults}
                   >
                     {t("模型页.按钮.重置默认")}
@@ -436,7 +615,7 @@ export function ChannelModelsModal(props: ChannelModelsModalProps) {
                 </Popconfirm>
                 <Button
                   icon={<CheckCircleOutlined />}
-                  disabled={discovering || resettingDefaults}
+                  disabled={discovering || resettingDefaults || inlineEditing}
                   loading={batchBusy}
                   onClick={() => void handleBatchToggle(true)}
                 >
@@ -444,7 +623,7 @@ export function ChannelModelsModal(props: ChannelModelsModalProps) {
                 </Button>
                 <Button
                   icon={<StopOutlined />}
-                  disabled={discovering || resettingDefaults}
+                  disabled={discovering || resettingDefaults || inlineEditing}
                   loading={batchBusy}
                   onClick={() => void handleBatchToggle(false)}
                 >
@@ -453,7 +632,25 @@ export function ChannelModelsModal(props: ChannelModelsModalProps) {
               </div>
             </div>
           )}
-          tableProps={{ className: "models-page-model-table" }}
+          tableProps={{
+            className: "models-page-model-table",
+            expandable: {
+              expandedRowKeys: editingModelId ? [editingModelId] : [],
+              rowExpandable: (row) => row.customModel,
+              showExpandColumn: false,
+              expandedRowRender: (row) => (
+                customEditor && row.modelId === customEditor.modelId ? (
+                  <CustomModelInlineEditor
+                    model={customEditor}
+                    submitting={savingCustomModel}
+                    t={t}
+                    onCancel={handleCancelCustomEditor}
+                    onSubmit={handleSaveCustomModel}
+                  />
+                ) : null
+              ),
+            },
+          }}
         />
       </div>
     </Modal>

@@ -3,6 +3,10 @@ import { describe, expect, test } from "bun:test";
 import type {
   FeishuBotStateView,
   FeishuDocContentView,
+  FeishuDocTreeBranchInput,
+  FeishuDocTreeBranchResult,
+  FeishuDocTreeLoadInput,
+  FeishuDocTreeLoadResult,
   FeishuStateView,
 } from "../../../../../shared/desktop-feishu";
 import type { DesktopFeishuStoreSnapshot } from "../../abstraction/ports/desktop-feishu-store.ports";
@@ -96,7 +100,7 @@ function createSnapshot(docs: Record<string, FeishuDocContentView> = {}): Deskto
     docs,
     developerCredential: { appSecret: "" },
     developerToken: { accessToken: "access", refreshToken: "", accessTokenExpiresAt: "", refreshTokenExpiresAt: "" },
-    docTreeCache: { roots: {}, branches: {}, contents: {} },
+    docTreeCache: { lastRootToken: "", lastRootUpdatedAt: "", roots: {}, branches: {}, contents: {} },
   };
 }
 
@@ -150,6 +154,19 @@ function createRuntimeWithContentSource(
   });
 }
 
+function createRuntimeWithLoader(
+  snapshot: DesktopFeishuStoreSnapshot,
+  loader: {
+    loadRoot(input: FeishuDocTreeLoadInput): Promise<FeishuDocTreeLoadResult>;
+    loadBranch(input: FeishuDocTreeBranchInput): Promise<FeishuDocTreeBranchResult>;
+  },
+) {
+  return new DesktopFeishuDocRuntime({
+    store: createStore(snapshot),
+    loader,
+  });
+}
+
 describe("DesktopFeishuDocRuntime", () => {
   test("loadDocTreeRoot delegates to the cache-aware loader", async () => {
     const runtime = new DesktopFeishuDocRuntime({
@@ -196,6 +213,31 @@ describe("DesktopFeishuDocRuntime", () => {
       nodes: [expect.objectContaining({ title: "Child" })],
     });
   });
+
+    test("persists the requested tree root token before remote loading", async () => {
+      const snapshot = createSnapshot();
+      const runtime = createRuntimeWithLoader(snapshot, {
+        loadRoot: async () => {
+          throw new Error("remote unavailable");
+        },
+        loadBranch: async () => ({
+          rootToken: "root",
+          parentToken: "parent",
+          nodes: [],
+          hasMore: false,
+          source: "remote",
+          refreshing: false,
+          stale: false,
+        }),
+      });
+
+      await expect(runtime.loadDocTreeRoot({ token: "  GkfewPcB0ibJMMkXGZucdgR8nhh  " })).rejects.toThrow(
+        "remote unavailable",
+      );
+
+      expect(snapshot.docTreeCache.lastRootToken).toBe("GkfewPcB0ibJMMkXGZucdgR8nhh");
+      expect(snapshot.docTreeCache.lastRootUpdatedAt).not.toBe("");
+    });
 
   test("loadDocTreeBranch delegates to the cache-aware loader", async () => {
     const runtime = new DesktopFeishuDocRuntime({

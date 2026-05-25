@@ -5,6 +5,7 @@ import {
   installDesktopAppUpdate,
 } from "./desktop-app-update";
 import { startDesktopApplication } from "./desktop-host";
+import { removeDesktopWorkspaceWithTaskCleanup } from "./desktop-workspace-task-cleanup";
 import type { ModuleHost } from "./shared/ioc";
 import { createSingleInstanceCoordinator } from "./single-instance";
 import type { DesktopRendererRPC, DesktopWindowAction } from "../shared/desktop-rpc";
@@ -906,9 +907,16 @@ try {
               resolveDesktopWorkspaceCommandPort(host).create(input),
             updateDesktopWorkspace: ({ workspaceId, input }) =>
               resolveDesktopWorkspaceCommandPort(host).update(workspaceId, input),
-            removeDesktopWorkspace: async ({ workspaceId }) => ({
-              removed: await resolveDesktopWorkspaceCommandPort(host).remove(workspaceId),
-            }),
+            removeDesktopWorkspace: async ({ workspaceId }) => {
+              const result = await removeDesktopWorkspaceWithTaskCleanup({
+                workspaceId,
+                workspaceCommand: resolveDesktopWorkspaceCommandPort(host),
+                tasksCommand: resolveDesktopTasksCommandPort(host),
+              });
+              return {
+                removed: result.removed,
+              };
+            },
             listDesktopAgents: (query) => resolveDesktopAgentsQueryPort(host).list(query ?? {}),
             getDesktopAgent: ({ agentId }) => resolveDesktopAgentsQueryPort(host).get(agentId),
             getDesktopAgentBundle: ({ agentId }) =>

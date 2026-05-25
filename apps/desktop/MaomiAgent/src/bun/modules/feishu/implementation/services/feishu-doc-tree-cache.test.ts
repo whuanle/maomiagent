@@ -10,7 +10,7 @@ function createSnapshot(): DesktopFeishuStoreSnapshot {
     docs: {},
     developerCredential: { appSecret: "" },
     developerToken: { accessToken: "", refreshToken: "", accessTokenExpiresAt: "", refreshTokenExpiresAt: "" },
-    docTreeCache: { roots: {}, branches: {}, contents: {} },
+    docTreeCache: { lastRootToken: "", lastRootUpdatedAt: "", roots: {}, branches: {}, contents: {} },
   };
 }
 
@@ -67,6 +67,19 @@ describe("FeishuDocTreeCache", () => {
       loadedAt: "2026-05-21T00:00:00.000Z",
     });
     expect(await cache.readRoot("scope_2", "GkfewPcB0ibJMMkXGZucdgR8nhh")).toBeNull();
+    expect(snapshot.docTreeCache.lastRootToken).toBe("GkfewPcB0ibJMMkXGZucdgR8nhh");
+    expect(snapshot.docTreeCache.lastRootUpdatedAt).toBe("2026-05-21T00:00:00.000Z");
+  });
+
+  test("remembers the requested root token before a tree root is recognized", async () => {
+    const snapshot = createSnapshot();
+    const cache = createCache(snapshot);
+
+    await cache.rememberRootToken("  GkfewPcB0ibJMMkXGZucdgR8nhh  ");
+
+    expect(snapshot.docTreeCache.lastRootToken).toBe("GkfewPcB0ibJMMkXGZucdgR8nhh");
+    expect(snapshot.docTreeCache.lastRootUpdatedAt).not.toBe("");
+    expect(snapshot.docTreeCache.roots).toEqual({});
   });
 
   test("stores and reads branch nodes without sharing scopes", async () => {

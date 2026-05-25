@@ -6,6 +6,7 @@ import {
   DESKTOP_LOCAL_CONTROL_PROTOCOL,
   mergeDesktopFeishuOAuthScopes,
   normalizeDesktopFeishuRedirectUri,
+  resolveDesktopLocalControlBaseUrl,
   resolveDesktopFeishuOAuthCallbackOrigin,
   resolveDesktopFeishuOAuthCallbackUrl,
 } from "./desktop-feishu-oauth";
@@ -30,6 +31,30 @@ describe("desktop-feishu-oauth shared helpers", () => {
     expect(
       resolveDesktopFeishuOAuthCallbackOrigin("http://127.0.0.1/desktop/feishu/oauth/callback"),
     ).toBe("http://127.0.0.1:35000");
+  });
+
+  test("honors the runtime loopback port override when present", () => {
+    const previousPort = process.env.MAOMI_DESKTOP_LOCAL_CONTROL_PORT;
+    process.env.MAOMI_DESKTOP_LOCAL_CONTROL_PORT = "35142";
+
+    try {
+      expect(resolveDesktopLocalControlBaseUrl()).toBe("http://127.0.0.1:35142");
+      expect(resolveDesktopFeishuOAuthCallbackUrl()).toBe(
+        "http://127.0.0.1:35142/desktop/feishu/oauth/callback",
+      );
+      expect(
+        normalizeDesktopFeishuRedirectUri("http://localhost:39091/desktop/feishu/oauth/callback"),
+      ).toBe("http://127.0.0.1:35142/desktop/feishu/oauth/callback");
+      expect(
+        resolveDesktopFeishuOAuthCallbackOrigin("http://127.0.0.1/desktop/feishu/oauth/callback"),
+      ).toBe("http://127.0.0.1:35142");
+    } finally {
+      if (previousPort === undefined) {
+        delete process.env.MAOMI_DESKTOP_LOCAL_CONTROL_PORT;
+      } else {
+        process.env.MAOMI_DESKTOP_LOCAL_CONTROL_PORT = previousPort;
+      }
+    }
   });
 
   test("deduplicates scopes and always includes offline_access", () => {
