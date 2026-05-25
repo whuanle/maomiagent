@@ -13,6 +13,7 @@ import type {
   FeishuDocsCapabilitiesView,
   FeishuWorkspaceDocInput,
 } from "../../../../../shared/desktop-feishu";
+import type { FeishuDocIR } from "../../../../../shared/desktop-feishu-doc-ir";
 
 export interface DesktopFeishuDocRuntimePort {
   getDocsCapabilities(): Promise<FeishuDocsCapabilitiesView>;
@@ -41,4 +42,7 @@ export interface DesktopFeishuDocRuntimePort {
     markdown?: string;
     force?: boolean;
   }): Promise<FeishuDocWorkspacePushResult>;
+  openDocIR(input: { workspaceId: string; docId: string }): Promise<{ source: "cache" | "remote"; ir: FeishuDocIR }>;
+  pullDocIR(input: { workspaceId: string; docId: string; overwrite: boolean }): Promise<{ ir: FeishuDocIR; backupPath?: string }>;
+  pushDocIR(input: { workspaceId: string; docId: string }): Promise<{ status: "succeeded" | "blocked" | "failed"; message?: string }>;
 }

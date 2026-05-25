@@ -13,8 +13,15 @@ import type {
   FeishuDocsCapabilitiesView,
   FeishuWorkspaceDocInput,
 } from "../../../../../shared/desktop-feishu";
+import type { FeishuDocIR } from "../../../../../shared/desktop-feishu-doc-ir";
 import type { DesktopFeishuDocRuntimePort } from "../../abstraction/ports/desktop-feishu-doc-runtime.ports";
 import type { DesktopFeishuStorePort } from "../../abstraction/ports/desktop-feishu-store.ports";
+
+type DesktopFeishuDocWorkspaceRuntimePort = {
+  openDocument(input: { workspaceId: string; docId: string }): Promise<{ source: "cache" | "remote"; ir: FeishuDocIR }>;
+  pullLatest(input: { workspaceId: string; docId: string; overwrite: boolean }): Promise<{ ir: FeishuDocIR; backupPath?: string }>;
+  pushDocument(input: { workspaceId: string; docId: string }): Promise<{ status: "succeeded" | "blocked" | "failed"; message?: string }>;
+};
 
 type DesktopFeishuDocTreeLoaderPort = {
   loadRoot(input: FeishuDocTreeLoadInput): Promise<FeishuDocTreeLoadResult>;
@@ -33,6 +40,7 @@ type DesktopFeishuDocRuntimeDeps =
       loader: DesktopFeishuDocTreeLoaderPort;
       contentSource?: DesktopFeishuDocContentSourcePort;
       accessToken?: () => Promise<string>;
+      docWorkspaceRuntime?: DesktopFeishuDocWorkspaceRuntimePort;
     };
 
 function isStorePort(value: DesktopFeishuDocRuntimeDeps): value is DesktopFeishuStorePort {
@@ -46,6 +54,7 @@ function isRuntimeBundle(
   loader: DesktopFeishuDocTreeLoaderPort;
   contentSource?: DesktopFeishuDocContentSourcePort;
   accessToken?: () => Promise<string>;
+  docWorkspaceRuntime?: DesktopFeishuDocWorkspaceRuntimePort;
 } {
   return "store" in value && "loader" in value;
 }
@@ -55,6 +64,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
   private readonly loader: DesktopFeishuDocTreeLoaderPort;
   private readonly contentSource: DesktopFeishuDocContentSourcePort | null;
   private readonly accessToken: (() => Promise<string>) | null;
+  private readonly docWorkspaceRuntime: DesktopFeishuDocWorkspaceRuntimePort | null;
 
   constructor(deps: DesktopFeishuDocRuntimeDeps) {
     if (isRuntimeBundle(deps)) {
@@ -62,6 +72,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       this.loader = deps.loader;
       this.contentSource = deps.contentSource ?? null;
       this.accessToken = deps.accessToken ?? null;
+      this.docWorkspaceRuntime = deps.docWorkspaceRuntime ?? null;
       return;
     }
 
@@ -70,6 +81,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       this.loader = this.createStoreBackedLoader(deps);
       this.contentSource = null;
       this.accessToken = null;
+      this.docWorkspaceRuntime = null;
       return;
     }
 
@@ -77,6 +89,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
     this.loader = deps;
     this.contentSource = null;
     this.accessToken = null;
+    this.docWorkspaceRuntime = null;
   }
 
   async getDocsCapabilities(): Promise<FeishuDocsCapabilitiesView> {
@@ -331,5 +344,24 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       item,
       pushed: true,
     } as unknown as FeishuDocWorkspacePushResult;
+  }
+
+  async openDocIR(input: { workspaceId: string; docId: string }): Promise<{ source: "cache" | "remote"; ir: FeishuDocIR }> {
+    return this.requireDocWorkspaceRuntime().openDocument(input);
+  }
+
+  async pullDocIR(input: { workspaceId: string; docId: string; overwrite: boolean }): Promise<{ ir: FeishuDocIR; backupPath?: string }> {
+    return this.requireDocWorkspaceRuntime().pullLatest(input);
+  }
+
+  async pushDocIR(input: { workspaceId: string; docId: string }): Promise<{ status: "succeeded" | "blocked" | "failed"; message?: string }> {
+    return this.requireDocWorkspaceRuntime().pushDocument(input);
+  }
+
+  private requireDocWorkspaceRuntime(): DesktopFeishuDocWorkspaceRuntimePort {
+    if (!this.docWorkspaceRuntime) {
+      throw new Error("Feishu document IR workspace runtime is not configured");
+    }
+    return this.docWorkspaceRuntime;
   }
 }
