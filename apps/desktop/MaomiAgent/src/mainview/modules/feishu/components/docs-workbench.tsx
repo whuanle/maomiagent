@@ -32,6 +32,7 @@ import type {
   FeishuDocTreeNode,
   FeishuStateView,
 } from "../../../../shared/desktop-feishu"
+import type { FeishuDocIR } from "../../../../shared/desktop-feishu-doc-ir"
 import type { FeishuTranslate as Translate } from "../types"
 import {
   fetchFeishuDocContent,
@@ -50,10 +51,13 @@ import {
 import { notificationCenter, notifier } from "../../../lib/notifications"
 import { useAppService } from "../../../services/app-service-container"
 import { FRONTEND_CONVERSATION_LAUNCHER_PORT } from "../../../services/conversation/feature-contracts"
-import { FeishuDocsLocalPreview } from "./feishu-docs-local-preview"
+import { FeishuDocDiffView } from "./feishu-doc-diff-view"
+import { FeishuDocSourceEditor } from "./feishu-doc-source-editor"
+import { FeishuDocVisualEditor } from "./feishu-doc-visual-editor"
 
 const { Text, Title } = Typography
-const { TextArea } = Input
+
+type FeishuDocEditorMode = "visual" | "diff" | "source"
 
 export type FeishuDocWorkspaceMode = "workspace"
 
@@ -331,6 +335,55 @@ function extractFeishuWhiteboardTokens(markdown: string): string[] {
   return [...tokens]
 }
 
+function createDraftDocIR(doc: FeishuDocContentView, markdown: string): FeishuDocIR {
+  return {
+    schemaVersion: 1,
+    document: {
+      id: doc.docId,
+      title: doc.title,
+      revisionId: "local-draft",
+      rootBlockId: doc.docId,
+      pulledAt: new Date(0).toISOString(),
+      source: { documentIdType: "document_id" },
+    },
+    blocks: {
+      [doc.docId]: { id: doc.docId, type: "page", parentId: null, children: [], editable: false, text: [], resource: null, attrs: {}, raw: {} },
+    },
+    assets: {},
+    integrity: {
+      contentHash: `draft:${markdown.length}:${markdown}`,
+      rawHash: `draft:${doc.docId}`,
+    },
+  }
+}
+
+function createMarkdownDiff(base: string, current: string): string {
+  if (base === current) {
+    return ""
+  }
+
+  const baseLines = base.replace(/\r\n/g, "\n").split("\n")
+  const currentLines = current.replace(/\r\n/g, "\n").split("\n")
+  const output: string[] = []
+  const maxLength = Math.max(baseLines.length, currentLines.length)
+
+  for (let index = 0; index < maxLength; index += 1) {
+    const baseLine = baseLines[index]
+    const currentLine = currentLines[index]
+    if (baseLine === currentLine) {
+      continue
+    }
+    if (baseLine !== undefined) {
+      output.push(`- ${baseLine}`)
+    }
+    if (currentLine !== undefined) {
+      output.push(`+ ${currentLine}`)
+    }
+  }
+
+  return output.join("\n")
+}
+
 function getDocsMcp(state: FeishuStateView | null) {
   return state?.smartAssistant.docsMcp
     ?? state?.managedMcp
@@ -390,7 +443,7 @@ export function FeishuDocsWorkbench(props: Props) {
   const [draft, setDraft] = useState("")
   const [saveState, setSaveState] = useState<"idle" | "dirty" | "caching" | "pulling" | "pushing" | "saved" | "error">("idle")
   const [saveError, setSaveError] = useState("")
-  const [viewMode, setViewMode] = useState<"preview" | "edit">("preview")
+  const [viewMode, setViewMode] = useState<FeishuDocEditorMode>("visual")
   const [mediaPreviewUrls, setMediaPreviewUrls] = useState<Record<string, string>>({})
   const [mediaPreviewErrors, setMediaPreviewErrors] = useState<FeishuDocMediaPreviewErrorItem[]>([])
   const [whiteboardPreviewUrls, setWhiteboardPreviewUrls] = useState<Record<string, string>>({})
@@ -610,7 +663,7 @@ export function FeishuDocsWorkbench(props: Props) {
       setDocError("")
       setSaveError("")
       setSaveState("saved")
-      setViewMode("preview")
+      setViewMode("visual")
     } catch (error) {
       setDocError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -900,6 +953,9 @@ export function FeishuDocsWorkbench(props: Props) {
     () => Object.fromEntries(whiteboardPreviewErrors.map((item) => [item.whiteboardToken, item.message])),
     [whiteboardPreviewErrors],
   )
+  const draftDocIR = useMemo(() => currentDoc ? createDraftDocIR(currentDoc, draft) : null, [currentDoc, draft])
+  const baseDocIR = useMemo(() => currentDoc ? createDraftDocIR(currentDoc, currentDoc.markdown) : null, [currentDoc])
+  const draftMdxDiff = useMemo(() => currentDoc ? createMarkdownDiff(currentDoc.markdown, draft) : "", [currentDoc, draft])
 
   useEffect(() => {
     activeDocIdRef.current = activeDocId
@@ -1414,13 +1470,16 @@ export function FeishuDocsWorkbench(props: Props) {
                       buttonStyle="solid"
                       className="feishu-docs-workspace-view-switch"
                       value={viewMode}
-                      onChange={(event) => setViewMode(event.target.value as "preview" | "edit")}
+                      onChange={(event) => setViewMode(event.target.value as FeishuDocEditorMode)}
                     >
-                      <Radio.Button value="preview">
-                        {props.t("飞书页.文档.视图.本地预览")}
+                      <Radio.Button value="visual">
+                        可视化编辑
                       </Radio.Button>
-                      <Radio.Button value="edit">
-                        {props.t("飞书页.文档.视图.原生标签")}
+                      <Radio.Button value="diff">
+                        Diff
+                      </Radio.Button>
+                      <Radio.Button value="source">
+                        纯文本编辑
                       </Radio.Button>
                     </Radio.Group>
                     <div className="feishu-docs-workspace-actions">
@@ -1503,27 +1562,29 @@ export function FeishuDocsWorkbench(props: Props) {
                       ) : null}
 
                       <div className="feishu-docs-editor-shell">
-                        {viewMode === "preview" ? (
+                        {viewMode === "visual" && draftDocIR ? (
                           <div className="feishu-docs-preview-shell">
-                            <FeishuDocsLocalPreview
-                              markdown={draft}
+                            <FeishuDocVisualEditor
+                              ir={draftDocIR}
+                              mdx={draft}
                               t={props.t}
                               mediaPreviewUrls={mediaPreviewUrls}
                               mediaPreviewErrors={mediaPreviewErrorMap}
                               whiteboardPreviewUrls={whiteboardPreviewUrls}
                               whiteboardPreviewFocusRects={whiteboardPreviewFocusRects}
                               whiteboardPreviewErrors={whiteboardPreviewErrorMap}
+                              onChange={setDraft}
                             />
                           </div>
+                        ) : viewMode === "diff" && draftDocIR ? (
+                          <FeishuDocDiffView base={baseDocIR} current={draftDocIR} mdxDiff={draftMdxDiff} />
                         ) : (
                           <div className="feishu-docs-editor-shell-inner">
-                            <TextArea
-                              className="feishu-docs-editor-textarea"
+                            <FeishuDocSourceEditor
                               value={draft}
+                              error=""
                               readOnly={!hasWorkspaceContext}
-                              spellCheck={false}
-                              autoSize={false}
-                              onChange={(event) => setDraft(event.target.value)}
+                              onChange={setDraft}
                             />
                           </div>
                         )}
