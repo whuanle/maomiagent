@@ -43,6 +43,60 @@ const BLOCK_TYPE_BY_NUMBER: Record<number, FeishuDocIRBlockType> = {
   37: "whiteboard",
 };
 
+const BLOCK_TYPE_BY_PAYLOAD_KEY: Array<[string, FeishuDocIRBlockType]> = [
+  ["page", "page"],
+  ["text", "text"],
+  ["heading1", "heading1"],
+  ["heading2", "heading2"],
+  ["heading3", "heading3"],
+  ["heading4", "heading4"],
+  ["heading5", "heading5"],
+  ["heading6", "heading6"],
+  ["heading7", "heading7"],
+  ["heading8", "heading8"],
+  ["heading9", "heading9"],
+  ["bullet", "bullet"],
+  ["ordered", "ordered"],
+  ["code", "code"],
+  ["quote", "quote"],
+  ["todo", "todo"],
+  ["callout", "callout"],
+  ["quote_container", "quote-container"],
+  ["quoteContainer", "quote-container"],
+  ["grid", "grid"],
+  ["grid_column", "grid-column"],
+  ["gridColumn", "grid-column"],
+  ["table", "table"],
+  ["table_cell", "table-cell"],
+  ["tableCell", "table-cell"],
+  ["view", "view"],
+  ["image", "image"],
+  ["file", "file"],
+  ["iframe", "iframe"],
+  ["whiteboard", "whiteboard"],
+  ["mindnote", "mindnote"],
+  ["diagram", "diagram"],
+  ["sheet", "sheet"],
+  ["bitable", "bitable"],
+  ["board", "board"],
+  ["chat_card", "chat-card"],
+  ["chatCard", "chat-card"],
+  ["link_preview", "link-preview"],
+  ["linkPreview", "link-preview"],
+  ["jira_issue", "jira-issue"],
+  ["jiraIssue", "jira-issue"],
+  ["add_ons", "add-ons"],
+  ["addOns", "add-ons"],
+  ["isv", "isv"],
+  ["okr", "okr"],
+  ["source_synced", "source-synced"],
+  ["sourceSynced", "source-synced"],
+  ["reference_synced", "reference-synced"],
+  ["referenceSynced", "reference-synced"],
+  ["ai_template", "ai-template"],
+  ["aiTemplate", "ai-template"],
+];
+
 const TEXT_CONTAINER_KEYS = [
   "text",
   "heading1",
@@ -72,13 +126,11 @@ export function normalizeFeishuDocBlocksToIR(input: {
 }): FeishuDocIR {
   const blocks: Record<string, FeishuDocIRBlock> = {};
   const assets: Record<string, FeishuDocIRAsset> = {};
-  const rootBlockId = input.blocks[0]?.block_id || input.documentId;
+  const rootBlockId = resolveRootBlockId(input.blocks, input.documentId);
 
   for (const [index, rawBlock] of input.blocks.entries()) {
     const id = rawBlock.block_id || `block_${index + 1}`;
-    const type = typeof rawBlock.block_type === "number"
-      ? BLOCK_TYPE_BY_NUMBER[rawBlock.block_type] || "undefined"
-      : "undefined";
+    const type = resolveBlockType(rawBlock);
     const resource = extractResource(rawBlock, type);
     const attrs = extractAttrs(rawBlock, type);
 
@@ -130,6 +182,31 @@ export function normalizeFeishuDocBlocksToIR(input: {
       rawHash: hashJson(input.blocks),
     },
   };
+}
+
+function resolveBlockType(block: FeishuRawDocBlock): FeishuDocIRBlockType {
+  if (typeof block.block_type === "number") {
+    return BLOCK_TYPE_BY_NUMBER[block.block_type] || inferBlockTypeFromPayload(block);
+  }
+
+  return inferBlockTypeFromPayload(block);
+}
+
+function inferBlockTypeFromPayload(block: FeishuRawDocBlock): FeishuDocIRBlockType {
+  for (const [key, type] of BLOCK_TYPE_BY_PAYLOAD_KEY) {
+    if (block[key] !== undefined) {
+      return type;
+    }
+  }
+
+  return "undefined";
+}
+
+function resolveRootBlockId(blocks: FeishuRawDocBlock[], documentId: string): string {
+  return blocks.find((block) => block.block_id === documentId)?.block_id
+    || blocks.find((block) => block.block_type === 1)?.block_id
+    || blocks[0]?.block_id
+    || documentId;
 }
 
 function extractTextRuns(block: FeishuRawDocBlock): FeishuDocIRTextRun[] {
@@ -199,6 +276,25 @@ function resourceFromContainer(value: unknown, kind: FeishuDocIRAsset["kind"]): 
 }
 
 function extractAttrs(block: FeishuRawDocBlock, type: FeishuDocIRBlockType): Record<string, unknown> {
+  if (type === "callout") {
+    const container = block.callout;
+    if (!isRecord(container)) {
+      return {};
+    }
+
+    const attrs: Record<string, unknown> = {};
+    copyPrimitiveAttr(container, attrs, "emoji", "emoji");
+    copyPrimitiveAttr(container, attrs, "emoji_id", "emoji");
+    copyPrimitiveAttr(container, attrs, "emojiId", "emoji");
+    copyPrimitiveAttr(container, attrs, "title", "title");
+    copyPrimitiveAttr(container, attrs, "name", "name");
+    copyPrimitiveAttr(container, attrs, "background_color", "background-color");
+    copyPrimitiveAttr(container, attrs, "backgroundColor", "background-color");
+    copyPrimitiveAttr(container, attrs, "border_color", "border-color");
+    copyPrimitiveAttr(container, attrs, "borderColor", "border-color");
+    return attrs;
+  }
+
   const container = type === "image" ? block.image : type === "file" ? block.file : null;
   if (!isRecord(container)) {
     return {};
@@ -211,6 +307,18 @@ function extractAttrs(block: FeishuRawDocBlock, type: FeishuDocIRBlockType): Rec
     }
   }
   return attrs;
+}
+
+function copyPrimitiveAttr(
+  source: Record<string, unknown>,
+  target: Record<string, unknown>,
+  sourceKey: string,
+  targetKey: string,
+) {
+  const value = source[sourceKey];
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    target[targetKey] = value;
+  }
 }
 
 function hashJson(value: unknown): string {

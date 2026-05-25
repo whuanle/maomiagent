@@ -163,15 +163,21 @@ function renderAutoRefreshTaskTag(
 ) {
   const autoRefreshTask = state?.developer?.autoRefreshTask
   if (!autoRefreshTask?.taskId) {
-    return <Tag bordered={false}>{t("飞书页.值.自动续期任务未创建")}</Tag>
+    return <Tag bordered={false}>{t("飞书页.智能助手.自动续期状态.未创建")}</Tag>
+  }
+  if (autoRefreshTask.status === "failed") {
+    return <Tag bordered={false} color="red">{t("飞书页.智能助手.自动续期状态.异常")}</Tag>
   }
   if (autoRefreshTask.enabled === false) {
-    return <Tag bordered={false} color="orange">{t("飞书页.值.自动续期任务已停用")}</Tag>
+    return <Tag bordered={false} color="orange">{t("飞书页.智能助手.自动续期状态.已停用")}</Tag>
   }
   if (autoRefreshTask.status === "running") {
-    return <Tag bordered={false} color="blue">{t("飞书页.值.自动续期任务执行中")}</Tag>
+    return <Tag bordered={false} color="blue">{t("飞书页.智能助手.自动续期状态.执行中")}</Tag>
   }
-  return <Tag bordered={false} color="green">{t("飞书页.值.自动续期任务已启用")}</Tag>
+  if (autoRefreshTask.status === "queued") {
+    return <Tag bordered={false} color="gold">{t("飞书页.智能助手.自动续期状态.待执行")}</Tag>
+  }
+  return <Tag bordered={false} color="green">{t("飞书页.智能助手.自动续期状态.已启用")}</Tag>
 }
 
 function renderMcpStatus(

@@ -81,6 +81,27 @@ describe("DesktopFeishuStore", () => {
         accessTokenExpiresAt: "",
         refreshTokenExpiresAt: "",
       });
+      expect(snapshot.botRuntime.pendingActions).toEqual([]);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  test("migrates legacy bot runtime snapshots with empty pending actions", async () => {
+    const fixture = await createStoreFixture();
+
+    try {
+      await writeFile(fixture.storeFilePath, JSON.stringify({
+        botRuntime: {
+          version: "1.0",
+          bindings: [],
+          processedMessages: [],
+        },
+      }), "utf8");
+
+      const snapshot = await fixture.store.read();
+
+      expect(snapshot.botRuntime.pendingActions).toEqual([]);
     } finally {
       await fixture.cleanup();
     }
@@ -144,6 +165,181 @@ describe("DesktopFeishuStore", () => {
         rootNodeId: "doc_1",
       });
       expect(reloaded.docTreeCache.lastRootToken).toBe("root_token");
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  test("persists bot form fields so they can be restored after restart", async () => {
+    const fixture = await createStoreFixture();
+
+    try {
+      const initial = await fixture.store.read();
+      const snapshot: DesktopFeishuStoreSnapshot = {
+        ...initial,
+        bot: {
+          ...initial.bot,
+          enabled: true,
+          appId: "cli_test_bot",
+          appSecret: "secret-1",
+          hasAppSecret: true,
+          verificationToken: "verify-1",
+          hasVerificationToken: true,
+          encryptKey: "encrypt-1",
+          hasEncryptKey: true,
+          allowWorkspaceSwitch: true,
+          workspaceSwitchScope: "restricted",
+          allowedExecutionWorkspaceIds: ["workspace-a"],
+          selectedChannelId: "channel-alpha",
+          selectedModelId: "model-alpha",
+          savedAt: "2026-05-25T08:00:00.000Z",
+          updatedAt: "2026-05-25T08:00:00.000Z",
+        },
+      };
+
+      await fixture.store.write(snapshot);
+
+      const reloaded = await fixture.store.read();
+      expect(reloaded.bot).toMatchObject({
+        enabled: true,
+        appId: "cli_test_bot",
+        appSecret: "secret-1",
+        hasAppSecret: true,
+        verificationToken: "verify-1",
+        hasVerificationToken: true,
+        encryptKey: "encrypt-1",
+        hasEncryptKey: true,
+        allowWorkspaceSwitch: true,
+        workspaceSwitchScope: "restricted",
+        allowedExecutionWorkspaceIds: ["workspace-a"],
+        selectedChannelId: "channel-alpha",
+        selectedModelId: "model-alpha",
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  test("persists pending bot actions without dropping processed messages", async () => {
+    const fixture = await createStoreFixture();
+
+    try {
+      const initial = await fixture.store.read();
+      const snapshot: DesktopFeishuStoreSnapshot = {
+        ...initial,
+        botRuntime: {
+          ...initial.botRuntime,
+          processedMessages: [{
+            messageId: "om_1",
+            conversationKey: "tenant-1:oc_1:root",
+            status: "completed",
+            createdAt: "2026-05-25T09:00:00.000Z",
+            updatedAt: "2026-05-25T09:00:01.000Z",
+          }],
+          pendingActions: [{
+            pendingId: "pending_1",
+            scopeKey: "tenant-1:oc_1:root",
+            chatId: "oc_1",
+            messageId: "om_1",
+            domain: "calendar",
+            actionId: "calendar.create_event",
+            workspaceId: "workspace-a",
+            summary: "准备创建会议",
+            details: ["今天 9:00-10:00", "主题 AI 落地讨论"],
+            executeInput: {
+              actionId: "calendar.create_event",
+              workspaceId: "workspace-a",
+              title: "AI 落地讨论",
+              startAt: "2026-05-25T09:00:00+08:00",
+              endAt: "2026-05-25T10:00:00+08:00",
+            },
+            initiatorSenderId: "ou_user_1",
+            initiatorSenderName: "张三",
+            createdAt: "2026-05-25T09:00:00.000Z",
+            updatedAt: "2026-05-25T09:00:00.000Z",
+            expiresAt: "2026-05-25T09:30:00.000Z",
+          }],
+        },
+      };
+
+      await fixture.store.write(snapshot);
+
+      const persisted = JSON.parse(await readFile(fixture.storeFilePath, "utf8")) as DesktopFeishuStoreSnapshot;
+      expect(persisted.botRuntime.processedMessages).toHaveLength(1);
+      expect(persisted.botRuntime.pendingActions).toEqual([
+        expect.objectContaining({
+          pendingId: "pending_1",
+          actionId: "calendar.create_event",
+          summary: "准备创建会议",
+        }),
+      ]);
+
+      const reloaded = await fixture.store.read();
+      expect(reloaded.botRuntime.processedMessages).toHaveLength(1);
+      expect(reloaded.botRuntime.pendingActions).toEqual([
+        expect.objectContaining({
+          pendingId: "pending_1",
+          actionId: "calendar.create_event",
+          summary: "准备创建会议",
+        }),
+      ]);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  test("serializes mutate operations so later writes keep earlier saved credentials", async () => {
+    const fixture = await createStoreFixture();
+
+    try {
+      let releaseFirst: (() => void) | null = null;
+      const firstStarted = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      let waitForRelease!: () => void;
+      const firstBlocker = new Promise<void>((resolve) => {
+        waitForRelease = resolve;
+      });
+
+      const firstMutation = fixture.store.mutate!(async (snapshot) => {
+        snapshot.state.mode = "developer";
+        snapshot.state.smartAssistant.enabled = true;
+        snapshot.state.smartAssistant.appId = "cli_test_app";
+        snapshot.state.smartAssistant.hasAppSecret = true;
+        snapshot.state.developer = {
+          appId: "cli_test_app",
+          hasAppSecret: true,
+          redirectUri: "http://127.0.0.1:35000/desktop/feishu/oauth/callback",
+          redirectOrigin: "http://127.0.0.1:35000",
+          authStatus: "idle",
+          authMethod: "oauth",
+          hasRefreshToken: false,
+          scopes: [],
+          allowedTools: [],
+          autoRefreshTask: {
+            enabled: false,
+          },
+        } as DesktopFeishuStoreSnapshot["state"]["developer"];
+        snapshot.developerCredential.appSecret = "secret-1";
+        releaseFirst?.();
+        await firstBlocker;
+      });
+
+      await firstStarted;
+
+      const secondMutation = fixture.store.mutate!(async (snapshot) => {
+        snapshot.state.smartAssistant.authStatus = "error";
+        snapshot.state.smartAssistant.lastError = "请先完成飞书授权";
+      });
+
+      waitForRelease();
+      await Promise.all([firstMutation, secondMutation]);
+
+      const reloaded = await fixture.store.read();
+      expect(reloaded.state.smartAssistant.appId).toBe("cli_test_app");
+      expect(reloaded.state.developer?.appId).toBe("cli_test_app");
+      expect(reloaded.developerCredential.appSecret).toBe("secret-1");
+      expect(reloaded.state.smartAssistant.lastError).toBe("请先完成飞书授权");
     } finally {
       await fixture.cleanup();
     }

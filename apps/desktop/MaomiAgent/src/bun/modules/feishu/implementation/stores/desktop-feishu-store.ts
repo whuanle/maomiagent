@@ -1,10 +1,11 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import type { DesktopConfigurationPort } from "../../../configuration";
 import type { RuntimeLogger } from "../../../logs";
 import type {
+  DesktopFeishuBotRuntimeSnapshot,
   DesktopFeishuDeveloperCredentialSnapshot,
   DesktopFeishuDeveloperTokenSnapshot,
   DesktopFeishuDocTreeCacheSnapshot,
@@ -75,19 +76,32 @@ function createInitialBotState(): FeishuBotStateView {
   return {
     enabled: false,
     appId: "",
+    appSecret: "",
     hasAppSecret: false,
+    verificationToken: "",
     hasVerificationToken: false,
+    encryptKey: "",
     hasEncryptKey: false,
-    transportMode: "webhook",
+    transportMode: "websocket",
     catalog: {
-      transportMode: "webhook",
+      transportMode: "websocket",
       descriptors: [],
     },
-    connectionStatus: "stopped",
+    connectionStatus: "disconnected",
     sessionMappingCount: 0,
     processedMessageCount: 0,
     queuedConversationCount: 0,
+    recentProcessedMessages: [],
     updatedAt: new Date().toISOString(),
+  };
+}
+
+function createInitialBotRuntime(): DesktopFeishuBotRuntimeSnapshot {
+  return {
+    version: "1.0",
+    bindings: [],
+    processedMessages: [],
+    pendingActions: [],
   };
 }
 
@@ -120,6 +134,7 @@ function createInitialSnapshot(): DesktopFeishuStoreSnapshot {
   return {
     state: createInitialStateView(),
     bot: createInitialBotState(),
+    botRuntime: createInitialBotRuntime(),
     docs: {},
     developerCredential: createInitialDeveloperCredential(),
     developerToken: createInitialDeveloperToken(),
@@ -129,6 +144,7 @@ function createInitialSnapshot(): DesktopFeishuStoreSnapshot {
 
 export class DesktopFeishuStore implements DesktopFeishuStorePort {
   private readonly storeFilePath: string;
+  private mutationQueue: Promise<unknown> = Promise.resolve();
 
   constructor(
     configuration: DesktopConfigurationPort,
@@ -139,6 +155,26 @@ export class DesktopFeishuStore implements DesktopFeishuStorePort {
   }
 
   async read(): Promise<DesktopFeishuStoreSnapshot> {
+    return this.readSnapshotFromDisk();
+  }
+
+  async write(snapshot: DesktopFeishuStoreSnapshot): Promise<void> {
+    await this.persistSnapshot(snapshot);
+  }
+
+  async mutate<T>(mutator: (snapshot: DesktopFeishuStoreSnapshot) => Promise<T> | T): Promise<T> {
+    const next = this.mutationQueue.then(async () => {
+      const snapshot = await this.readSnapshotFromDisk();
+      const result = await mutator(snapshot);
+      await this.persistSnapshot(snapshot);
+      return result;
+    });
+
+    this.mutationQueue = next.then(() => undefined, () => undefined);
+    return next;
+  }
+
+  private async readSnapshotFromDisk(): Promise<DesktopFeishuStoreSnapshot> {
     try {
       const raw = await readFile(this.storeFilePath, "utf8");
       const parsed = JSON.parse(raw) as Partial<DesktopFeishuStoreSnapshot>;
@@ -151,6 +187,19 @@ export class DesktopFeishuStore implements DesktopFeishuStorePort {
         bot: {
           ...initial.bot,
           ...(parsed.bot ?? {}),
+        },
+        botRuntime: {
+          ...initial.botRuntime,
+          ...(parsed.botRuntime ?? {}),
+          bindings: Array.isArray(parsed.botRuntime?.bindings)
+            ? parsed.botRuntime.bindings
+            : initial.botRuntime.bindings,
+          processedMessages: Array.isArray(parsed.botRuntime?.processedMessages)
+            ? parsed.botRuntime.processedMessages
+            : initial.botRuntime.processedMessages,
+          pendingActions: Array.isArray(parsed.botRuntime?.pendingActions)
+            ? parsed.botRuntime.pendingActions
+            : initial.botRuntime.pendingActions,
         },
         docs: (parsed.docs ?? {}) as Record<string, FeishuDocContentView>,
         developerCredential: {
@@ -174,14 +223,17 @@ export class DesktopFeishuStore implements DesktopFeishuStorePort {
     }
   }
 
-  async write(snapshot: DesktopFeishuStoreSnapshot): Promise<void> {
+  private async persistSnapshot(snapshot: DesktopFeishuStoreSnapshot): Promise<void> {
     try {
       await mkdir(dirname(this.storeFilePath), { recursive: true });
-      await writeFile(this.storeFilePath, JSON.stringify(snapshot, null, 2), "utf8");
+      const tempPath = `${this.storeFilePath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
+      await writeFile(tempPath, JSON.stringify(snapshot, null, 2), "utf8");
+      await rename(tempPath, this.storeFilePath);
     } catch (error) {
-      this.logger.warn("failed to write desktop feishu store", {
+      await this.logger.warn("failed to write desktop feishu store", {
         error: error instanceof Error ? error.message : String(error),
       });
+      throw error instanceof Error ? error : new Error(String(error));
     }
   }
 }

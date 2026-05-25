@@ -7,7 +7,6 @@ import {
 } from "@ant-design/icons"
 import {
   codeBlockPlugin,
-  codeMirrorPlugin,
   headingsPlugin,
   jsxPlugin,
   linkPlugin,
@@ -16,6 +15,7 @@ import {
   quotePlugin,
   tablePlugin,
   thematicBreakPlugin,
+  type CodeBlockEditorDescriptor,
   type JsxComponentDescriptor,
   type JsxEditorProps,
 } from "@mdxeditor/editor"
@@ -29,7 +29,7 @@ import { gfmTableToMarkdown } from "mdast-util-gfm-table"
 import { gfmTaskListItemToMarkdown } from "mdast-util-gfm-task-list-item"
 import { mdxToMarkdown } from "mdast-util-mdx"
 import { toMarkdown } from "mdast-util-to-markdown"
-import { Fragment, useEffect, useId, useMemo, useState, type ReactNode } from "react"
+import { Fragment, useEffect, useId, useMemo, useState, type CSSProperties, type ReactNode } from "react"
 import type { Root, RootContent } from "mdast"
 import type { LanguageCode } from "../../../config/titlebar"
 import type { FeishuI18nKey as I18nKey, FeishuTranslate as Translate } from "../types"
@@ -45,6 +45,11 @@ import {
   resolveFeishuDocsUrlHostLabel,
   resolveFeishuDocsViewTypeLabel,
 } from "./feishu-docs-render-utils"
+import {
+  isMarkdownIndentedCodeLine,
+  parseMarkdownIndentedCodeBlock,
+} from "./feishu-docs-markdown-code"
+import { renderHighlightedFeishuDocsCode, resolveFeishuDocsHighlightLanguage } from "./feishu-docs-markdown-highlight"
 import { parseFeishuDocsLocalPreview, type FeishuDocsPreviewNode } from "./feishu-docs-local-preview-model"
 import { resolveFeishuDocsTagLabel } from "./feishu-docs-tag-labels"
 import {
@@ -75,6 +80,7 @@ type NativePropItem = {
 type InlineRenderContext = {
   t?: Translate
   language?: LanguageCode
+  headingSlugCounts?: Map<string, number>
 }
 
 type InlineTagRenderer = (
@@ -196,7 +202,6 @@ const MARKDOWN_CODE_BLOCK_LANGUAGE_LABELS: Record<string, string> = {
   zsh: "Zsh",
 }
 
-const FEISHU_DOCS_MDX_CODE_BLOCK_LANGUAGES = MARKDOWN_CODE_BLOCK_LANGUAGE_LABELS
 const MERMAID_CODE_BLOCK_LANGUAGES = new Set(["mermaid"])
 const MATH_CODE_BLOCK_LANGUAGES = new Set(["katex", "latex", "math", "tex"])
 
@@ -267,7 +272,12 @@ function previewText(
   fallback: string,
   params?: Record<string, string | number>,
 ): string {
-  return t ? t(key, params) : fallback
+  if (!t) {
+    return fallback
+  }
+
+  const translated = t(key, params)
+  return translated === key ? fallback : translated
 }
 
 function normalizeMarkdownSource(value: string): string {
@@ -374,6 +384,9 @@ function FeishuDocsPreviewImage(input: {
   src: string
   alt: string
   displayMode?: "default" | "board"
+  plain?: boolean
+  preferredWidth?: number
+  preferredHeight?: number
   focusRect?: {
     left: number
     top: number
@@ -383,6 +396,15 @@ function FeishuDocsPreviewImage(input: {
   t?: Translate
 }) {
   const [thumbnailSrc, setThumbnailSrc] = useState(input.src)
+  const imageStyle: (CSSProperties & {
+    "--feishu-docs-preview-image-max-width"?: string
+    "--feishu-docs-preview-image-max-height"?: string
+  }) | undefined = input.preferredWidth || input.preferredHeight
+    ? {
+        ...(input.preferredWidth ? { "--feishu-docs-preview-image-max-width": `${input.preferredWidth}px` } : {}),
+        ...(input.preferredHeight ? { "--feishu-docs-preview-image-max-height": `${input.preferredHeight}px` } : {}),
+      }
+    : undefined
 
   useEffect(() => {
     setThumbnailSrc(input.src)
@@ -546,7 +568,14 @@ function FeishuDocsPreviewImage(input: {
   }, [input.displayMode, input.focusRect, input.src])
 
   return (
-    <div className={`feishu-docs-local-preview-image-shell${input.displayMode === "board" ? " is-board" : ""}`}>
+    <div
+      className={[
+        "feishu-docs-local-preview-image-shell",
+        input.displayMode === "board" ? "is-board" : "",
+        input.plain ? "is-plain" : "",
+      ].filter(Boolean).join(" ")}
+      style={imageStyle}
+    >
       <div className="feishu-docs-local-preview-image-frame">
         <Image
           className="feishu-docs-local-preview-image"
@@ -561,6 +590,30 @@ function FeishuDocsPreviewImage(input: {
       </div>
     </div>
   )
+}
+
+function parseFeishuDocsPreviewDimension(value: string | undefined): number | undefined {
+  const normalized = value?.trim()
+  if (!normalized) {
+    return undefined
+  }
+
+  const parsed = Number.parseFloat(normalized)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return undefined
+  }
+
+  return Math.round(parsed)
+}
+
+function readFeishuDocsPreviewDimensions(attributes: Record<string, string>): {
+  width?: number
+  height?: number
+} {
+  return {
+    width: parseFeishuDocsPreviewDimension(readPreferredFeishuDocsAttribute(attributes, ["width"])),
+    height: parseFeishuDocsPreviewDimension(readPreferredFeishuDocsAttribute(attributes, ["height"])),
+  }
 }
 
 function FeishuDocsMathInline(input: {
@@ -1416,6 +1469,20 @@ function normalizeMarkdownCodeBlock(code: string): string {
   )).join("\n")
 }
 
+function buildMarkdownCodeFence(code: string, language?: string): string {
+  const normalizedLanguage = language?.trim() ?? ""
+  const fenceChar = code.includes("```") ? "~" : "`"
+  const fencePattern = fenceChar === "`" ? /`{3,}/g : /~{3,}/g
+  let longestFence = 0
+
+  for (const match of code.matchAll(fencePattern)) {
+    longestFence = Math.max(longestFence, match[0].length)
+  }
+
+  const fence = fenceChar.repeat(Math.max(3, longestFence + 1))
+  return `${fence}${normalizedLanguage}\n${code}\n${fence}`
+}
+
 function resolveMarkdownCodeBlockLanguageLabel(language?: string): string | undefined {
   const normalized = language?.trim()
   if (!normalized) {
@@ -1438,6 +1505,30 @@ function resolveMarkdownCodeBlockLanguageLabel(language?: string): string | unde
   }
 
   return words.replace(/\b\w/g, (character) => character.toUpperCase())
+}
+
+function normalizeFeishuDocsHeadingText(text: string): string {
+  return text
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/[*_~]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+function buildFeishuDocsHeadingAnchorId(text: string, slugCounts: Map<string, number>): string {
+  const normalizedText = normalizeFeishuDocsHeadingText(text)
+  const slugBase = normalizedText
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}]+/gu, "-")
+    .replace(/^-+|-+$/g, "")
+    || "section"
+  const nextCount = (slugCounts.get(slugBase) ?? 0) + 1
+  slugCounts.set(slugBase, nextCount)
+  return nextCount === 1 ? `feishu-doc-heading-${slugBase}` : `feishu-doc-heading-${slugBase}-${nextCount}`
 }
 
 function isMermaidCodeBlockLanguage(language?: string): boolean {
@@ -1596,6 +1687,9 @@ function isParagraphBoundary(lines: string[], index: number): boolean {
   if (isMarkdownCodeFenceStart(line)) {
     return true
   }
+  if (isMarkdownIndentedCodeLine(line)) {
+    return true
+  }
   if (/^\s{0,3}#{1,6}\s+/.test(line)) {
     return true
   }
@@ -1734,6 +1828,13 @@ function parseMarkdownBlocks(markdown: string): MarkdownBlock[] {
       continue
     }
 
+    const indentedCodeBlock = parseMarkdownIndentedCodeBlock(lines, index)
+    if (indentedCodeBlock) {
+      blocks.push(indentedCodeBlock.block)
+      index = indentedCodeBlock.nextIndex
+      continue
+    }
+
     const headingMatch = /^\s{0,3}(#{1,6})\s+(.*?)\s*$/.exec(line)
     if (headingMatch) {
       blocks.push({
@@ -1826,20 +1927,26 @@ function renderMarkdownHeading(
   context: InlineRenderContext,
 ) {
   const content = renderInlineMarkdownMultiline(block.text, `${key}:content`, context)
+  const anchorId = buildFeishuDocsHeadingAnchorId(block.text, context.headingSlugCounts ?? new Map())
+  const headingProps = {
+    id: anchorId,
+    "data-feishu-doc-heading-id": anchorId,
+    "data-feishu-doc-heading-level": String(block.level),
+  }
 
   switch (block.level) {
     case 1:
-      return <h1 key={key}>{content}</h1>
+      return <h1 key={key} {...headingProps}>{content}</h1>
     case 2:
-      return <h2 key={key}>{content}</h2>
+      return <h2 key={key} {...headingProps}>{content}</h2>
     case 3:
-      return <h3 key={key}>{content}</h3>
+      return <h3 key={key} {...headingProps}>{content}</h3>
     case 4:
-      return <h4 key={key}>{content}</h4>
+      return <h4 key={key} {...headingProps}>{content}</h4>
     case 5:
-      return <h5 key={key}>{content}</h5>
+      return <h5 key={key} {...headingProps}>{content}</h5>
     default:
-      return <h6 key={key}>{content}</h6>
+      return <h6 key={key} {...headingProps}>{content}</h6>
   }
 }
 
@@ -1851,9 +1958,6 @@ function renderMarkdownCodeBlock(
   if (isMermaidCodeBlockLanguage(block.language)) {
     return (
       <div key={key} className="feishu-docs-local-preview-code-block is-mermaid" data-language={block.language}>
-        <div className="feishu-docs-local-preview-code-block-head">
-          <span className="feishu-docs-local-preview-code-block-language">Mermaid</span>
-        </div>
         <FeishuDocsMermaidBlock source={block.code} t={context.t} />
       </div>
     )
@@ -1862,29 +1966,70 @@ function renderMarkdownCodeBlock(
   if (isMathCodeBlockLanguage(block.language)) {
     return (
       <div key={key} className="feishu-docs-local-preview-code-block is-math" data-language={block.language}>
-        <div className="feishu-docs-local-preview-code-block-head">
-          <span className="feishu-docs-local-preview-code-block-language">
-            {resolveMarkdownCodeBlockLanguageLabel(block.language) ?? "Math"}
-          </span>
-        </div>
         <FeishuDocsMathBlock expression={block.code} t={context.t} />
       </div>
     )
   }
 
-  const languageLabel = resolveMarkdownCodeBlockLanguageLabel(block.language)
+  const fencedMarkdown = buildMarkdownCodeFence(block.code, block.language)
 
   return (
-    <div key={key} className="feishu-docs-local-preview-code-block" data-language={block.language}>
+    <FeishuDocsReadonlyMdxMarkdown
+      key={key}
+      markdown={fencedMarkdown}
+      t={context.t}
+      language={context.language}
+      className="is-nested feishu-docs-local-preview-code-block-mdx"
+    />
+  )
+}
+
+function FeishuDocsStaticCodeBlock(props: {
+  code: string
+  language?: string
+  t?: Translate
+}) {
+  const normalizedCode = normalizeMarkdownCodeBlock(props.code)
+  const languageLabel = resolveMarkdownCodeBlockLanguageLabel(props.language)
+  const highlighted = useMemo(
+    () => renderHighlightedFeishuDocsCode({
+      code: normalizedCode,
+      language: props.language,
+    }),
+    [normalizedCode, props.language],
+  )
+  const highlightLanguage = highlighted.language ?? resolveFeishuDocsHighlightLanguage(props.language)
+
+  return (
+    <section className="feishu-docs-local-preview-code-block" data-language={props.language || undefined}>
       {languageLabel ? (
         <div className="feishu-docs-local-preview-code-block-head">
           <span className="feishu-docs-local-preview-code-block-language">{languageLabel}</span>
         </div>
       ) : null}
       <pre className="feishu-docs-local-preview-code-block-pre">
-        <code className="feishu-docs-local-preview-code-block-code">{block.code}</code>
+        {highlighted.html ? (
+          <code
+            className={[
+              "feishu-docs-local-preview-code-block-code",
+              "hljs",
+              highlightLanguage ? `language-${highlightLanguage}` : "",
+            ].filter(Boolean).join(" ")}
+            dangerouslySetInnerHTML={{ __html: highlighted.html }}
+          />
+        ) : (
+          <code className="feishu-docs-local-preview-code-block-code">{normalizedCode}</code>
+        )}
       </pre>
-    </div>
+    </section>
+  )
+}
+
+function renderPlainNativeBlock(children: ReactNode, className?: string) {
+  return (
+    <section className={["feishu-docs-local-preview-plain-block", className ?? ""].filter(Boolean).join(" ")}>
+      {children}
+    </section>
   )
 }
 
@@ -2006,10 +2151,12 @@ function renderPreviewNodes(
   whiteboardPreviewErrors?: Record<string, string>,
   t?: Translate,
   language: LanguageCode = "zh-CN",
+  headingSlugCounts?: Map<string, number>,
 ): ReactNode[] {
   const context: InlineRenderContext = {
     t,
     language,
+    headingSlugCounts: headingSlugCounts ?? new Map(),
   }
 
   return nodes.map((node) => {
@@ -2030,6 +2177,7 @@ function renderPreviewNodes(
         whiteboardPreviewErrors={whiteboardPreviewErrors}
         t={t}
         language={language}
+        headingSlugCounts={context.headingSlugCounts}
       />
     )
   })
@@ -2174,6 +2322,7 @@ function FeishuDocsNativeBlockPreview(input: {
   name: string
   attributes: Record<string, string>
   childrenNodes: FeishuDocsPreviewNode[]
+  headingSlugCounts?: Map<string, number>
   mediaPreviewUrls?: Record<string, string>
   mediaPreviewErrors?: Record<string, string>
   whiteboardPreviewUrls?: Record<string, string>
@@ -2216,6 +2365,7 @@ function FeishuDocsNativeBlockPreview(input: {
             input.whiteboardPreviewErrors,
             input.t,
             input.language,
+            input.headingSlugCounts,
           ) : (
             <Text type="secondary">
               {previewText(input.t, "飞书页.文档.预览.空状态.当前提示块无内容", "当前提示块没有内容。")}
@@ -2267,6 +2417,7 @@ function FeishuDocsNativeBlockPreview(input: {
                 input.whiteboardPreviewErrors,
                 input.t,
                 input.language,
+                input.headingSlugCounts,
               ) : (
                 <Text type="secondary">
                   {previewText(input.t, "飞书页.文档.预览.空状态.当前分栏无内容", "当前分栏没有内容。")}
@@ -2286,6 +2437,7 @@ function FeishuDocsNativeBlockPreview(input: {
               input.whiteboardPreviewErrors,
               input.t,
               input.language,
+              input.headingSlugCounts,
             )}
           </div>
         ) : null}
@@ -2306,6 +2458,7 @@ function FeishuDocsNativeBlockPreview(input: {
           input.whiteboardPreviewErrors,
           input.t,
           input.language,
+          input.headingSlugCounts,
         ) : (
           <Text type="secondary">
             {previewText(input.t, "飞书页.文档.预览.空状态.当前分栏无内容", "当前分栏没有内容。")}
@@ -2332,6 +2485,7 @@ function FeishuDocsNativeBlockPreview(input: {
             input.whiteboardPreviewErrors,
             input.t,
             input.language,
+            input.headingSlugCounts,
           )
         }
 
@@ -2397,15 +2551,16 @@ function FeishuDocsNativeBlockPreview(input: {
   if (input.name === "image") {
     const token = readPreferredFeishuDocsAttribute(attributes, ["token", "file-token", "file_token"])
     const previewError = token ? input.mediaPreviewErrors?.[token] ?? "" : ""
+    const { width: imageWidth, height: imageHeight } = readFeishuDocsPreviewDimensions(attributes)
     const imageUrl =
-      readPreferredFeishuDocsAttribute(attributes, ["src", "url", "tmp-download-url", "tmp_download_url"])
-      || (token ? input.mediaPreviewUrls?.[token] ?? "" : "")
+      (token ? input.mediaPreviewUrls?.[token] ?? "" : "")
+      || readPreferredFeishuDocsAttribute(attributes, ["src", "url", "tmp-download-url", "tmp_download_url"])
       || ""
     const safeImageUrl = normalizeFeishuDocsPreviewHref(imageUrl)
     const imageTitle = readPreferredFeishuDocsAttribute(attributes, ["name", "alt", "caption", "caption-content"])
       || previewText(input.t, "飞书页.文档.预览.图片.标题", "图片")
     return (
-      <section className={`feishu-docs-local-preview-native-block ${resolveToneClassName(spec)} is-image`}>
+      <section className="feishu-docs-local-preview-plain-media is-image">
         {safeImageUrl ? (
           <FeishuDocsPreviewImage
             src={safeImageUrl}
@@ -2414,35 +2569,23 @@ function FeishuDocsNativeBlockPreview(input: {
               || previewText(input.t, "飞书页.文档.预览.图片.alt", "飞书图片")
             }
             displayMode="default"
+            plain
+            preferredWidth={imageWidth}
+            preferredHeight={imageHeight}
             t={input.t}
           />
         ) : (
-          <div className="feishu-docs-local-preview-image-placeholder">
+          <div className="feishu-docs-local-preview-image-placeholder is-plain">
             <PictureOutlined />
             <Text type="secondary">
-              {imageTitle || previewText(input.t, "飞书页.文档.预览.图片.占位", "图片资源预览占位")}
+              {previewError || imageTitle || previewText(input.t, "飞书页.文档.预览.图片.占位", "图片资源预览占位")}
             </Text>
           </div>
         )}
-        {imageTitle ? (
-          <div className="feishu-docs-local-preview-native-meta">
-            <div className="feishu-docs-local-preview-native-caption">
-              <Text type="secondary">{imageTitle}</Text>
-            </div>
-            {previewError ? (
-              <Text type="secondary" className="feishu-docs-local-preview-native-description">
-                {previewError}
-              </Text>
-            ) : null}
-            {renderNativePropItems(propItems)}
-          </div>
-        ) : previewError ? (
-          <div className="feishu-docs-local-preview-native-meta">
-            <Text type="secondary" className="feishu-docs-local-preview-native-description">
-              {previewError}
-            </Text>
-            {renderNativePropItems(propItems)}
-          </div>
+        {safeImageUrl && previewError ? (
+          <Text type="secondary" className="feishu-docs-local-preview-plain-media-note">
+            {previewError}
+          </Text>
         ) : null}
       </section>
     )
@@ -2452,45 +2595,80 @@ function FeishuDocsNativeBlockPreview(input: {
     const token = readPreferredFeishuDocsAttribute(attributes, ["token", "whiteboard-token", "whiteboard_token"])
     const previewError = token ? input.whiteboardPreviewErrors?.[token] ?? "" : ""
     const imageUrl =
-      readPreferredFeishuDocsAttribute(attributes, ["src", "url", "href", "tmp-download-url", "tmp_download_url"])
-      || (token ? input.whiteboardPreviewUrls?.[token] ?? "" : "")
+      (token ? input.whiteboardPreviewUrls?.[token] ?? "" : "")
+      || readPreferredFeishuDocsAttribute(attributes, ["src", "url", "href", "tmp-download-url", "tmp_download_url"])
       || ""
     const safeImageUrl = normalizeFeishuDocsPreviewHref(imageUrl)
     const boardTitle = readPreferredFeishuDocsAttribute(attributes, ["name", "title"])
       || previewText(input.t, "飞书页.文档.预览.块标签.whiteboard", "画板块")
     const focusRect = token ? input.whiteboardPreviewFocusRects?.[token] : undefined
     return (
-      <section className={`feishu-docs-local-preview-native-block ${resolveToneClassName(spec)} is-image is-board-preview`}>
+      <section className="feishu-docs-local-preview-plain-media is-image is-board-preview">
         {safeImageUrl ? (
           <FeishuDocsPreviewImage
             src={safeImageUrl}
             alt={boardTitle}
             displayMode="board"
+            plain
             focusRect={focusRect}
             t={input.t}
           />
         ) : (
-          <div className="feishu-docs-local-preview-image-placeholder">
+          <div className="feishu-docs-local-preview-image-placeholder is-plain">
             <PictureOutlined />
-            <Text type="secondary">{boardTitle}</Text>
+            <Text type="secondary">{previewError || boardTitle}</Text>
           </div>
         )}
-        {!safeImageUrl || previewError ? (
-          <div className="feishu-docs-local-preview-native-meta">
-            {!safeImageUrl ? (
-              <div className="feishu-docs-local-preview-native-caption">
-                <Text type="secondary">{boardTitle}</Text>
-              </div>
-            ) : null}
-            {previewError ? (
-              <Text type="secondary" className="feishu-docs-local-preview-native-description">
-                {previewError}
-              </Text>
-            ) : null}
-            {renderNativePropItems(propItems)}
-          </div>
+        {safeImageUrl && previewError ? (
+          <Text type="secondary" className="feishu-docs-local-preview-plain-media-note">
+            {previewError}
+          </Text>
         ) : null}
       </section>
+    )
+  }
+
+  if (input.name === "bitable") {
+    const bitableUrl = normalizeFeishuDocsPreviewHref(
+      readPreferredFeishuDocsAttribute(attributes, ["url", "href"]),
+    )
+    const bitableText = readPreferredFeishuDocsAttribute(
+      attributes,
+      ["text", "content", "description", "summary", "title", "name", "label"],
+    ) || description || title
+    const childrenContent = input.childrenNodes.length > 0
+      ? renderPreviewNodes(
+        input.childrenNodes,
+        input.mediaPreviewUrls,
+        input.mediaPreviewErrors,
+        input.whiteboardPreviewUrls,
+        input.whiteboardPreviewFocusRects,
+        input.whiteboardPreviewErrors,
+        input.t,
+        input.language,
+        input.headingSlugCounts,
+      )
+      : null
+
+    return renderPlainNativeBlock(
+      childrenContent && childrenContent.length > 0 ? (
+        childrenContent
+      ) : bitableText ? (
+        bitableUrl ? (
+          <p>
+            <a href={bitableUrl} target="_blank" rel="noreferrer" className="feishu-docs-local-preview-link-title">
+              {bitableText}
+            </a>
+          </p>
+        ) : (
+          <p>{bitableText}</p>
+        )
+      ) : (
+        <Text type="secondary">
+          {previewText(input.t, "飞书页.文档.预览.空状态.当前多维表格无内容", "当前多维表格没有可预览内容。")}
+        </Text>
+      ),
+      "is-bitable",
     )
   }
 
@@ -2678,6 +2856,7 @@ function FeishuDocsNativeBlockPreview(input: {
               input.whiteboardPreviewErrors,
               input.t,
               input.language,
+              input.headingSlugCounts,
             )}
           </div>
         ) : null}
@@ -2797,6 +2976,28 @@ function collectLarkTableRowsFromMdx(
 }
 
 function FeishuDocsReadonlyMdxMarkdown(props: FeishuDocsMdxMarkdownProps) {
+  const codeBlockDescriptor = useMemo<CodeBlockEditorDescriptor>(() => ({
+    match: () => true,
+    priority: 100,
+    Editor: (editorProps) => {
+      if (isMermaidCodeBlockLanguage(editorProps.language)) {
+        return <FeishuDocsMermaidBlock source={editorProps.code} t={props.t} />
+      }
+
+      if (isMathCodeBlockLanguage(editorProps.language)) {
+        return <FeishuDocsMathBlock expression={editorProps.code} t={props.t} />
+      }
+
+      return (
+        <FeishuDocsStaticCodeBlock
+          code={editorProps.code}
+          language={editorProps.language}
+          t={props.t}
+        />
+      )
+    },
+  }), [props.t])
+
   const jsxComponentDescriptors = useMemo<JsxComponentDescriptor[]>(() => [
     {
       name: "*",
@@ -2833,14 +3034,14 @@ function FeishuDocsReadonlyMdxMarkdown(props: FeishuDocsMdxMarkdownProps) {
     linkPlugin(),
     thematicBreakPlugin(),
     tablePlugin(),
-    codeBlockPlugin({ defaultCodeBlockLanguage: "text" }),
-    codeMirrorPlugin({
-      codeBlockLanguages: FEISHU_DOCS_MDX_CODE_BLOCK_LANGUAGES,
+    codeBlockPlugin({
+      defaultCodeBlockLanguage: "text",
+      codeBlockEditorDescriptors: [codeBlockDescriptor],
     }),
     jsxPlugin({
       jsxComponentDescriptors,
     }),
-  ], [jsxComponentDescriptors])
+  ], [codeBlockDescriptor, jsxComponentDescriptors])
 
   return (
     <MDXEditor
@@ -3158,9 +3359,10 @@ function FeishuDocsMdxBlockPreview(input: {
   if (input.name === "image") {
     const token = readPreferredFeishuDocsAttribute(input.attributes, ["token", "file-token", "file_token"])
     const previewError = token ? input.mediaPreviewErrors?.[token] ?? "" : ""
+    const { width: imageWidth, height: imageHeight } = readFeishuDocsPreviewDimensions(input.attributes)
     const imageUrl =
-      readPreferredFeishuDocsAttribute(input.attributes, ["src", "url", "tmp-download-url", "tmp_download_url"])
-      || (token ? input.mediaPreviewUrls?.[token] ?? "" : "")
+      (token ? input.mediaPreviewUrls?.[token] ?? "" : "")
+      || readPreferredFeishuDocsAttribute(input.attributes, ["src", "url", "tmp-download-url", "tmp_download_url"])
       || ""
     const safeImageUrl = normalizeFeishuDocsPreviewHref(imageUrl)
     const imageTitle = readPreferredFeishuDocsAttribute(input.attributes, ["name", "alt", "caption", "caption-content"])
@@ -3175,6 +3377,8 @@ function FeishuDocsMdxBlockPreview(input: {
               || previewText(input.t, "飞书页.文档.预览.图片.alt", "飞书图片")
             }
             displayMode="default"
+            preferredWidth={imageWidth}
+            preferredHeight={imageHeight}
             t={input.t}
           />
         ) : (

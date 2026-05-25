@@ -6,6 +6,8 @@ import {
   DESKTOP_LOCAL_CONTROL_PROTOCOL,
   mergeDesktopFeishuOAuthScopes,
   normalizeDesktopFeishuRedirectUri,
+  resolveDesktopFeishuDocMediaPreviewUrl,
+  resolveDesktopFeishuDocWhiteboardPreviewUrl,
   resolveDesktopLocalControlBaseUrl,
   resolveDesktopFeishuOAuthCallbackOrigin,
   resolveDesktopFeishuOAuthCallbackUrl,
@@ -18,6 +20,12 @@ describe("desktop-feishu-oauth shared helpers", () => {
     expect(DESKTOP_LOCAL_CONTROL_PROTOCOL).toBe("maomiagent.desktop.control.v1");
     expect(resolveDesktopFeishuOAuthCallbackUrl()).toBe(
       "http://127.0.0.1:35000/desktop/feishu/oauth/callback",
+    );
+    expect(resolveDesktopFeishuDocMediaPreviewUrl("img_token")).toBe(
+      "http://127.0.0.1:35000/desktop/feishu/docs/media?token=img_token",
+    );
+    expect(resolveDesktopFeishuDocWhiteboardPreviewUrl("board_token")).toBe(
+      "http://127.0.0.1:35000/desktop/feishu/docs/whiteboard?token=board_token",
     );
   });
 

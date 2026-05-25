@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 
 import type { FeishuBotStateView, FeishuStateView } from "../../../../../shared/desktop-feishu";
 import type { DesktopFeishuStoreSnapshot } from "../../abstraction/ports/desktop-feishu-store.ports";
-import { ensureDesktopFeishuDeveloperAccessToken } from "./desktop-feishu-developer-token";
+import {
+  DESKTOP_FEISHU_DEVELOPER_TOKEN_AUTO_REFRESH_TASK_ID,
+  ensureDesktopFeishuDeveloperAccessToken,
+  withDesktopFeishuDeveloperAccessTokenRetry,
+} from "./desktop-feishu-developer-token";
+import { DesktopFeishuOpenApiError } from "./desktop-feishu-openapi-client";
 
 function createState(): FeishuStateView {
   return {
@@ -78,15 +83,16 @@ function createBotState(): FeishuBotStateView {
     hasAppSecret: false,
     hasVerificationToken: false,
     hasEncryptKey: false,
-    transportMode: "webhook",
+    transportMode: "websocket",
     catalog: {
-      transportMode: "webhook",
+      transportMode: "websocket",
       descriptors: [],
     },
-    connectionStatus: "stopped",
+    connectionStatus: "disconnected",
     sessionMappingCount: 0,
     processedMessageCount: 0,
     queuedConversationCount: 0,
+    recentProcessedMessages: [],
     updatedAt: "2026-05-22T00:00:00.000Z",
   };
 }
@@ -95,6 +101,11 @@ function createSnapshot(overrides: Partial<DesktopFeishuStoreSnapshot["developer
   return {
     state: createState(),
     bot: createBotState(),
+    botRuntime: {
+      version: "1.0",
+      bindings: [],
+      processedMessages: [],
+    },
     docs: {},
     developerCredential: {
       appSecret: "secret-1",
@@ -178,6 +189,12 @@ describe("ensureDesktopFeishuDeveloperAccessToken", () => {
     expect(store.snapshot().state.smartAssistant.accessTokenExpiresAt).toBe("2026-05-22T02:00:00.000Z");
     expect(store.snapshot().state.smartAssistant.lastRefreshedAt).toBe("2026-05-22T00:00:00.000Z");
     expect(store.snapshot().state.smartAssistant.lastError).toBeUndefined();
+    expect(store.snapshot().state.smartAssistant.autoRefreshTask).toMatchObject({
+      taskId: DESKTOP_FEISHU_DEVELOPER_TOKEN_AUTO_REFRESH_TASK_ID,
+      enabled: true,
+      status: "success",
+      nextRunAt: "2026-05-22T01:00:00.000Z",
+    });
   });
 
   test("marks authorization as errored when the refresh token is expired", async () => {
@@ -198,5 +215,53 @@ describe("ensureDesktopFeishuDeveloperAccessToken", () => {
 
     expect(store.snapshot().state.smartAssistant.authStatus).toBe("error");
     expect(store.snapshot().state.smartAssistant.lastError).toBe("飞书授权已过期，请重新授权");
+    expect(store.snapshot().state.smartAssistant.autoRefreshTask).toMatchObject({
+      taskId: DESKTOP_FEISHU_DEVELOPER_TOKEN_AUTO_REFRESH_TASK_ID,
+      enabled: true,
+      status: "failed",
+      nextRunAt: "2026-05-22T01:00:00.000Z",
+    });
+  });
+
+  test("retries once with a forced refresh when the request fails with an expired token code", async () => {
+    const store = createStore(createSnapshot({
+      accessTokenExpiresAt: "2026-05-22T02:00:00.000Z",
+    }));
+    let refreshCalls = 0;
+    const observedTokens: string[] = [];
+
+    const result = await withDesktopFeishuDeveloperAccessTokenRetry({
+      store,
+      now: () => new Date("2026-05-22T00:00:00.000Z"),
+      openApiClient: {
+        refreshUserAccessToken: async () => {
+          refreshCalls += 1;
+          return {
+            accessToken: "new-access",
+            refreshToken: "new-refresh",
+            accessTokenExpiresAt: "2026-05-22T03:00:00.000Z",
+            refreshTokenExpiresAt: "2026-06-22T00:00:00.000Z",
+          };
+        },
+      },
+    }, async ({ accessToken, retried }) => {
+      observedTokens.push(`${accessToken}:${retried ? "retry" : "first"}`);
+      if (!retried) {
+        throw new DesktopFeishuOpenApiError({
+          message: "Feishu API HTTP error 400 (code 20006): access token expired",
+          status: 400,
+          code: 20006,
+        });
+      }
+      return "ok";
+    });
+
+    expect(result).toBe("ok");
+    expect(refreshCalls).toBe(1);
+    expect(observedTokens).toEqual([
+      "old-access:first",
+      "new-access:retry",
+    ]);
+    expect(store.snapshot().developerToken.accessToken).toBe("new-access");
   });
 });

@@ -20,6 +20,7 @@ export type FeishuDocIRAsset = {
   cacheKey: string;
   status: "missing" | "cached" | "error";
   localPath: string;
+  absolutePath?: string;
   checksum: string;
   width?: number;
   height?: number;

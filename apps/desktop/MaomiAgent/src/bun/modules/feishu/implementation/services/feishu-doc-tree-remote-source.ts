@@ -3,6 +3,12 @@ import type {
   FeishuDocTreeNode,
   FeishuDocTreeObjectType,
 } from "../../../../../shared/desktop-feishu";
+import type { FeishuDocIR } from "../../../../../shared/desktop-feishu-doc-ir";
+import { feishuDocIRToMdx } from "./feishu-doc-mdx-codec";
+import {
+  normalizeFeishuDocBlocksToIR,
+  type FeishuRawDocBlock,
+} from "./feishu-doc-ir-normalizer";
 
 export type FeishuOpenApiReader = {
   getJson<T>(url: string, accessToken: string): Promise<T>;
@@ -47,30 +53,17 @@ type FeishuDocumentResponse = {
   document?: {
     document_id?: string;
     title?: string;
+    revision_id?: string | number;
   };
-};
-
-type FeishuDocumentBlockPayload = {
-  block_id?: string;
-  block_type?: number;
-  text?: {
-    content?: string;
-    elements?: unknown[];
-  };
-  heading1?: { elements?: unknown[]; content?: string };
-  heading2?: { elements?: unknown[]; content?: string };
-  heading3?: { elements?: unknown[]; content?: string };
-  heading4?: { elements?: unknown[]; content?: string };
-  heading5?: { elements?: unknown[]; content?: string };
-  heading6?: { elements?: unknown[]; content?: string };
-  bullet?: { elements?: unknown[]; content?: string };
-  ordered?: { elements?: unknown[]; content?: string };
-  todo?: { elements?: unknown[]; content?: string };
-  quote?: { elements?: unknown[]; content?: string };
 };
 
 type FeishuDocumentBlocksResponse = {
-  items?: FeishuDocumentBlockPayload[];
+  items?: FeishuRawDocBlock[];
+};
+
+type ResolvedFeishuDocxDocument = {
+  content: FeishuDocContentView;
+  ir: FeishuDocIR;
 };
 
 const FEISHU_OPEN_API_BASE_URL = "https://open.feishu.cn/open-apis";
@@ -128,127 +121,45 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-function firstStringField(record: Record<string, unknown>, fields: readonly string[]): string {
-  for (const field of fields) {
-    const value = record[field];
-    if (typeof value === "string" && value.trim().length > 0) {
-      return value.trim();
-    }
+function readRevisionId(value: unknown): string {
+  if (typeof value === "number") {
+    return String(value);
   }
-  return "";
+  return typeof value === "string" ? value : "";
 }
 
-function extractInlineTextFromElement(element: unknown): string {
-  if (!isRecord(element)) {
-    return "";
+function ensureStableBlockIds(blocks: FeishuRawDocBlock[]): FeishuRawDocBlock[] {
+  return blocks.map((block, index) => (
+    typeof block.block_id === "string" && block.block_id.trim().length > 0
+      ? block
+      : { ...block, block_id: `block_${index + 1}` }
+  ));
+}
+
+function ensureDocumentRootBlock(blocks: FeishuRawDocBlock[], documentId: string): FeishuRawDocBlock[] {
+  if (blocks.length === 0) {
+    return [];
   }
 
-  const direct = firstStringField(element, ["content", "text", "title", "name"]);
-  if (direct) {
-    return direct;
+  const normalizedBlocks = ensureStableBlockIds(blocks);
+  if (normalizedBlocks.some((block) => block.block_id === documentId || block.block_type === 1)) {
+    return normalizedBlocks;
   }
 
-  const knownElementFields = [
-    "text_run",
-    "mention_user",
-    "mention_doc",
-    "reminder",
-    "equation",
-    "file",
-    "jira_issue",
-    "wiki_catalog",
+  return [
+    {
+      block_id: documentId,
+      block_type: 1,
+      children: normalizedBlocks
+        .map((block) => block.block_id ?? "")
+        .filter((blockId): blockId is string => blockId.length > 0),
+    },
+    ...normalizedBlocks.map((block) => (
+      typeof block.parent_id === "string" && block.parent_id.trim().length > 0
+        ? block
+        : { ...block, parent_id: documentId }
+    )),
   ];
-
-  for (const field of knownElementFields) {
-    const value = element[field];
-    if (!isRecord(value)) {
-      continue;
-    }
-
-    const nested = firstStringField(value, ["content", "text", "title", "name", "file_name", "url"]);
-    if (nested) {
-      return nested;
-    }
-  }
-
-  return "";
-}
-
-function extractTextContainerText(container: unknown): string {
-  if (!isRecord(container)) {
-    return "";
-  }
-
-  const direct = firstStringField(container, ["content", "text"]);
-  if (direct) {
-    return direct;
-  }
-
-  const elements = Array.isArray(container.elements) ? container.elements : [];
-  return elements
-    .map(extractInlineTextFromElement)
-    .filter((content) => content.length > 0)
-    .join("");
-}
-
-function blockTextContainer(block: FeishuDocumentBlockPayload): { key: string; text: string } {
-  const candidateKeys = [
-    "heading1",
-    "heading2",
-    "heading3",
-    "heading4",
-    "heading5",
-    "heading6",
-    "text",
-    "bullet",
-    "ordered",
-    "todo",
-    "quote",
-  ] as const;
-
-  for (const key of candidateKeys) {
-    const text = extractTextContainerText(block[key]);
-    if (text.trim().length > 0) {
-      return { key, text: text.trim() };
-    }
-  }
-
-  return { key: "text", text: "" };
-}
-
-function formatBlockMarkdown(block: FeishuDocumentBlockPayload): string {
-  const { key, text } = blockTextContainer(block);
-  if (!text) {
-    return "";
-  }
-
-  const headingLevelByKey: Record<string, number> = {
-    heading1: 1,
-    heading2: 2,
-    heading3: 3,
-    heading4: 4,
-    heading5: 5,
-    heading6: 6,
-  };
-  const headingLevel = headingLevelByKey[key];
-  if (headingLevel) {
-    return `${"#".repeat(headingLevel)} ${text}`;
-  }
-
-  if (key === "bullet") {
-    return `- ${text}`;
-  }
-  if (key === "ordered") {
-    return `1. ${text}`;
-  }
-  if (key === "todo") {
-    return `- [ ] ${text}`;
-  }
-  if (key === "quote") {
-    return text.split("\n").map((line) => `> ${line}`).join("\n");
-  }
-
-  return text;
 }
 
 export class FeishuDocTreeRemoteSource {
@@ -256,21 +167,33 @@ export class FeishuDocTreeRemoteSource {
 
   async readDocumentContent(accessToken: string, docId: string): Promise<FeishuDocContentView> {
     try {
-      return await this.readDocxDocumentContent(accessToken, docId, "document_id");
+      return (await this.readDocxDocument(accessToken, docId, "document_id")).content;
     } catch (error) {
       if (!shouldFallbackToDocument(error)) {
         throw error;
       }
 
-      return this.readDocxDocumentContent(accessToken, docId, "wiki_node_token");
+      return (await this.readDocxDocument(accessToken, docId, "wiki_node_token")).content;
     }
   }
 
-  private async readDocxDocumentContent(
+  async readDocumentIR(accessToken: string, docId: string): Promise<FeishuDocIR> {
+    try {
+      return (await this.readDocxDocument(accessToken, docId, "document_id")).ir;
+    } catch (error) {
+      if (!shouldFallbackToDocument(error)) {
+        throw error;
+      }
+
+      return (await this.readDocxDocument(accessToken, docId, "wiki_node_token")).ir;
+    }
+  }
+
+  private async readDocxDocument(
     accessToken: string,
     docId: string,
     documentIdType: "document_id" | "wiki_node_token",
-  ): Promise<FeishuDocContentView> {
+  ): Promise<ResolvedFeishuDocxDocument> {
     const documentQuery = documentIdType === "wiki_node_token"
       ? { document_id_type: documentIdType }
       : {};
@@ -291,28 +214,41 @@ export class FeishuDocTreeRemoteSource {
     const document = documentResponse.document ?? {};
     const resolvedDocId = valueOrFallback(document.document_id, docId);
     const title = valueOrFallback(document.title, resolvedDocId);
-    const blocks = blocksResponse.items ?? [];
-    const markdown = blocks
-      .map(formatBlockMarkdown)
-      .filter((content) => content.length > 0)
-      .join("\n\n");
+    const pulledAt = new Date().toISOString();
+    const blocks = ensureDocumentRootBlock(blocksResponse.items ?? [], resolvedDocId);
+    const ir = normalizeFeishuDocBlocksToIR({
+      documentId: resolvedDocId,
+      title,
+      revisionId: readRevisionId(document.revision_id),
+      pulledAt,
+      documentIdType,
+      nodeToken: documentIdType === "wiki_node_token" ? docId : undefined,
+      blocks,
+    });
+    const markdown = feishuDocIRToMdx(ir).trimEnd();
+    const riskyBlocks = Object.values(ir.blocks)
+      .filter((block) => block.type === "undefined")
+      .map((block) => block.id);
 
     return {
-      docId: resolvedDocId,
-      title,
-      markdown,
-      length: markdown.length,
-      totalLength: markdown.length,
-      offset: 0,
-      updatedAt: new Date().toISOString(),
-      blocks,
-      analysis: {
-        riskyBlocks: [],
-        riskySync: false,
-        syncMode: null,
-        riskyBlockMode: "safe",
-      },
-    } as FeishuDocContentView;
+      ir,
+      content: {
+        docId: resolvedDocId,
+        title,
+        markdown,
+        length: markdown.length,
+        totalLength: markdown.length,
+        offset: 0,
+        updatedAt: new Date().toISOString(),
+        blocks,
+        analysis: {
+          riskyBlocks,
+          riskySync: false,
+          syncMode: null,
+          riskyBlockMode: riskyBlocks.length > 0 ? "preserved" : "safe",
+        },
+      } as FeishuDocContentView,
+    };
   }
 
   async recognizeRoot(accessToken: string, token: string): Promise<FeishuDocTreeRecognizedRoot> {

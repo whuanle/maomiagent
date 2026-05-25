@@ -1,3 +1,5 @@
+import { pathToFileURL } from "node:url";
+
 import type { FeishuDocIR, FeishuDocIRBlock } from "../../../../../shared/desktop-feishu-doc-ir";
 
 export type FeishuDocMdxPatch = {
@@ -44,44 +46,39 @@ function blockToMdx(ir: FeishuDocIR, blockId: string): string {
 
   const text = blockText(block);
   const children = childBlocksToMdx(ir, block);
+  const body = blockBody(text, children);
+  const hasVisibleText = text.trim().length > 0;
 
   if (block.type.startsWith("heading")) {
     const level = headingLevel(block.type);
-    return level ? `${"#".repeat(level)} ${text}` : unsupportedBlock(block);
+    return level ? (hasVisibleText ? `${"#".repeat(level)} ${text}` : "") : nativeBlockComponent(ir, block, body);
   }
 
   switch (block.type) {
     case "text":
-      return text;
+      return hasVisibleText ? text : "";
     case "bullet":
-      return `- ${text}`;
+      return hasVisibleText ? `- ${text}` : "";
     case "ordered":
-      return `1. ${text}`;
+      return hasVisibleText ? `1. ${text}` : "";
     case "quote":
-      return `> ${text}`;
+      return hasVisibleText ? `> ${text}` : "";
     case "code":
-      return `\`\`\`\n${text}\n\`\`\``;
+      return hasVisibleText ? `\`\`\`\n${text}\n\`\`\`` : "";
     case "todo":
-      return `- [ ] ${text}`;
+      return hasVisibleText ? `- [ ] ${text}` : "";
     case "image":
-      return selfClosingComponent("FeishuImage", componentAttrs({
-        token: block.resource?.token,
-        width: block.attrs.width,
-        height: block.attrs.height,
-      }));
+      return selfClosingComponent("FeishuImage", componentAttrs(componentPropsFromBlock(ir, block)));
     case "file":
-      return selfClosingComponent("FeishuFile", componentAttrs({
-        token: block.resource?.token,
-        name: block.attrs.name,
-      }));
+      return selfClosingComponent("FeishuFile", componentAttrs(componentPropsFromBlock(ir, block)));
     case "callout":
-      return flowComponent("FeishuCallout", componentAttrs({ blockId: block.id }), children || text);
+      return nativeComponent("FeishuCallout", componentAttrs(componentPropsFromBlock(ir, block, { includeBlockId: true })), body);
     case "grid":
-      return flowComponent("FeishuGrid", componentAttrs({ blockId: block.id }), children);
+      return nativeComponent("FeishuGrid", componentAttrs(componentPropsFromBlock(ir, block, { includeBlockId: true })), body);
     case "grid-column":
-      return flowComponent("FeishuGridColumn", componentAttrs({ blockId: block.id }), children);
+      return nativeComponent("FeishuGridColumn", componentAttrs(componentPropsFromBlock(ir, block, { includeBlockId: true })), body);
     default:
-      return unsupportedBlock(block);
+      return nativeBlockComponent(ir, block, body);
   }
 }
 
@@ -96,13 +93,23 @@ function blockText(block: FeishuDocIRBlock): string {
   return block.text.map((run) => run.text).join("");
 }
 
+function blockBody(text: string, children: string): string {
+  return [text, children]
+    .filter((value) => value.trim().length > 0)
+    .join("\n\n");
+}
+
 function headingLevel(type: string): number | null {
   const match = /^heading([1-6])$/.exec(type);
   return match ? Number(match[1]) : null;
 }
 
-function unsupportedBlock(block: FeishuDocIRBlock): string {
-  return selfClosingComponent("FeishuUnsupportedBlock", componentAttrs({ blockId: block.id, type: block.type }));
+function nativeBlockComponent(ir: FeishuDocIR, block: FeishuDocIRBlock, body: string): string {
+  return nativeComponent(
+    componentNameForBlockType(block.type),
+    componentAttrs(componentPropsFromBlock(ir, block, { includeBlockId: true })),
+    body,
+  );
 }
 
 function flowComponent(name: string, attrs: string, children: string): string {
@@ -111,6 +118,47 @@ function flowComponent(name: string, attrs: string, children: string): string {
 
 function selfClosingComponent(name: string, attrs: string): string {
   return `<${name}${attrs} />`;
+}
+
+function nativeComponent(name: string, attrs: string, body: string): string {
+  return body ? flowComponent(name, attrs, body) : selfClosingComponent(name, attrs);
+}
+
+function componentNameForBlockType(type: FeishuDocIRBlock["type"]): string {
+  return `Feishu${type
+    .split("-")
+    .filter((part) => part.length > 0)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join("")}`;
+}
+
+function componentPropsFromBlock(
+  ir: FeishuDocIR,
+  block: FeishuDocIRBlock,
+  options: { includeBlockId?: boolean } = {},
+): Record<string, string | number | boolean> {
+  const attrs: Record<string, string | number | boolean> = {};
+
+  if (options.includeBlockId) {
+    attrs.blockId = block.id;
+  }
+
+  if (block.resource?.token) {
+    attrs.token = block.resource.token;
+
+    const asset = ir.assets[block.resource.token];
+    if (block.type === "image" && asset?.status === "cached" && asset.absolutePath?.trim()) {
+      attrs.src = pathToFileURL(asset.absolutePath).toString();
+    }
+  }
+
+  for (const [key, value] of Object.entries(block.attrs)) {
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      attrs[key] = value;
+    }
+  }
+
+  return attrs;
 }
 
 function componentAttrs(values: Record<string, unknown>): string {

@@ -70,15 +70,16 @@ function createBotState(): FeishuBotStateView {
     hasAppSecret: false,
     hasVerificationToken: false,
     hasEncryptKey: false,
-    transportMode: "webhook",
+    transportMode: "websocket",
     catalog: {
-      transportMode: "webhook",
+      transportMode: "websocket",
       descriptors: [],
     },
-    connectionStatus: "stopped",
+    connectionStatus: "disconnected",
     sessionMappingCount: 0,
     processedMessageCount: 0,
     queuedConversationCount: 0,
+    recentProcessedMessages: [],
     updatedAt: new Date(0).toISOString(),
   };
 }
@@ -108,6 +109,11 @@ function createStoreSnapshot(): DesktopFeishuStoreSnapshot {
   return {
     state: createState(),
     bot: createBotState(),
+    botRuntime: {
+      version: "1.0",
+      bindings: [],
+      processedMessages: [],
+    },
     docs: {
       "doc-roadmap": createDoc({
         docId: "doc-roadmap",
@@ -124,6 +130,22 @@ function createStoreSnapshot(): DesktopFeishuStoreSnapshot {
         title: "无关记录",
         markdown: "# 无关记录\n\n这里没有命中关键字。",
       }),
+    },
+    developerCredential: {
+      appSecret: "",
+    },
+    developerToken: {
+      accessToken: "",
+      refreshToken: "",
+      accessTokenExpiresAt: "",
+      refreshTokenExpiresAt: "",
+    },
+    docTreeCache: {
+      lastRootToken: "",
+      lastRootUpdatedAt: "",
+      roots: {},
+      branches: {},
+      contents: {},
     },
   };
 }

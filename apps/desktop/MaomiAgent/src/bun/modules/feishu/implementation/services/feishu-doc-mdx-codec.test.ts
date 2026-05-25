@@ -1,3 +1,5 @@
+import { pathToFileURL } from "node:url";
+
 import { describe, expect, test } from "bun:test";
 
 import type { FeishuDocIR } from "../../../../../shared/desktop-feishu-doc-ir";
@@ -30,6 +32,64 @@ describe("feishu-doc-mdx-codec", () => {
   test("serializes IR to stable MDX", () => {
     expect(feishuDocIRToMdx(ir())).toContain("# Title");
     expect(feishuDocIRToMdx(ir())).toContain('<FeishuImage token="img_token" width="640" height="360" />');
+  });
+
+  test("serializes cached image assets to local file preview urls", () => {
+    const sample = ir();
+    sample.assets.img_token = {
+      ...sample.assets.img_token,
+      status: "cached",
+      localPath: "ws_1/docx_1/img_token-sha.png",
+      absolutePath: "E:\\workspace\\cache\\img_token-sha.png",
+    };
+
+    expect(feishuDocIRToMdx(sample)).toContain(
+      `src="${pathToFileURL(sample.assets.img_token.absolutePath!).toString()}"`,
+    );
+  });
+
+  test("serializes callout styles and generic native blocks into Feishu tags", () => {
+    const sample = ir();
+    sample.blocks.docx_1.children.push("callout", "whiteboard");
+    sample.blocks.callout = {
+      id: "callout",
+      type: "callout",
+      parentId: "docx_1",
+      children: ["callout_text"],
+      editable: true,
+      text: [],
+      resource: null,
+      attrs: { emoji: "bulb", "background-color": "yellow", "border-color": "orange" },
+      raw: {},
+    };
+    sample.blocks.callout_text = {
+      id: "callout_text",
+      type: "text",
+      parentId: "callout",
+      children: [],
+      editable: true,
+      text: [{ kind: "text", text: "Callout body", attrs: {}, raw: {} }],
+      resource: null,
+      attrs: {},
+      raw: {},
+    };
+    sample.blocks.whiteboard = {
+      id: "whiteboard",
+      type: "whiteboard",
+      parentId: "docx_1",
+      children: [],
+      editable: false,
+      text: [],
+      resource: { token: "board_token", kind: "whiteboard" },
+      attrs: { title: "Board" },
+      raw: {},
+    };
+
+    const markdown = feishuDocIRToMdx(sample);
+
+    expect(markdown).toContain('<FeishuCallout blockId="callout" emoji="bulb" background-color="yellow" border-color="orange">');
+    expect(markdown).toContain("Callout body");
+    expect(markdown).toContain('<FeishuWhiteboard blockId="whiteboard" token="board_token" title="Board" />');
   });
 
   test("parses simple heading text change as IR patch", () => {

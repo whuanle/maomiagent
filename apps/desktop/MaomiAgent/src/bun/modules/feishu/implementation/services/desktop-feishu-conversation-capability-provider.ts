@@ -5,6 +5,8 @@ import type { ToolSource } from "#maomiagent/kernel/src/host/tools";
 import type { DesktopConversationCapabilityProvider } from "../../../conversation/abstraction/ports/desktop-conversation-capabilities.ports";
 import type { DesktopFeishuPort } from "../../abstraction/ports/desktop-feishu.ports";
 import type { FeishuSmartAssistantExecuteActionInput } from "../../../../../shared/desktop-feishu";
+import { inferActionDomain } from "./action-handlers/desktop-feishu-smart-assistant-action-handler.utils";
+import { readFeishuBotAllowedDomains } from "./desktop-feishu-bot-capability-policy";
 
 const FEISHU_SMART_ASSISTANT_TOOL_DESCRIPTOR: ToolDescriptor = {
   name: "feishu_execute_smart_assistant_action",
@@ -146,6 +148,10 @@ export class DesktopFeishuConversationCapabilityProvider
     if (!state.smartAssistant.enabled) {
       return undefined;
     }
+    const allowedDomains = readFeishuBotAllowedDomains(input.sessionMetadata);
+    const visibleActions = allowedDomains
+      ? state.smartAssistant.actions.filter((item) => allowedDomains.includes(item.domain))
+      : state.smartAssistant.actions;
 
     const toolHandler: RegisteredToolHandler = {
       descriptor: FEISHU_SMART_ASSISTANT_TOOL_DESCRIPTOR,
@@ -156,6 +162,14 @@ export class DesktopFeishuConversationCapabilityProvider
           throw {
             code: "invalid_argument",
             message: "actionId is required",
+            retryable: false,
+          };
+        }
+        const actionDomain = inferActionDomain(actionId);
+        if (allowedDomains && !allowedDomains.includes(actionDomain)) {
+          throw {
+            code: "invalid_argument",
+            message: `Action domain ${actionDomain} is not enabled for this Feishu bot conversation.`,
             retryable: false,
           };
         }
@@ -172,7 +186,7 @@ export class DesktopFeishuConversationCapabilityProvider
     };
 
     return {
-      toolSources: [new DesktopFeishuConversationToolSource(state.smartAssistant.actions.length)],
+      toolSources: [new DesktopFeishuConversationToolSource(visibleActions.length)],
       toolHandlers: [toolHandler],
     };
   }

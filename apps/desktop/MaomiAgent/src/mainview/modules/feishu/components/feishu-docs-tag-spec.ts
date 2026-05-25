@@ -20,12 +20,18 @@ export function normalizeFeishuDocsTagName(name: string | null | undefined): str
   if (!name) {
     return ""
   }
-  return name
+  const normalized = name
     .trim()
     .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
     .replace(/[_\s]+/g, "-")
     .replace(/-+/g, "-")
     .toLowerCase()
+
+  if (normalized.startsWith("feishu-") && normalized.length > "feishu-".length) {
+    return normalized.slice("feishu-".length)
+  }
+
+  return normalized
 }
 
 export const FEISHU_DOCS_TAG_SPECS: FeishuDocsTagSpec[] = [

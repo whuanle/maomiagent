@@ -344,6 +344,24 @@ export function FeishuPage(props: Props) {
     })
   }, [baseUrl, loadData, props.active])
 
+  useEffect(() => {
+    if (!props.active || !baseUrl) {
+      return
+    }
+
+    const timer = window.setInterval(() => {
+      void fetchFeishuBotState(baseUrl)
+        .then((nextState) => {
+          setBotState(nextState)
+        })
+        .catch(() => undefined)
+    }, 3_000)
+
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [baseUrl, props.active])
+
   const handleSaveAssistant = useCallback(async (): Promise<FeishuStateView | null> => {
     if (!baseUrl) {
       return null
@@ -496,17 +514,17 @@ export function FeishuPage(props: Props) {
     }
   }, [baseUrl, props.t])
 
-  const handleSaveBot = useCallback(async (input: FeishuBotConfigInput) => {
+  const handleSaveBot = useCallback(async (input: FeishuBotConfigInput): Promise<FeishuBotStateView | null> => {
     if (!baseUrl) {
-      return
+      return null
     }
     if (!input.appId.trim()) {
       notifier.error(props.t("飞书页.校验.机器人AppId必填"))
-      return
+      return null
     }
     if (!botState?.hasAppSecret && !input.appSecret?.trim()) {
       notifier.error(props.t("飞书页.校验.机器人AppSecret必填"))
-      return
+      return null
     }
 
     try {
@@ -515,18 +533,20 @@ export function FeishuPage(props: Props) {
       setBotState(nextState)
       setLoadError("")
       notifier.success(props.t("飞书页.反馈.机器人保存成功"))
+      return nextState
     } catch (error) {
       notifier.error(props.t("飞书页.反馈.机器人保存失败", {
         错误: error instanceof Error ? error.message : String(error),
       }))
+      return null
     } finally {
       setSavingBot(false)
     }
   }, [baseUrl, botState?.hasAppSecret, props.t])
 
-  const handleClearBot = useCallback(async () => {
+  const handleClearBot = useCallback(async (): Promise<FeishuBotStateView | null> => {
     if (!baseUrl) {
-      return
+      return null
     }
 
     try {
@@ -535,10 +555,12 @@ export function FeishuPage(props: Props) {
       setBotState(nextState)
       setLoadError("")
       notifier.success(props.t("飞书页.反馈.机器人清除成功"))
+      return nextState
     } catch (error) {
       notifier.error(props.t("飞书页.反馈.机器人清除失败", {
         错误: error instanceof Error ? error.message : String(error),
       }))
+      return null
     } finally {
       setClearingBot(false)
     }
@@ -614,9 +636,7 @@ export function FeishuPage(props: Props) {
           saving={savingBot}
           clearing={clearingBot}
           onSave={handleSaveBot}
-          onClear={() => {
-            void handleClearBot()
-          }}
+          onClear={handleClearBot}
           onRefresh={() => {
             void loadData(false)
           }}

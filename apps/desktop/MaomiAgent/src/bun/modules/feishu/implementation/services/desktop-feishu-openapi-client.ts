@@ -1,5 +1,23 @@
 const FEISHU_OAUTH_TOKEN_URL = "https://open.feishu.cn/open-apis/authen/v2/oauth/token";
 
+const FEISHU_EXPIRED_ACCESS_TOKEN_CODES = new Set<number>([
+  20006,
+]);
+
+const FEISHU_EXPIRED_ACCESS_TOKEN_MESSAGE_PATTERNS = [
+  "access token expired",
+  "access token has expired",
+  "user access token expired",
+  "tenant access token expired",
+  "token expired",
+  "access token is expired",
+  "invalid access token",
+  "access token invalid",
+  "user access token is invalid",
+  "tenant access token is invalid",
+  "auth failed",
+];
+
 export type DesktopFeishuOpenApiTokens = {
   accessToken: string;
   refreshToken: string;
@@ -25,9 +43,69 @@ type FeishuOAuthTokenData = {
   refresh_expires_in?: number;
 };
 
+type FeishuErrorEnvelope = {
+  code?: number;
+  msg?: string;
+};
+
 type TokenMappingOptions = {
   requireRefreshToken: boolean;
 };
+
+export class DesktopFeishuOpenApiError extends Error {
+  readonly status: number;
+  readonly code?: number;
+  readonly responseText?: string;
+
+  constructor(input: {
+    message: string;
+    status: number;
+    code?: number;
+    responseText?: string;
+  }) {
+    super(input.message);
+    this.name = "DesktopFeishuOpenApiError";
+    this.status = input.status;
+    this.code = input.code;
+    this.responseText = input.responseText;
+  }
+}
+
+function normalizeFeishuErrorMessage(error: unknown): string {
+  if (error instanceof DesktopFeishuOpenApiError) {
+    return error.message;
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+export function isDesktopFeishuAccessTokenExpiredError(error: unknown): boolean {
+  if (error instanceof DesktopFeishuOpenApiError && error.code != null && FEISHU_EXPIRED_ACCESS_TOKEN_CODES.has(error.code)) {
+    return true;
+  }
+
+  const normalizedMessage = normalizeFeishuErrorMessage(error).toLowerCase();
+  if (normalizedMessage.includes("20006")) {
+    return true;
+  }
+
+  return FEISHU_EXPIRED_ACCESS_TOKEN_MESSAGE_PATTERNS.some((pattern) => normalizedMessage.includes(pattern));
+}
+
+function parseFeishuErrorEnvelope(text: string): FeishuErrorEnvelope | null {
+  if (!text.trim()) {
+    return null;
+  }
+
+  try {
+    const value = JSON.parse(text) as FeishuErrorEnvelope;
+    return typeof value === "object" && value ? value : null;
+  } catch {
+    return null;
+  }
+}
 
 export class DesktopFeishuOpenApiClient {
   private readonly fetchImpl: typeof fetch;
@@ -111,12 +189,22 @@ export class DesktopFeishuOpenApiClient {
     }
 
     if (!response.ok) {
-      throw new Error(`Feishu API HTTP error ${response.status}: ${envelope.msg || response.statusText || "request failed"}`);
+      throw new DesktopFeishuOpenApiError({
+        message: `Feishu API HTTP error ${response.status}${envelope.code != null ? ` (code ${envelope.code})` : ""}: ${envelope.msg || response.statusText || "request failed"}`,
+        status: response.status,
+        code: envelope.code,
+        responseText: text,
+      });
     }
 
     const code = envelope.code ?? 0;
     if (code !== 0) {
-      throw new Error(`Feishu API error ${code}: ${envelope.msg || "request failed"}`);
+      throw new DesktopFeishuOpenApiError({
+        message: `Feishu API error ${code}: ${envelope.msg || "request failed"}`,
+        status: response.status,
+        code,
+        responseText: text,
+      });
     }
 
     return envelope;

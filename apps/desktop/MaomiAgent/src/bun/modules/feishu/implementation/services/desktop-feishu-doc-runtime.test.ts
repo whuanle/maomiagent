@@ -1,3 +1,8 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
+
 import { describe, expect, test } from "bun:test";
 
 import type {
@@ -9,8 +14,15 @@ import type {
   FeishuDocTreeLoadResult,
   FeishuStateView,
 } from "../../../../../shared/desktop-feishu";
+import type { FeishuDocIR } from "../../../../../shared/desktop-feishu-doc-ir";
+import {
+  resolveDesktopFeishuDocMediaPreviewUrl,
+  resolveDesktopFeishuDocWhiteboardPreviewUrl,
+} from "../../../../../shared/desktop-feishu-oauth";
 import type { DesktopFeishuStoreSnapshot } from "../../abstraction/ports/desktop-feishu-store.ports";
+import type { DesktopWorkspaceQueryPort } from "../../../workspace/abstraction/ports/desktop-workspace.ports";
 import { DesktopFeishuDocRuntime } from "./desktop-feishu-doc-runtime";
+import { FeishuDocMarkdownWorkspaceCache } from "./feishu-doc-markdown-workspace-cache";
 
 function createState(): FeishuStateView {
   return {
@@ -80,15 +92,16 @@ function createBotState(): FeishuBotStateView {
     hasAppSecret: false,
     hasVerificationToken: false,
     hasEncryptKey: false,
-    transportMode: "webhook",
+    transportMode: "websocket",
     catalog: {
-      transportMode: "webhook",
+      transportMode: "websocket",
       descriptors: [],
     },
-    connectionStatus: "stopped",
+    connectionStatus: "disconnected",
     sessionMappingCount: 0,
     processedMessageCount: 0,
     queuedConversationCount: 0,
+    recentProcessedMessages: [],
     updatedAt: new Date(0).toISOString(),
   };
 }
@@ -97,6 +110,11 @@ function createSnapshot(docs: Record<string, FeishuDocContentView> = {}): Deskto
   return {
     state: createState(),
     bot: createBotState(),
+    botRuntime: {
+      version: "1.0",
+      bindings: [],
+      processedMessages: [],
+    },
     docs,
     developerCredential: { appSecret: "" },
     developerToken: { accessToken: "access", refreshToken: "", accessTokenExpiresAt: "", refreshTokenExpiresAt: "" },
@@ -127,6 +145,7 @@ function createStore(snapshot: DesktopFeishuStoreSnapshot) {
     write: async (next) => {
       snapshot.state = next.state;
       snapshot.bot = next.bot;
+      snapshot.botRuntime = next.botRuntime;
       snapshot.docs = next.docs;
       snapshot.developerCredential = next.developerCredential;
       snapshot.developerToken = next.developerToken;
@@ -141,7 +160,12 @@ function createRuntime(snapshot: DesktopFeishuStoreSnapshot) {
 
 function createRuntimeWithContentSource(
   snapshot: DesktopFeishuStoreSnapshot,
-  contentSource: { readDocumentContent(accessToken: string, docId: string): Promise<FeishuDocContentView> },
+  contentSource: {
+    readDocumentContent(accessToken: string, docId: string): Promise<FeishuDocContentView>;
+    readDocumentIR?(accessToken: string, docId: string): Promise<FeishuDocIR>;
+  },
+  workspaceQuery?: DesktopWorkspaceQueryPort,
+  fetchImpl?: typeof fetch,
 ) {
   return new DesktopFeishuDocRuntime({
     store: createStore(snapshot),
@@ -151,7 +175,64 @@ function createRuntimeWithContentSource(
     },
     contentSource,
     accessToken: async () => "access",
+    workspaceQuery,
+    ...(fetchImpl ? { fetchImpl } : {}),
   });
+}
+
+function createDocumentIRWithImage(docId: string, title: string): FeishuDocIR {
+  return {
+    schemaVersion: 1,
+    document: {
+      id: docId,
+      title,
+      revisionId: "1",
+      rootBlockId: docId,
+      pulledAt: "2026-05-25T00:00:00.000Z",
+      source: { documentIdType: "document_id" },
+    },
+    blocks: {
+      [docId]: {
+        id: docId,
+        type: "page",
+        parentId: null,
+        children: ["img"],
+        editable: false,
+        text: [],
+        resource: null,
+        attrs: {},
+        raw: {},
+      },
+      img: {
+        id: "img",
+        type: "image",
+        parentId: docId,
+        children: [],
+        editable: true,
+        text: [],
+        resource: { token: "img_token", kind: "image" },
+        attrs: { width: 320, height: 180 },
+        raw: {},
+      },
+    },
+    assets: {
+      img_token: {
+        token: "img_token",
+        kind: "image",
+        mime: "image/png",
+        cacheKey: "",
+        status: "missing",
+        localPath: "",
+        checksum: "",
+        width: 320,
+        height: 180,
+      },
+    },
+    integrity: {
+      contentHash: "sha256:content",
+      rawHash: "sha256:raw",
+    },
+  };
 }
 
 function createRuntimeWithLoader(
@@ -165,6 +246,45 @@ function createRuntimeWithLoader(
     store: createStore(snapshot),
     loader,
   });
+}
+
+function createWorkspaceQuery(workspaceId: string, directoryPath: string): DesktopWorkspaceQueryPort {
+  return {
+    list: async () => ({
+      items: [{
+        workspaceId,
+        name: "Test Workspace",
+        directoryPath,
+        isPinned: false,
+        tags: [],
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date(0).toISOString(),
+      }],
+      meta: {
+        total: 1,
+        limit: 1,
+        offset: 0,
+        hasMore: false,
+      },
+    }),
+    get: async (candidateWorkspaceId) => candidateWorkspaceId === workspaceId
+      ? {
+          workspaceId,
+          name: "Test Workspace",
+          directoryPath,
+          isPinned: false,
+          tags: [],
+          createdAt: new Date(0).toISOString(),
+          updatedAt: new Date(0).toISOString(),
+        }
+      : null,
+    getFileTree: async () => {
+      throw new Error("not used");
+    },
+    getFileContent: async () => {
+      throw new Error("not used");
+    },
+  };
 }
 
 describe("DesktopFeishuDocRuntime", () => {
@@ -274,6 +394,113 @@ describe("DesktopFeishuDocRuntime", () => {
     expect(capabilities.availableTools).toContain("docs.list_nodes");
   });
 
+  test("returns loopback preview urls for document media and whiteboards", async () => {
+    const runtime = createRuntime(createSnapshot());
+
+    await expect(runtime.getDocMediaPreviewUrls({ fileTokens: ["img_token"] })).resolves.toEqual({
+      items: [{
+        fileToken: "img_token",
+        tmpDownloadUrl: resolveDesktopFeishuDocMediaPreviewUrl("img_token"),
+      }],
+      errors: [],
+    });
+    await expect(runtime.getDocWhiteboardPreviewUrls({ whiteboardTokens: ["board_token"] })).resolves.toEqual({
+      items: [{
+        whiteboardToken: "board_token",
+        tmpDownloadUrl: resolveDesktopFeishuDocWhiteboardPreviewUrl("board_token"),
+      }],
+      errors: [],
+    });
+  });
+
+  test("downloads document image preview bytes through the drive media endpoint", async () => {
+    const requests: Array<{ url: string; authorization: string }> = [];
+    const runtime = new DesktopFeishuDocRuntime({
+      store: createStore(createSnapshot()),
+      loader: {
+        loadRoot: async () => { throw new Error("not used"); },
+        loadBranch: async () => { throw new Error("not used"); },
+      },
+      accessToken: async () => "access_token_1",
+      fetchImpl: async (input, init) => {
+        const headers = init?.headers as Record<string, string> | undefined;
+        requests.push({
+          url: String(input),
+          authorization: String(headers?.authorization ?? ""),
+        });
+        return new Response(new Uint8Array([137, 80, 78, 71]), {
+          status: 200,
+          headers: {
+            "content-type": "image/png",
+          },
+        });
+      },
+    });
+
+    const preview = await runtime.readDocMediaPreview("img_token");
+
+    expect(requests).toEqual([{
+      url: "https://open.feishu.cn/open-apis/drive/v1/medias/img_token/download",
+      authorization: "Bearer access_token_1",
+    }]);
+    expect(preview.contentType).toBe("image/png");
+    expect([...preview.bytes]).toEqual([137, 80, 78, 71]);
+  });
+
+  test("retries document image preview download after refreshing an expired access token", async () => {
+    const requests: Array<{ url: string; authorization: string }> = [];
+    let currentToken = "access_token_1";
+    const runtime = new DesktopFeishuDocRuntime({
+      store: createStore(createSnapshot()),
+      loader: {
+        loadRoot: async () => { throw new Error("not used"); },
+        loadBranch: async () => { throw new Error("not used"); },
+      },
+      accessToken: async (input?: { forceRefresh?: boolean }) => {
+        if (input?.forceRefresh) {
+          currentToken = "access_token_2";
+        }
+        return currentToken;
+      },
+      fetchImpl: async (input, init) => {
+        const headers = init?.headers as Record<string, string> | undefined;
+        requests.push({
+          url: String(input),
+          authorization: String(headers?.authorization ?? ""),
+        });
+        if (requests.length === 1) {
+          return new Response(JSON.stringify({ code: 20006, msg: "access token expired" }), {
+            status: 400,
+            headers: {
+              "content-type": "application/json; charset=utf-8",
+            },
+          });
+        }
+        return new Response(new Uint8Array([137, 80, 78, 71]), {
+          status: 200,
+          headers: {
+            "content-type": "image/png",
+          },
+        });
+      },
+    });
+
+    const preview = await runtime.readDocMediaPreview("img_token");
+
+    expect(requests).toEqual([
+      {
+        url: "https://open.feishu.cn/open-apis/drive/v1/medias/img_token/download",
+        authorization: "Bearer access_token_1",
+      },
+      {
+        url: "https://open.feishu.cn/open-apis/drive/v1/medias/img_token/download",
+        authorization: "Bearer access_token_2",
+      },
+    ]);
+    expect(preview.contentType).toBe("image/png");
+    expect([...preview.bytes]).toEqual([137, 80, 78, 71]);
+  });
+
   test("returns FeishuDocTreeView nodes for the requested root document", async () => {
     const runtime = createRuntime(createSnapshot());
 
@@ -326,5 +553,155 @@ describe("DesktopFeishuDocRuntime", () => {
 
     await expect(runtime.getDocContent("doc_1")).resolves.toBe(remote);
     expect(snapshot.docs.doc_1).toBe(remote);
+  });
+
+  test("openWorkspaceDoc writes markdown into the workspace cache and reuses the local file", async () => {
+    const snapshot = createSnapshot();
+    const remote = createContentView("doc_1", "Remote Doc", "# Remote Doc\n\nRemote markdown");
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-runtime-"));
+
+    try {
+      const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
+      const runtime = createRuntimeWithContentSource(snapshot, {
+        readDocumentContent: async () => remote,
+      }, workspaceQuery);
+
+      const opened = await runtime.openWorkspaceDoc({ workspaceId: "ws_1", docId: "doc_1" });
+      const cacheFile = join(workspaceRoot, ".maomi", "feishu-docs", "doc_1", "document.md");
+      const baseFile = join(workspaceRoot, ".maomi", "feishu-docs", "doc_1", "base.md");
+
+      expect(await readFile(cacheFile, "utf8")).toBe(remote.markdown);
+      expect(await readFile(baseFile, "utf8")).toBe(remote.markdown);
+      expect(opened.markdown).toBe(remote.markdown);
+      expect(opened.cache).toMatchObject({
+        workspaceId: "ws_1",
+        cacheRelativePath: ".maomi/feishu-docs/doc_1/document.md",
+        baseRelativePath: ".maomi/feishu-docs/doc_1/base.md",
+        hasBaseline: true,
+        status: "cached",
+      });
+
+      await runtime.saveWorkspaceDocLocalDraft({
+        workspaceId: "ws_1",
+        docId: "doc_1",
+        title: remote.title,
+        markdown: "# Remote Doc\n\nLocal draft",
+      });
+
+      const reopened = await runtime.openWorkspaceDoc({ workspaceId: "ws_1", docId: "doc_1" });
+
+      expect(reopened.markdown).toBe("# Remote Doc\n\nLocal draft");
+      expect(reopened.cache?.hasBaseline).toBe(true);
+      expect(reopened.cache?.hasLocalChanges).toBe(true);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("pullWorkspaceDoc refreshes the local workspace file and reports status", async () => {
+    const snapshot = createSnapshot();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-pull-"));
+
+    try {
+      const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
+      let markdown = "# Remote Doc\n\nVersion 1";
+      const runtime = createRuntimeWithContentSource(snapshot, {
+        readDocumentContent: async () => createContentView("doc_1", "Remote Doc", markdown),
+      }, workspaceQuery);
+
+      const firstPull = await runtime.pullWorkspaceDoc({ workspaceId: "ws_1", docId: "doc_1" });
+      expect(firstPull.pullStatus).toBe("created");
+
+      markdown = "# Remote Doc\n\nVersion 2";
+      const secondPull = await runtime.pullWorkspaceDoc({ workspaceId: "ws_1", docId: "doc_1" });
+
+      expect(secondPull.pullStatus).toBe("updated");
+      expect(secondPull.item.markdown).toBe(markdown);
+      expect(await readFile(join(workspaceRoot, ".maomi", "feishu-docs", "doc_1", "document.md"), "utf8"))
+        .toBe(markdown);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("openWorkspaceDoc upgrades image markdown from IR and writes a local file preview url", async () => {
+    const snapshot = createSnapshot({
+      doc_1: createContentView("doc_1", "Remote Doc", '# Remote Doc\n\n<FeishuImage token="img_token" />'),
+    });
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-ir-open-"));
+
+    try {
+      const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
+      const runtime = createRuntimeWithContentSource(
+        snapshot,
+        {
+          readDocumentContent: async () => createContentView("doc_1", "Remote Doc", "# Remote Doc"),
+          readDocumentIR: async (accessToken, docId) => {
+            expect(accessToken).toBe("access");
+            expect(docId).toBe("doc_1");
+            return createDocumentIRWithImage("doc_1", "Remote Doc");
+          },
+        },
+        workspaceQuery,
+        async () => new Response(new Uint8Array([137, 80, 78, 71]), {
+          status: 200,
+          headers: {
+            "content-type": "image/png",
+          },
+        }),
+      );
+
+      const opened = await runtime.openWorkspaceDoc({ workspaceId: "ws_1", docId: "doc_1" });
+      const markdownCache = await readFile(join(workspaceRoot, ".maomi", "feishu-docs", "doc_1", "document.md"), "utf8");
+      const irCacheRaw = await readFile(join(workspaceRoot, ".maomi", "feishu-docs", "doc_1", "document.ir.json"), "utf8");
+      const parsedIR = JSON.parse(irCacheRaw) as FeishuDocIR;
+      const cachedImagePath = parsedIR.assets.img_token.absolutePath;
+
+      expect(cachedImagePath).toBeTruthy();
+      expect(opened.markdown).toContain(`src="${pathToFileURL(String(cachedImagePath)).toString()}"`);
+      expect(markdownCache).toContain(`src="${pathToFileURL(String(cachedImagePath)).toString()}"`);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("openWorkspaceDoc patches local draft image tags with cached src without clobbering local edits", async () => {
+    const snapshot = createSnapshot();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-local-draft-image-"));
+
+    try {
+      const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
+      const markdownCache = new FeishuDocMarkdownWorkspaceCache(workspaceRoot);
+      await markdownCache.writeBase("doc_1", "# Remote Doc\n\nBase version\n");
+      await markdownCache.writeDocument("doc_1", '# Remote Doc\n\n<FeishuImage token="img_token" />\n\nlocal edit\n');
+
+      const runtime = createRuntimeWithContentSource(
+        snapshot,
+        {
+          readDocumentContent: async () => createContentView("doc_1", "Remote Doc", "# Remote Doc"),
+          readDocumentIR: async () => createDocumentIRWithImage("doc_1", "Remote Doc"),
+        },
+        workspaceQuery,
+        async () => new Response(new Uint8Array([137, 80, 78, 71]), {
+          status: 200,
+          headers: {
+            "content-type": "image/png",
+          },
+        }),
+      );
+
+      const opened = await runtime.openWorkspaceDoc({ workspaceId: "ws_1", docId: "doc_1" });
+      const irCacheRaw = await readFile(join(workspaceRoot, ".maomi", "feishu-docs", "doc_1", "document.ir.json"), "utf8");
+      const parsedIR = JSON.parse(irCacheRaw) as FeishuDocIR;
+      const localFileUrl = pathToFileURL(String(parsedIR.assets.img_token.absolutePath)).toString();
+
+      expect(opened.cache?.hasLocalChanges).toBe(true);
+      expect(opened.markdown).toContain("local edit");
+      expect(opened.markdown).toContain(`src="${localFileUrl}"`);
+      expect(await readFile(join(workspaceRoot, ".maomi", "feishu-docs", "doc_1", "document.md"), "utf8"))
+        .toContain(`src="${localFileUrl}"`);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
   });
 });

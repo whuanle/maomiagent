@@ -13,6 +13,10 @@ describe("Feishu doc editor modes", () => {
     ])
 
     expect(visual).toContain('data-testid="feishu-doc-visual-editor"')
+    expect(visual).toContain('className="feishu-doc-visual-outline"')
+    expect(visual).toContain('data-feishu-doc-heading-id')
+    expect(visual).toContain("container.scrollTop = Math.max(nextScrollTop, 0)")
+    expect(visual).not.toContain('behavior: "smooth"')
     expect(source).toContain('data-testid="feishu-doc-source-editor"')
     expect(diff).toContain('data-testid="feishu-doc-diff-view"')
   })

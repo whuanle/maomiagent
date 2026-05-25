@@ -70,15 +70,16 @@ function createBotState(): FeishuBotStateView {
     hasAppSecret: false,
     hasVerificationToken: false,
     hasEncryptKey: false,
-    transportMode: "webhook",
+    transportMode: "websocket",
     catalog: {
-      transportMode: "webhook",
+      transportMode: "websocket",
       descriptors: [],
     },
-    connectionStatus: "stopped",
+    connectionStatus: "disconnected",
     sessionMappingCount: 0,
     processedMessageCount: 0,
     queuedConversationCount: 0,
+    recentProcessedMessages: [],
     updatedAt: new Date(0).toISOString(),
   };
 }
@@ -87,6 +88,12 @@ function createStoreSnapshot(): DesktopFeishuStoreSnapshot {
   return {
     state: createState(),
     bot: createBotState(),
+    botRuntime: {
+      version: "1.0",
+      bindings: [],
+      processedMessages: [],
+      pendingActions: [],
+    },
     docs: {} as Record<string, FeishuDocContentView>,
     developerCredential: {
       appSecret: "",
@@ -262,6 +269,47 @@ describe("DesktopFeishuService smart assistant catalog hydration", () => {
     });
   });
 
+  test("hydrates pending action counts from bot runtime state", async () => {
+    const service = createService({
+      ...createStoreSnapshot(),
+      botRuntime: {
+        version: "1.0",
+        bindings: [],
+        processedMessages: [],
+        pendingActions: [{
+          pendingId: "pending_1",
+          scopeKey: "tenant-1:oc_1:root",
+          chatId: "oc_1",
+          messageId: "om_1",
+          domain: "calendar",
+          actionId: "calendar.create_event",
+          workspaceId: "workspace-a",
+          summary: "准备创建会议",
+          details: ["今天 9:00-10:00"],
+          executeInput: {
+            actionId: "calendar.create_event",
+            workspaceId: "workspace-a",
+            title: "AI 落地讨论",
+            startAt: "2026-05-25T09:00:00+08:00",
+            endAt: "2026-05-25T10:00:00+08:00",
+          },
+          createdAt: "2026-05-25T09:00:00.000Z",
+          updatedAt: "2026-05-25T09:00:00.000Z",
+          expiresAt: "2026-05-25T09:30:00.000Z",
+        }],
+      },
+    });
+
+    const state = await service.getBotState();
+
+    expect(state.pendingActionCount).toBe(1);
+    expect(state.latestPendingAction).toEqual(expect.objectContaining({
+      pendingId: "pending_1",
+      actionId: "calendar.create_event",
+      summary: "准备创建会议",
+    }));
+  });
+
   test("hydrates the saved developer state with smart assistant catalog data", async () => {
     const service = createService();
 
@@ -385,10 +433,16 @@ describe("DesktopFeishuService smart assistant catalog hydration", () => {
     expect(state.smartAssistant.hasRefreshToken).toBe(true);
     expect(state.smartAssistant.accessTokenExpiresAt).toBe("2026-05-21T02:00:00.000Z");
     expect(state.smartAssistant.refreshTokenExpiresAt).toBe("2026-06-20T00:00:00.000Z");
+    expect(state.smartAssistant.autoRefreshTask.taskId).toBe("desktop.feishu.developer-token-auto-refresh");
+    expect(state.smartAssistant.autoRefreshTask.enabled).toBe(true);
+    expect(state.smartAssistant.autoRefreshTask.status).toBe("queued");
+    expect(state.smartAssistant.autoRefreshTask.nextRunAt).toEqual(expect.any(String));
     expect(state.developer?.authStatus).toBe("authorized");
     expect(state.developer?.hasRefreshToken).toBe(true);
     expect(state.developer?.accessTokenExpiresAt).toBe("2026-05-21T02:00:00.000Z");
     expect(state.developer?.refreshTokenExpiresAt).toBe("2026-06-20T00:00:00.000Z");
+    expect(state.developer?.autoRefreshTask.taskId).toBe("desktop.feishu.developer-token-auto-refresh");
+    expect(state.developer?.autoRefreshTask.status).toBe("queued");
   });
 
   test("explains which developer credential is missing during OAuth callback", async () => {
@@ -448,8 +502,13 @@ describe("DesktopFeishuService smart assistant catalog hydration", () => {
     expect(state.smartAssistant.accessTokenExpiresAt).toBe("2026-05-22T02:00:00.000Z");
     expect(state.smartAssistant.refreshTokenExpiresAt).toBe("2026-06-21T00:00:00.000Z");
     expect(state.smartAssistant.lastError).toBeUndefined();
+    expect(state.smartAssistant.autoRefreshTask.taskId).toBe("desktop.feishu.developer-token-auto-refresh");
+    expect(state.smartAssistant.autoRefreshTask.enabled).toBe(true);
+    expect(state.smartAssistant.autoRefreshTask.status).toBe("success");
+    expect(state.smartAssistant.autoRefreshTask.nextRunAt).toEqual(expect.any(String));
     expect(state.developer?.accessTokenExpiresAt).toBe("2026-05-22T02:00:00.000Z");
     expect(state.developer?.refreshTokenExpiresAt).toBe("2026-06-21T00:00:00.000Z");
+    expect(state.developer?.autoRefreshTask.status).toBe("success");
   });
 
   test("handles a developer OAuth callback error", async () => {
@@ -465,5 +524,184 @@ describe("DesktopFeishuService smart assistant catalog hydration", () => {
     expect(result.html).toContain("飞书授权失败");
     expect(state.smartAssistant.authStatus).toBe("error");
     expect(state.smartAssistant.lastError).toBe("user cancelled");
+  });
+
+  test("persists bot config fields and keeps saved secrets when later updates omit them", async () => {
+    const service = createService();
+
+    const saved = await service.saveBotConfig({
+      appId: "cli_test_bot",
+      appSecret: "secret-1",
+      verificationToken: "verify-1",
+      encryptKey: "encrypt-1",
+      allowWorkspaceSwitch: true,
+      workspaceSwitchScope: "restricted",
+      allowedExecutionWorkspaceIds: ["workspace-a", "workspace-b"],
+      selectedChannelId: "channel-alpha",
+      selectedModelId: "model-alpha",
+    });
+
+    expect(saved).toMatchObject({
+      enabled: true,
+      appId: "cli_test_bot",
+      appSecret: "secret-1",
+      hasAppSecret: true,
+      verificationToken: "verify-1",
+      hasVerificationToken: true,
+      encryptKey: "encrypt-1",
+      hasEncryptKey: true,
+      allowWorkspaceSwitch: true,
+      workspaceSwitchScope: "restricted",
+      allowedExecutionWorkspaceIds: ["workspace-a", "workspace-b"],
+      selectedChannelId: "channel-alpha",
+      selectedModelId: "model-alpha",
+      connectionStatus: "disconnected",
+    });
+    expect(saved.savedAt).toEqual(expect.any(String));
+
+    const updated = await service.saveBotConfig({
+      appId: "cli_test_bot",
+      allowWorkspaceSwitch: false,
+      selectedChannelId: "channel-beta",
+      selectedModelId: "model-beta",
+    });
+
+    expect(updated).toMatchObject({
+      enabled: true,
+      appId: "cli_test_bot",
+      appSecret: "secret-1",
+      hasAppSecret: true,
+      verificationToken: "verify-1",
+      hasVerificationToken: true,
+      encryptKey: "encrypt-1",
+      hasEncryptKey: true,
+      allowWorkspaceSwitch: false,
+      workspaceSwitchScope: "all",
+      allowedExecutionWorkspaceIds: [],
+      selectedChannelId: "channel-beta",
+      selectedModelId: "model-beta",
+      connectionStatus: "disconnected",
+    });
+  });
+
+  test("clears saved bot credential fields when config is reset", async () => {
+    const service = createService();
+
+    await service.saveBotConfig({
+      appId: "cli_test_bot",
+      appSecret: "secret-1",
+      verificationToken: "verify-1",
+      encryptKey: "encrypt-1",
+      allowWorkspaceSwitch: true,
+      selectedChannelId: "channel-alpha",
+      selectedModelId: "model-alpha",
+    });
+
+    const cleared = await service.clearBotConfig();
+
+    expect(cleared).toMatchObject({
+      enabled: false,
+      appId: "",
+      appSecret: "",
+      hasAppSecret: false,
+      verificationToken: "",
+      hasVerificationToken: false,
+      encryptKey: "",
+      hasEncryptKey: false,
+      selectedChannelId: undefined,
+      selectedModelId: undefined,
+      connectionStatus: "disconnected",
+    });
+  });
+
+  test("hydrates legacy saved bot config as websocket state when credentials are already present", async () => {
+    const snapshot = createStoreSnapshot();
+    snapshot.bot = {
+      ...snapshot.bot,
+      enabled: false,
+      appId: "cli_test_bot",
+      hasAppSecret: true,
+      allowWorkspaceSwitch: true,
+      workspaceSwitchScope: "restricted",
+      allowedExecutionWorkspaceIds: ["workspace-a"],
+      selectedChannelId: "channel-alpha",
+      selectedModelId: "model-alpha",
+      transportMode: "webhook" as never,
+      catalog: {
+        transportMode: "webhook" as never,
+        descriptors: [],
+      },
+      connectionStatus: "ready" as never,
+    };
+    const service = createService(snapshot);
+
+    const state = await service.getBotState();
+
+    expect(state).toMatchObject({
+      enabled: true,
+      appId: "cli_test_bot",
+      transportMode: "websocket",
+      catalog: {
+        transportMode: "websocket",
+        descriptors: [],
+      },
+      hasAppSecret: true,
+      allowWorkspaceSwitch: true,
+      workspaceSwitchScope: "restricted",
+      allowedExecutionWorkspaceIds: ["workspace-a"],
+      selectedChannelId: "channel-alpha",
+      selectedModelId: "model-alpha",
+      connectionStatus: "disconnected",
+    });
+  });
+
+  test("hydrates legacy webhook event snapshots into websocket event state", async () => {
+    const snapshot = createStoreSnapshot();
+    snapshot.bot = {
+      ...snapshot.bot,
+      appId: "cli_test_bot",
+      hasAppSecret: true,
+      transportMode: "webhook" as never,
+      catalog: {
+        transportMode: "webhook" as never,
+        descriptors: [],
+      },
+      connectionStatus: "ready" as never,
+      latestWebhook: {
+        status: "challenge",
+        receivedAt: "2026-05-25T00:00:00.000Z",
+        eventType: "im.message.receive_v1",
+        eventId: "evt_123",
+        messageId: "om_123",
+        chatId: "oc_123",
+        detail: "legacy webhook payload",
+      },
+    } as FeishuBotStateView & {
+      latestWebhook: {
+        status: string
+        receivedAt: string
+        eventType: string
+        eventId: string
+        messageId: string
+        chatId: string
+        detail: string
+      }
+    };
+    const service = createService(snapshot);
+
+    const state = await service.getBotState();
+
+    expect(state.connectionStatus).toBe("disconnected");
+    expect(state.transportMode).toBe("websocket");
+    expect(state.catalog.transportMode).toBe("websocket");
+    expect(state.latestEvent).toEqual({
+      status: "received",
+      receivedAt: "2026-05-25T00:00:00.000Z",
+      eventType: "im.message.receive_v1",
+      eventId: "evt_123",
+      messageId: "om_123",
+      chatId: "oc_123",
+      detail: "legacy webhook payload",
+    });
   });
 });

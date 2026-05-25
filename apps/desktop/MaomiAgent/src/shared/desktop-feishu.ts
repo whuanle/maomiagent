@@ -691,8 +691,11 @@ export type FeishuBotPendingActionView = {
 export type FeishuBotStateView = {
   enabled: boolean
   appId: string
+  appSecret?: string
   hasAppSecret: boolean
+  verificationToken?: string
   hasVerificationToken: boolean
+  encryptKey?: string
   hasEncryptKey: boolean
   transportMode: "websocket"
   catalog: FeishuBotCapabilityCatalogView
@@ -716,6 +719,7 @@ export type FeishuBotStateView = {
   lastError?: string
   latestEvent?: FeishuBotEventInfo
   latestProcessedMessage?: FeishuBotProcessedMessage
+  recentProcessedMessages: FeishuBotProcessedMessage[]
   pendingActionCount?: number
   latestPendingAction?: FeishuBotPendingActionView
 }

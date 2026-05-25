@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
-import { DesktopFeishuOpenApiClient } from "./desktop-feishu-openapi-client";
+import {
+  DesktopFeishuOpenApiClient,
+  DesktopFeishuOpenApiError,
+  isDesktopFeishuAccessTokenExpiredError,
+} from "./desktop-feishu-openapi-client";
 
 describe("DesktopFeishuOpenApiClient", () => {
   test("exchanges an OAuth code and persists access and refresh tokens", async () => {
@@ -143,5 +147,23 @@ describe("DesktopFeishuOpenApiClient", () => {
       code: "bad_code",
       redirectUri: "http://127.0.0.1:35000/desktop/feishu/oauth/callback",
     })).rejects.toThrow("Feishu API error 99991663: invalid code");
+  });
+
+  test("preserves HTTP status and envelope code on non-200 Feishu responses", async () => {
+    const client = new DesktopFeishuOpenApiClient({
+      fetch: async () => new Response(JSON.stringify({ code: 20006, msg: "access token expired" }), { status: 400 }),
+    });
+
+    let caught: unknown;
+    try {
+      await client.getJson("https://open.feishu.cn/open-apis/wiki/v2/spaces/get_node", "expired-access");
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(DesktopFeishuOpenApiError);
+    expect((caught as DesktopFeishuOpenApiError).status).toBe(400);
+    expect((caught as DesktopFeishuOpenApiError).code).toBe(20006);
+    expect(isDesktopFeishuAccessTokenExpiredError(caught)).toBe(true);
   });
 });

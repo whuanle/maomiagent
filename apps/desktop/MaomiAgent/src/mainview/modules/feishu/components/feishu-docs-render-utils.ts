@@ -285,6 +285,9 @@ export function normalizeFeishuDocsPreviewHref(rawValue: string): string | null 
   if (/^data:/i.test(trimmed)) {
     return trimmed
   }
+  if (/^desktop:\/\/feishu\//i.test(trimmed)) {
+    return trimmed
+  }
   const decoded = /^https?:\/\//i.test(trimmed) || trimmed.startsWith("//")
     ? trimmed
     : decodeUrlLikeValue(trimmed)
@@ -294,7 +297,7 @@ export function normalizeFeishuDocsPreviewHref(rawValue: string): string | null 
   const value = decoded.startsWith("//") ? `https:${decoded}` : decoded
   try {
     const url = new URL(value)
-    if (url.protocol === "http:" || url.protocol === "https:") {
+    if (url.protocol === "http:" || url.protocol === "https:" || url.protocol === "file:") {
       return url.toString()
     }
     return null

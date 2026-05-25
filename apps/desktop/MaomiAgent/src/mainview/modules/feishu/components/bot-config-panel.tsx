@@ -3,8 +3,8 @@ import {
   Alert,
   Button,
   Card,
-  Descriptions,
   Divider,
+  Empty,
   Input,
   Popconfirm,
   Select,
@@ -13,11 +13,17 @@ import {
   Typography,
 } from "antd"
 import dayjs from "dayjs"
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import type { FeishuBotConfigInput, FeishuBotStateView } from "../../../../shared/desktop-feishu"
 import type { DesktopWorkspaceItem as WorkspaceItem } from "../../../../shared/desktop-workspace"
 import type { FeishuTranslate as Translate } from "../types"
 import { RuntimeModelSelect } from "../../wechat/components/runtime-model-select"
+import {
+  buildFeishuBotConfigInput,
+  createFeishuBotDraft,
+  type FeishuBotDraft,
+  resolveFeishuBotDraftAfterStateRefresh,
+} from "./bot-config-draft"
 
 const { Paragraph, Text } = Typography
 
@@ -30,8 +36,8 @@ type Props = {
   loadError: string
   saving: boolean
   clearing: boolean
-  onSave: (input: FeishuBotConfigInput) => void
-  onClear: () => void
+  onSave: (input: FeishuBotConfigInput) => Promise<FeishuBotStateView | null>
+  onClear: () => Promise<FeishuBotStateView | null>
   onRefresh: () => void
 }
 
@@ -39,49 +45,15 @@ function formatTimestamp(value?: string): string {
   return value ? dayjs(value).format("YYYY-MM-DD HH:mm:ss") : "-"
 }
 
-function resolveWorkspaceSwitchSummary(input: {
-  allowWorkspaceSwitch?: boolean
-  workspaceSwitchScope?: "all" | "restricted"
-  allowedExecutionWorkspaceLabels?: string[]
-}): string {
-  if (!input.allowWorkspaceSwitch) {
-    return "不允许切换"
-  }
-
-  if (input.workspaceSwitchScope === "restricted") {
-    const labels = input.allowedExecutionWorkspaceLabels ?? []
-    return labels.length > 0 ? `限制范围：${labels.join(", ")}` : "限制范围"
-  }
-
-  return "允许切换到全部普通工作区"
-}
-
-function resolveAllowedWorkspaceText(input: {
-  allowWorkspaceSwitch?: boolean
-  workspaceSwitchScope?: "all" | "restricted"
-  allowedExecutionWorkspaceLabels?: string[]
-}): string {
-  if (!input.allowWorkspaceSwitch) {
-    return "未开启"
-  }
-
-  if (input.workspaceSwitchScope === "restricted") {
-    const labels = input.allowedExecutionWorkspaceLabels ?? []
-    return labels.length > 0 ? labels.join(", ") : "未选择"
-  }
-
-  return "全部普通工作区"
-}
-
 function renderConnectionStatusTag(
   status: FeishuBotStateView["connectionStatus"] | undefined,
   t: Translate,
 ) {
-  const resolved = status ?? "stopped"
+  const resolved = status ?? "disconnected"
   const color =
-    resolved === "ready"
+    resolved === "connected"
       ? "green"
-      : resolved === "processing"
+      : resolved === "connecting" || resolved === "processing"
         ? "blue"
         : resolved === "error"
           ? "red"
@@ -90,23 +62,26 @@ function renderConnectionStatusTag(
   return <Tag bordered={false} color={color}>{t(`飞书页.机器人状态.${resolved}`)}</Tag>
 }
 
-function renderWebhookStatusTag(
-  status: NonNullable<FeishuBotStateView["latestWebhook"]>["status"] | undefined,
+function renderProcessedConversationStatusTag(
+  status: NonNullable<FeishuBotStateView["latestProcessedMessage"]>["status"],
   t: Translate,
 ) {
-  const resolved = status ?? "ignored"
   const color =
-    resolved === "processed"
+    status === "completed"
       ? "green"
-      : resolved === "queued" || resolved === "challenge"
+      : status === "pending"
         ? "blue"
-        : resolved === "failed"
+        : status === "failed"
           ? "red"
           : "default"
+  const label = status === "pending"
+    ? t("飞书页.机器人.值.处理中")
+    : status === "failed"
+      ? t("飞书页.机器人事件状态.failed")
+      : t("飞书页.机器人.值.已处理完成")
 
-  return <Tag bordered={false} color={color}>{t(`飞书页.机器人Webhook状态.${resolved}`)}</Tag>
+  return <Tag bordered={false} color={color}>{label}</Tag>
 }
-
 export function FeishuBotConfigPanel(props: Props) {
   const [appId, setAppId] = useState("")
   const [appSecret, setAppSecret] = useState("")
@@ -116,21 +91,94 @@ export function FeishuBotConfigPanel(props: Props) {
   const [allowedExecutionWorkspaceIds, setAllowedExecutionWorkspaceIds] = useState<string[]>([])
   const [selectedChannelId, setSelectedChannelId] = useState<string | undefined>(undefined)
   const [selectedModelId, setSelectedModelId] = useState<string | undefined>(undefined)
+  const [draftDirty, setDraftDirty] = useState(false)
+
+  const applyDraft = useCallback((nextDraft: FeishuBotDraft) => {
+    setAppId(nextDraft.appId)
+    setAppSecret(nextDraft.appSecret)
+    setVerificationToken(nextDraft.verificationToken)
+    setEncryptKey(nextDraft.encryptKey)
+    setAllowWorkspaceSwitch(nextDraft.allowWorkspaceSwitch)
+    setAllowedExecutionWorkspaceIds(nextDraft.allowedExecutionWorkspaceIds)
+    setSelectedChannelId(nextDraft.selectedChannelId)
+    setSelectedModelId(nextDraft.selectedModelId)
+  }, [])
+
+  const syncDraftFromState = useCallback((nextState: FeishuBotStateView | null) => {
+    applyDraft(createFeishuBotDraft(nextState))
+    setDraftDirty(false)
+  }, [applyDraft])
 
   useEffect(() => {
-    setAppId(props.botState?.appId ?? "")
-    setAppSecret("")
-    setVerificationToken("")
-    setEncryptKey("")
-    setAllowWorkspaceSwitch(props.botState?.allowWorkspaceSwitch === true)
-    setAllowedExecutionWorkspaceIds(
-      props.botState?.workspaceSwitchScope === "restricted"
-        ? (props.botState.allowedExecutionWorkspaceIds ?? [])
-        : [],
-    )
-    setSelectedChannelId(props.botState?.selectedChannelId)
-    setSelectedModelId(props.botState?.selectedModelId)
-  }, [props.botState])
+    const currentDraft: FeishuBotDraft = {
+      appId,
+      appSecret,
+      verificationToken,
+      encryptKey,
+      allowWorkspaceSwitch,
+      allowedExecutionWorkspaceIds,
+      selectedChannelId,
+      selectedModelId,
+    }
+    const result = resolveFeishuBotDraftAfterStateRefresh({
+      currentDraft,
+      botState: props.botState,
+      draftDirty,
+    })
+
+    if (!result.shouldApply) {
+      return
+    }
+
+    applyDraft(result.draft)
+    setDraftDirty(result.draftDirty)
+  }, [
+    allowWorkspaceSwitch,
+    allowedExecutionWorkspaceIds,
+    appId,
+    appSecret,
+    applyDraft,
+    draftDirty,
+    encryptKey,
+    props.botState,
+    selectedChannelId,
+    selectedModelId,
+    verificationToken,
+  ])
+
+  const handleSave = useCallback(async () => {
+    const nextState = await props.onSave(buildFeishuBotConfigInput({
+      appId,
+      appSecret,
+      verificationToken,
+      encryptKey,
+      allowWorkspaceSwitch,
+      allowedExecutionWorkspaceIds,
+      selectedChannelId,
+      selectedModelId,
+    }))
+    if (nextState) {
+      syncDraftFromState(nextState)
+    }
+  }, [
+    allowedExecutionWorkspaceIds,
+    allowWorkspaceSwitch,
+    appId,
+    appSecret,
+    encryptKey,
+    props.onSave,
+    selectedChannelId,
+    selectedModelId,
+    syncDraftFromState,
+    verificationToken,
+  ])
+
+  const handleClear = useCallback(async () => {
+    const nextState = await props.onClear()
+    if (nextState) {
+      syncDraftFromState(nextState)
+    }
+  }, [props.onClear, syncDraftFromState])
 
   const workspaceOptions = useMemo(
     () => props.workspaces
@@ -140,26 +188,10 @@ export function FeishuBotConfigPanel(props: Props) {
       })),
     [props.workspaces],
   )
-
-  const workspaceLabelMap = useMemo(
-    () => new Map(
-      workspaceOptions.map((item) => [item.value, item.label]),
-    ),
-    [workspaceOptions],
+  const processedConversationItems = useMemo(
+    () => props.botState?.recentProcessedMessages ?? [],
+    [props.botState?.recentProcessedMessages],
   )
-
-  const savedAllowedExecutionWorkspaceLabels = (props.botState?.allowedExecutionWorkspaceIds ?? [])
-    .map((workspaceId) => workspaceLabelMap.get(workspaceId) ?? workspaceId)
-  const savedWorkspaceSwitchSummary = resolveWorkspaceSwitchSummary({
-    allowWorkspaceSwitch: props.botState?.allowWorkspaceSwitch,
-    workspaceSwitchScope: props.botState?.workspaceSwitchScope,
-    allowedExecutionWorkspaceLabels: savedAllowedExecutionWorkspaceLabels,
-  })
-  const savedAllowedWorkspaceText = resolveAllowedWorkspaceText({
-    allowWorkspaceSwitch: props.botState?.allowWorkspaceSwitch,
-    workspaceSwitchScope: props.botState?.workspaceSwitchScope,
-    allowedExecutionWorkspaceLabels: savedAllowedExecutionWorkspaceLabels,
-  })
 
   return (
     <Card className="panel-card feishu-bot-card" bordered>
@@ -179,6 +211,7 @@ export function FeishuBotConfigPanel(props: Props) {
                   placeholder={props.t("飞书页.字段.AppId占位")}
                   spellCheck={false}
                   onChange={(event) => {
+                    setDraftDirty(true)
                     setAppId(event.target.value)
                   }}
                 />
@@ -195,6 +228,7 @@ export function FeishuBotConfigPanel(props: Props) {
                       : props.t("飞书页.字段.AppSecret占位")
                   }
                   onChange={(event) => {
+                    setDraftDirty(true)
                     setAppSecret(event.target.value)
                   }}
                 />
@@ -208,6 +242,7 @@ export function FeishuBotConfigPanel(props: Props) {
                   placeholder={props.t("飞书页.字段.VerificationToken占位")}
                   spellCheck={false}
                   onChange={(event) => {
+                    setDraftDirty(true)
                     setVerificationToken(event.target.value)
                   }}
                 />
@@ -220,6 +255,7 @@ export function FeishuBotConfigPanel(props: Props) {
                   value={encryptKey}
                   placeholder={props.t("飞书页.字段.EncryptKey占位")}
                   onChange={(event) => {
+                    setDraftDirty(true)
                     setEncryptKey(event.target.value)
                   }}
                 />
@@ -241,6 +277,7 @@ export function FeishuBotConfigPanel(props: Props) {
                   className="feishu-bot-workspace-switch"
                   checked={allowWorkspaceSwitch}
                   onChange={(checked) => {
+                    setDraftDirty(true)
                     setAllowWorkspaceSwitch(checked)
                   }}
                 />
@@ -259,6 +296,7 @@ export function FeishuBotConfigPanel(props: Props) {
                   optionFilterProp="label"
                   options={workspaceOptions}
                   onChange={(value) => {
+                    setDraftDirty(true)
                     setAllowedExecutionWorkspaceIds(value)
                   }}
                 />
@@ -281,6 +319,7 @@ export function FeishuBotConfigPanel(props: Props) {
                   placeholder={props.t("飞书页.值.未选择")}
                   notFoundContent="暂无可用模型"
                   onChange={(patch) => {
+                    setDraftDirty(true)
                     setSelectedChannelId(patch.selectedChannelId)
                     setSelectedModelId(patch.selectedModelId)
                   }}
@@ -298,20 +337,7 @@ export function FeishuBotConfigPanel(props: Props) {
                 loading={props.saving}
                 className="feishu-bot-primary-action"
                 onClick={() => {
-                  props.onSave({
-                    appId,
-                    appSecret: appSecret || undefined,
-                    verificationToken: verificationToken || undefined,
-                    encryptKey: encryptKey || undefined,
-                    allowWorkspaceSwitch,
-                    workspaceSwitchScope:
-                      allowWorkspaceSwitch && allowedExecutionWorkspaceIds.length > 0
-                        ? "restricted"
-                        : "all",
-                    allowedExecutionWorkspaceIds: allowWorkspaceSwitch ? allowedExecutionWorkspaceIds : [],
-                    selectedChannelId,
-                    selectedModelId,
-                  })
+                  void handleSave()
                 }}
               >
                 {props.t("飞书页.按钮.保存机器人配置")}
@@ -320,7 +346,7 @@ export function FeishuBotConfigPanel(props: Props) {
                 title={props.t("飞书页.提示.确认清除机器人配置")}
                 okText={props.t("飞书页.按钮.清除机器人配置")}
                 cancelText={props.t("设置页.按钮.取消")}
-                onConfirm={props.onClear}
+                onConfirm={() => handleClear()}
               >
                 <Button
                   type="text"
@@ -347,7 +373,7 @@ export function FeishuBotConfigPanel(props: Props) {
 
             <div className="feishu-bot-section-head is-split">
               <div className="feishu-bot-section-copy">
-                <Text strong>{props.t("飞书页.列.接入信息")}</Text>
+                <Text strong>{props.t("飞书页.字段.连接状态")}</Text>
               </div>
 
               <Button
@@ -361,77 +387,53 @@ export function FeishuBotConfigPanel(props: Props) {
               </Button>
             </div>
 
-            <Descriptions size="small" column={2} className="feishu-bot-descriptions">
-              <Descriptions.Item label={props.t("飞书页.页签.机器人")}>
-                {props.botState?.enabled
-                  ? <Tag bordered={false} color="green">{props.t("飞书页.状态.authorized")}</Tag>
-                  : <Tag bordered={false}>{props.t("飞书页.值.机器人未配置")}</Tag>}
-              </Descriptions.Item>
-              <Descriptions.Item label={props.t("飞书页.字段.连接状态")}>
-                {renderConnectionStatusTag(props.botState?.connectionStatus, props.t)}
-              </Descriptions.Item>
-              <Descriptions.Item label={props.t("飞书页.字段.AppId")}>
-                {props.botState?.appId || "-"}
-              </Descriptions.Item>
-              <Descriptions.Item label={props.t("飞书页.字段.Webhook状态")}>
-                {props.botState?.latestWebhook
-                  ? renderWebhookStatusTag(props.botState.latestWebhook.status, props.t)
-                  : props.t("飞书页.值.未收到")}
-              </Descriptions.Item>
-              <Descriptions.Item label="默认工作区">
-                用户主页工作区
-              </Descriptions.Item>
-              <Descriptions.Item label="工作区切换">
-                {savedWorkspaceSwitchSummary}
-              </Descriptions.Item>
-              <Descriptions.Item label="允许范围">
-                {savedAllowedWorkspaceText}
-              </Descriptions.Item>
-              <Descriptions.Item label={props.t("飞书页.字段.模型渠道")}>
-                {props.botState?.selectedChannelId ?? props.t("飞书页.值.未选择")}
-              </Descriptions.Item>
-              <Descriptions.Item label={props.t("飞书页.字段.模型")}>
-                {props.botState?.selectedModelId ?? props.t("飞书页.值.未选择")}
-              </Descriptions.Item>
-              <Descriptions.Item label={props.t("飞书页.字段.Session映射")}>
-                {props.botState?.sessionMappingCount ?? 0}
-              </Descriptions.Item>
-              <Descriptions.Item label={props.t("飞书页.字段.已处理消息")}>
-                {props.botState?.processedMessageCount ?? 0}
-              </Descriptions.Item>
-              <Descriptions.Item label={props.t("飞书页.字段.最近Webhook")}>
-                {formatTimestamp(props.botState?.latestWebhook?.receivedAt)}
-              </Descriptions.Item>
-              <Descriptions.Item label={props.t("飞书页.字段.最近处理")}>
-                {formatTimestamp(props.botState?.latestProcessedMessage?.updatedAt)}
-              </Descriptions.Item>
-            </Descriptions>
-
-            <div className="feishu-bot-status-grid">
-              <div className="feishu-bot-status-block">
-                <Text type="secondary">{props.t("飞书页.字段.Webhook状态")}</Text>
-                <Paragraph className="feishu-bot-inline-value">
-                  {props.botState?.latestWebhook?.detail || props.t("飞书页.值.未收到")}
-                </Paragraph>
-                <Text type="secondary">
-                  {props.botState?.latestWebhook?.messageId
-                    ? `Message ID: ${props.botState.latestWebhook.messageId}`
-                    : props.t("飞书页.值.未收到")}
-                </Text>
+            <div className="feishu-bot-connection-row">
+              <div className="feishu-bot-connection-copy">
+                <Text type="secondary">WebSocket</Text>
+                <Text>{props.botState?.enabled ? props.botState.appId || props.t("飞书页.页签.机器人") : props.t("飞书页.值.机器人未配置")}</Text>
               </div>
-
-              <div className="feishu-bot-status-block">
-                <Text type="secondary">{props.t("飞书页.字段.最近处理")}</Text>
-                <Paragraph className="feishu-bot-inline-value">
-                  {props.botState?.latestProcessedMessage?.responsePreview || props.t("飞书页.值.未收到")}
-                </Paragraph>
-                <Text type="secondary">
-                  {props.botState?.latestProcessedMessage?.queryPreview
-                    ? `${props.t("飞书页.字段.最近处理")}: ${props.botState.latestProcessedMessage.queryPreview}`
-                    : props.t("飞书页.值.未收到")}
-                </Text>
+              <div className="feishu-bot-connection-status">
+                {renderConnectionStatusTag(props.botState?.connectionStatus, props.t)}
               </div>
             </div>
+
+            <Divider className="feishu-bot-panel-divider" />
+
+            <div className="feishu-bot-section-head">
+              <Text strong>{props.t("飞书页.字段.处理对话")}</Text>
+            </div>
+
+            {processedConversationItems.length > 0
+              ? (
+                <div className="feishu-bot-conversation-list">
+                  {processedConversationItems.map((item) => (
+                    <div key={item.messageId} className="feishu-bot-conversation-item">
+                      <div className="feishu-bot-conversation-head">
+                        <div className="feishu-bot-conversation-copy">
+                          <Text strong>{item.queryPreview || item.messageId}</Text>
+                          <Text type="secondary">{formatTimestamp(item.updatedAt)}</Text>
+                        </div>
+                        {renderProcessedConversationStatusTag(item.status, props.t)}
+                      </div>
+                      <Paragraph className="feishu-bot-inline-value">
+                        {item.responsePreview
+                          || (item.status === "pending"
+                            ? props.t("飞书页.机器人.值.处理中")
+                            : item.status === "failed"
+                              ? props.t("飞书页.机器人事件状态.failed")
+                              : props.t("飞书页.机器人.值.已处理完成"))}
+                      </Paragraph>
+                    </div>
+                  ))}
+                </div>
+              )
+              : (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  className="feishu-bot-conversation-empty"
+                  description={props.t("飞书页.值.暂无处理对话")}
+                />
+              )}
           </div>
         </section>
       </div>

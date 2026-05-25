@@ -50,7 +50,6 @@
           linear-gradient(180deg, #f7fbff 0%, #eef3f9 100%);
         --startup-panel-glow: rgba(91, 156, 255, 0.18);
         --startup-ray: rgba(91, 156, 255, 0.94);
-        --startup-core: #5b9cff;
         --startup-text: #1f1f1f;
       }
 
@@ -61,7 +60,6 @@
           linear-gradient(180deg, #11161d 0%, #0b0f14 100%);
         --startup-panel-glow: rgba(122, 184, 255, 0.16);
         --startup-ray: rgba(145, 202, 255, 0.96);
-        --startup-core: #7ab8ff;
         --startup-text: #f3f6fb;
       }
 
@@ -147,16 +145,6 @@
         filter: drop-shadow(0 0 12px color-mix(in srgb, var(--startup-ray) 42%, transparent));
       }
 
-      .startup-splash__core {
-        width: 18px;
-        height: 18px;
-        border-radius: 50%;
-        background: var(--startup-core);
-        box-shadow:
-          0 0 0 8px color-mix(in srgb, var(--startup-core) 16%, transparent),
-          0 0 24px color-mix(in srgb, var(--startup-core) 32%, transparent);
-        animation: startup-splash-core 1.2s ease-in-out infinite;
-      }
       @keyframes startup-splash-rotate {
         from {
           transform: rotate(0deg);
@@ -180,16 +168,6 @@
         }
       }
 
-      @keyframes startup-splash-core {
-        0%,
-        100% {
-          transform: scale(0.92);
-        }
-
-        45% {
-          transform: scale(1);
-        }
-      }
     </style>
     <script type="module" src="./main.tsx"></script>
   </head>
@@ -206,7 +184,6 @@
           <span class="startup-splash__ray" style="--angle: 225deg; --delay: 0.4s"></span>
           <span class="startup-splash__ray" style="--angle: 270deg; --delay: 0.48s"></span>
           <span class="startup-splash__ray" style="--angle: 315deg; --delay: 0.56s"></span>
-          <span class="startup-splash__core"></span>
         </div>
       </div>
     </div>

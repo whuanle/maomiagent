@@ -42,9 +42,7 @@ import {
   fetchFeishuWorkspaceDocLocalDraft,
   loadFeishuDocTreeBranch,
   loadFeishuDocTreeRoot,
-  openFeishuDocIR,
   openFeishuWorkspaceDoc,
-  pullFeishuDocIR,
   pullFeishuWorkspaceDoc,
   pushFeishuWorkspaceDoc,
   saveFeishuWorkspaceDocLocalDraft,
@@ -306,7 +304,7 @@ function stripMarkdownFencedCode(markdown: string): string {
 function extractFeishuMediaTokens(markdown: string): string[] {
   const source = stripMarkdownFencedCode(markdown)
   const tokens = new Set<string>()
-  const pattern = /<(?:image|file)\b[^>]*\b(?:token|file-token|file_token)=(?:"([^"]+)"|'([^']+)'|{([^}]+)}|([^\s"'=<>`]+))/gi
+  const pattern = /<(?:feishu-?)?(?:image|file)\b[^>]*\b(?:token|file-token|file_token)=(?:"([^"]+)"|'([^']+)'|{([^}]+)}|([^\s"'=<>`]+))/gi
   let match: RegExpExecArray | null
 
   while ((match = pattern.exec(source)) !== null) {
@@ -323,7 +321,7 @@ function extractFeishuMediaTokens(markdown: string): string[] {
 function extractFeishuWhiteboardTokens(markdown: string): string[] {
   const source = stripMarkdownFencedCode(markdown)
   const tokens = new Set<string>()
-  const pattern = /<(?:board|whiteboard)\b[^>]*\btoken=(?:"([^"]+)"|'([^']+)'|{([^}]+)}|([^\s"'=<>`]+))/gi
+  const pattern = /<(?:feishu-?)?(?:board|whiteboard)\b[^>]*\btoken=(?:"([^"]+)"|'([^']+)'|{([^}]+)}|([^\s"'=<>`]+))/gi
   let match: RegExpExecArray | null
 
   while ((match = pattern.exec(source)) !== null) {
@@ -386,83 +384,6 @@ function createMarkdownDiff(base: string, current: string): string {
   return output.join("\n")
 }
 
-function blockTextToMarkdown(block: FeishuDocIR["blocks"][string]): string {
-  const text = block.text.map((run) => run.text).join("")
-
-  switch (block.type) {
-    case "heading1":
-      return `# ${text}`
-    case "heading2":
-      return `## ${text}`
-    case "heading3":
-      return `### ${text}`
-    case "heading4":
-      return `#### ${text}`
-    case "heading5":
-      return `##### ${text}`
-    case "heading6":
-      return `###### ${text}`
-    case "bullet":
-      return `- ${text}`
-    case "ordered":
-      return `1. ${text}`
-    case "quote":
-      return `> ${text}`
-    case "code":
-      return `\`\`\`\n${text}\n\`\`\``
-    case "image":
-      return block.resource?.token ? `<FeishuImage token="${block.resource.token}" />` : ""
-    case "file":
-      return block.resource?.token ? `<FeishuFile token="${block.resource.token}" />` : ""
-    case "whiteboard":
-      return block.resource?.token ? `<FeishuWhiteboard token="${block.resource.token}" />` : ""
-    case "text":
-    default:
-      return text
-  }
-}
-
-function feishuDocIRToWorkbenchMarkdown(ir: FeishuDocIR): string {
-  const output: string[] = []
-  const visit = (blockId: string) => {
-    const block = ir.blocks[blockId]
-    if (!block) {
-      return
-    }
-    if (block.id !== ir.document.rootBlockId) {
-      const markdown = blockTextToMarkdown(block)
-      if (markdown.trim()) {
-        output.push(markdown)
-      }
-    }
-    for (const childId of block.children) {
-      visit(childId)
-    }
-  }
-
-  visit(ir.document.rootBlockId)
-  return output.join("\n\n")
-}
-
-function createDocContentViewFromIR(ir: FeishuDocIR): FeishuDocContentView {
-  const markdown = feishuDocIRToWorkbenchMarkdown(ir)
-
-  return {
-    docId: ir.document.id,
-    title: ir.document.title,
-    markdown,
-    length: markdown.length,
-    totalLength: markdown.length,
-    offset: 0,
-    analysis: {
-      riskyBlocks: [],
-      riskySync: false,
-      syncMode: null,
-      riskyBlockMode: "safe",
-    },
-  }
-}
-
 function getDocsMcp(state: FeishuStateView | null) {
   return state?.smartAssistant.docsMcp
     ?? state?.managedMcp
@@ -517,7 +438,6 @@ export function FeishuDocsWorkbench(props: Props) {
   const [expandedKeys, setExpandedKeys] = useState<string[]>([])
   const [activeDoc, setActiveDoc] = useState<FeishuDocSummary | null>(null)
   const [currentDoc, setCurrentDoc] = useState<FeishuDocContentView | null>(null)
-  const [currentDocIR, setCurrentDocIR] = useState<FeishuDocIR | null>(null)
   const [docLoading, setDocLoading] = useState(false)
   const [docError, setDocError] = useState("")
   const [draft, setDraft] = useState("")
@@ -730,25 +650,16 @@ export function FeishuDocsWorkbench(props: Props) {
       }
 
       setDocLoading(true)
-      let item: FeishuDocContentView
-      let itemIR: FeishuDocIR | null = null
-      if (props.workspaceId) {
-        try {
-          const result = await openFeishuDocIR(props.baseUrl, { workspaceId: props.workspaceId, docId })
-          itemIR = result.ir
-          item = createDocContentViewFromIR(result.ir)
-        } catch {
-          item = await openFeishuWorkspaceDoc(props.baseUrl, props.workspaceId, docId)
-        }
-      } else {
-        item = await fetchFeishuDocContent(props.baseUrl, docId)
-      }
-      setActiveDoc({
+      const item = props.workspaceId
+        ? await openFeishuWorkspaceDoc(props.baseUrl, props.workspaceId, docId)
+        : await fetchFeishuDocContent(props.baseUrl, docId)
+      setActiveDoc((previous) => ({
+        ...previous,
         ...doc,
         docId,
-      })
+        url: doc.url ?? (previous?.docId === docId ? previous.url : undefined),
+      }))
       setCurrentDoc(item)
-      setCurrentDocIR(itemIR)
       setDraft(item.markdown)
       lastSavedDraftRef.current = item.markdown
       setDocError("")
@@ -805,28 +716,13 @@ export function FeishuDocsWorkbench(props: Props) {
       setSaveError("")
       setSaveState("pulling")
       if (hasWorkspaceContext) {
-        try {
-          const result = await pullFeishuDocIR(props.baseUrl, {
-            workspaceId: props.workspaceId,
-            docId: currentDoc.docId,
-            overwrite: true,
-          })
-          const item = createDocContentViewFromIR(result.ir)
-          setCurrentDoc(item)
-          setCurrentDocIR(result.ir)
-          setDraft(item.markdown)
-          lastSavedDraftRef.current = item.markdown
-        } catch {
-          const result = await pullFeishuWorkspaceDoc(props.baseUrl, props.workspaceId, currentDoc.docId)
-          setCurrentDoc(result.item)
-          setCurrentDocIR(null)
-          setDraft(result.item.markdown)
-          lastSavedDraftRef.current = result.item.markdown
-        }
+        const result = await pullFeishuWorkspaceDoc(props.baseUrl, props.workspaceId, currentDoc.docId)
+        setCurrentDoc(result.item)
+        setDraft(result.item.markdown)
+        lastSavedDraftRef.current = result.item.markdown
       } else {
         const item = await fetchFeishuDocContent(props.baseUrl, currentDoc.docId)
         setCurrentDoc(item)
-        setCurrentDocIR(null)
         setDraft(item.markdown)
         lastSavedDraftRef.current = item.markdown
       }
@@ -1059,13 +955,8 @@ export function FeishuDocsWorkbench(props: Props) {
     () => Object.fromEntries(whiteboardPreviewErrors.map((item) => [item.whiteboardToken, item.message])),
     [whiteboardPreviewErrors],
   )
-  const draftDocIR = useMemo(() => {
-    if (!currentDoc) {
-      return null
-    }
-    return currentDocIR && draft === currentDoc.markdown ? currentDocIR : createDraftDocIR(currentDoc, draft)
-  }, [currentDoc, currentDocIR, draft])
-  const baseDocIR = useMemo(() => currentDocIR ?? (currentDoc ? createDraftDocIR(currentDoc, currentDoc.markdown) : null), [currentDoc, currentDocIR])
+  const draftDocIR = useMemo(() => currentDoc ? createDraftDocIR(currentDoc, draft) : null, [currentDoc, draft])
+  const baseDocIR = useMemo(() => currentDoc ? createDraftDocIR(currentDoc, currentDoc.markdown) : null, [currentDoc])
   const draftMdxDiff = useMemo(() => currentDoc ? createMarkdownDiff(currentDoc.markdown, draft) : "", [currentDoc, draft])
 
   useEffect(() => {
@@ -1617,9 +1508,9 @@ export function FeishuDocsWorkbench(props: Props) {
                               void handlePullDoc()
                             }
                           }}
-                        >
-                          {props.t("飞书页.文档.按钮.拉取最新")}
-                        </Button>
+                      >
+                        {props.t("飞书页.文档.按钮.拉取最新")}
+                      </Button>
                       </Popconfirm>
                       <Tooltip title={pushDisabledReason || undefined}>
                         <span>

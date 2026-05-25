@@ -202,6 +202,52 @@ describe("FeishuDocTreeRemoteSource", () => {
     expect(content.totalLength).toBe(content.markdown.length);
   });
 
+  test("serializes structured native docx blocks into Feishu tag markdown", async () => {
+    const source = createSource({
+      "/docx/v1/documents/doc_1/blocks": {
+        items: [
+          { block_id: "doc_1", block_type: 1, children: ["heading_1", "callout_1", "image_1"] },
+          {
+            block_id: "heading_1",
+            parent_id: "doc_1",
+            block_type: 3,
+            heading1: { elements: [{ text_run: { content: "项目标题" } }] },
+          },
+          {
+            block_id: "callout_1",
+            parent_id: "doc_1",
+            block_type: 19,
+            children: ["callout_text_1"],
+            callout: { emoji_id: "bulb", background_color: "yellow", border_color: "orange" },
+          },
+          {
+            block_id: "callout_text_1",
+            parent_id: "callout_1",
+            block_type: 2,
+            text: { elements: [{ text_run: { content: "Callout body" } }] },
+          },
+          {
+            block_id: "image_1",
+            parent_id: "doc_1",
+            block_type: 27,
+            image: { token: "img_token", width: 640, height: 360, name: "封面" },
+          },
+        ],
+      },
+      "/docx/v1/documents/doc_1": {
+        document: { document_id: "doc_1", title: "远端文档", revision_id: 7 },
+      },
+    });
+
+    const content = await source.readDocumentContent("access", "doc_1");
+
+    expect(content.markdown).toContain("# 项目标题");
+    expect(content.markdown).toContain('<FeishuCallout blockId="callout_1" emoji="bulb" background-color="yellow" border-color="orange">');
+    expect(content.markdown).toContain("Callout body");
+    expect(content.markdown).toContain('<FeishuImage token="img_token" width="640" height="360" name="封面" />');
+    expect(content.length).toBe(content.markdown.length);
+  });
+
   test("falls back to reading docx content by wiki node token when document id lookup fails", async () => {
     const requests: RequestRecord[] = [];
     const source = createSource({

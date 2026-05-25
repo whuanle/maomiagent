@@ -24,13 +24,23 @@ describe("Feishu docs workbench IR loading bridge", () => {
     expect(bunIndex).toContain("resolveDesktopFeishuCommandPort(host).pushDocIR(input)");
   });
 
-  test("workbench prefers IR open and falls back to markdown content", async () => {
+  test("workbench opens and pulls workspace markdown for visual preview", async () => {
     const workbench = await source("src/mainview/modules/feishu/components/docs-workbench.tsx");
 
-    expect(workbench).toContain("openFeishuDocIR(props.baseUrl, { workspaceId: props.workspaceId, docId })");
-    expect(workbench).toContain("item = createDocContentViewFromIR(result.ir)");
-    expect(workbench).toContain("item = await openFeishuWorkspaceDoc(props.baseUrl, props.workspaceId, docId)");
-    expect(workbench).toContain("pullFeishuDocIR(props.baseUrl");
-    expect(workbench).toContain("setCurrentDocIR(result.ir)");
+    expect(workbench).toContain("? await openFeishuWorkspaceDoc(props.baseUrl, props.workspaceId, docId)");
+    expect(workbench).toContain("const result = await pullFeishuWorkspaceDoc(props.baseUrl, props.workspaceId, currentDoc.docId)");
+    expect(workbench).toContain("<FeishuDocVisualEditor");
+    expect(workbench).toContain("mdx={draft}");
+    expect(workbench).not.toContain("openFeishuDocIR(props.baseUrl, { workspaceId: props.workspaceId, docId })");
+    expect(workbench).not.toContain("pullFeishuDocIR(props.baseUrl");
+  });
+
+  test("workbench does not expose browser-open action without a reliable document url source", async () => {
+    const workbench = await source("src/mainview/modules/feishu/components/docs-workbench.tsx");
+
+    expect(workbench).not.toContain('const activeDocUrl = activeDoc?.url?.trim() ?? ""');
+    expect(workbench).not.toContain('await openDesktopExternalUrl(activeDocUrl)');
+    expect(workbench).not.toContain('icon={<ExportOutlined />}');
+    expect(workbench).not.toContain('aria-label="在浏览器打开当前文档"');
   });
 });

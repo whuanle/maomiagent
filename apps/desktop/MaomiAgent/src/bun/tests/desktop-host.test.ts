@@ -3,7 +3,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { DESKTOP_FEISHU_OAUTH_CALLBACK_PATH } from "../../shared/desktop-feishu-oauth";
+import {
+  DESKTOP_FEISHU_DOC_MEDIA_PREVIEW_PATH,
+  DESKTOP_FEISHU_DOC_WHITEBOARD_PREVIEW_PATH,
+  DESKTOP_FEISHU_OAUTH_CALLBACK_PATH,
+} from "../../shared/desktop-feishu-oauth";
 
 import {
   DESKTOP_APP_INFO,
@@ -252,6 +256,14 @@ describe("startDesktopApplication", () => {
           expect.objectContaining({
             method: "GET",
             path: DESKTOP_FEISHU_OAUTH_CALLBACK_PATH,
+          }),
+          expect.objectContaining({
+            method: "GET",
+            path: DESKTOP_FEISHU_DOC_MEDIA_PREVIEW_PATH,
+          }),
+          expect.objectContaining({
+            method: "GET",
+            path: DESKTOP_FEISHU_DOC_WHITEBOARD_PREVIEW_PATH,
           }),
         ]),
       );

@@ -5,6 +5,7 @@ import type {
   DesktopFeishuDocTreeRootCacheEntry,
   DesktopFeishuStorePort,
 } from "../../abstraction/ports/desktop-feishu-store.ports";
+import { runDesktopFeishuStoreMutation } from "./desktop-feishu-store-mutation";
 
 function keyPart(value: string): string {
   return encodeURIComponent(value.trim());
@@ -44,35 +45,18 @@ export class FeishuDocTreeCache {
       return;
     }
 
-    return this.enqueueWrite(async () => {
-      const snapshot = await this.store.read();
-      await this.store.write({
-        ...snapshot,
-        docTreeCache: {
-          ...snapshot.docTreeCache,
-          lastRootToken: normalizedToken,
-          lastRootUpdatedAt: new Date().toISOString(),
-        },
-      });
-    });
+    return this.enqueueWrite(() => runDesktopFeishuStoreMutation(this.store, (snapshot) => {
+      snapshot.docTreeCache.lastRootToken = normalizedToken;
+      snapshot.docTreeCache.lastRootUpdatedAt = new Date().toISOString();
+    }));
   }
 
   async saveRoot(scopeId: string, entry: DesktopFeishuDocTreeRootCacheEntry): Promise<void> {
-    return this.enqueueWrite(async () => {
-      const snapshot = await this.store.read();
-      await this.store.write({
-        ...snapshot,
-        docTreeCache: {
-          ...snapshot.docTreeCache,
-          lastRootToken: entry.token,
-          lastRootUpdatedAt: entry.loadedAt,
-          roots: {
-            ...snapshot.docTreeCache.roots,
-            [rootKey(scopeId, entry.token)]: entry,
-          },
-        },
-      });
-    });
+    return this.enqueueWrite(() => runDesktopFeishuStoreMutation(this.store, (snapshot) => {
+      snapshot.docTreeCache.lastRootToken = entry.token;
+      snapshot.docTreeCache.lastRootUpdatedAt = entry.loadedAt;
+      snapshot.docTreeCache.roots[rootKey(scopeId, entry.token)] = entry;
+    }));
   }
 
   async readBranch(
@@ -85,19 +69,9 @@ export class FeishuDocTreeCache {
   }
 
   async saveBranch(scopeId: string, entry: DesktopFeishuDocTreeBranchCacheEntry): Promise<void> {
-    return this.enqueueWrite(async () => {
-      const snapshot = await this.store.read();
-      await this.store.write({
-        ...snapshot,
-        docTreeCache: {
-          ...snapshot.docTreeCache,
-          branches: {
-            ...snapshot.docTreeCache.branches,
-            [branchKey(scopeId, entry.rootToken, entry.parentToken)]: entry,
-          },
-        },
-      });
-    });
+    return this.enqueueWrite(() => runDesktopFeishuStoreMutation(this.store, (snapshot) => {
+      snapshot.docTreeCache.branches[branchKey(scopeId, entry.rootToken, entry.parentToken)] = entry;
+    }));
   }
 
   async readContent(scopeId: string, docId: string): Promise<DesktopFeishuDocContentCacheEntry | null> {
@@ -111,18 +85,8 @@ export class FeishuDocTreeCache {
     item: FeishuDocContentView,
     loadedAt: string,
   ): Promise<void> {
-    return this.enqueueWrite(async () => {
-      const snapshot = await this.store.read();
-      await this.store.write({
-        ...snapshot,
-        docTreeCache: {
-          ...snapshot.docTreeCache,
-          contents: {
-            ...snapshot.docTreeCache.contents,
-            [contentKey(scopeId, docId)]: { docId, item, loadedAt },
-          },
-        },
-      });
-    });
+    return this.enqueueWrite(() => runDesktopFeishuStoreMutation(this.store, (snapshot) => {
+      snapshot.docTreeCache.contents[contentKey(scopeId, docId)] = { docId, item, loadedAt };
+    }));
   }
 }
