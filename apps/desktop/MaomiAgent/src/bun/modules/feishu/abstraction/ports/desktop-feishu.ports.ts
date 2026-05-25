@@ -22,6 +22,7 @@ import type {
   FeishuStateView,
   FeishuWorkspaceDocInput,
 } from "../../../../../shared/desktop-feishu";
+import type { FeishuDocIR } from "../../../../../shared/desktop-feishu-doc-ir";
 
 export interface DesktopFeishuQueryPort {
   getState(): Promise<FeishuStateView>;
@@ -36,6 +37,7 @@ export interface DesktopFeishuQueryPort {
     whiteboardTokens: string[];
   }): Promise<FeishuDocWhiteboardPreviewResult>;
   getWorkspaceDocLocalDraft(input: FeishuWorkspaceDocInput): Promise<FeishuDocContentView>;
+  openDocIR(input: FeishuWorkspaceDocInput): Promise<{ source: "cache" | "remote"; ir: FeishuDocIR }>;
 }
 
 export interface DesktopFeishuCommandPort {
@@ -67,6 +69,8 @@ export interface DesktopFeishuCommandPort {
     markdown?: string;
     force?: boolean;
   }): Promise<FeishuDocWorkspacePushResult>;
+  pullDocIR(input: FeishuWorkspaceDocInput & { overwrite: boolean }): Promise<{ ir: FeishuDocIR; backupPath?: string }>;
+  pushDocIR(input: FeishuWorkspaceDocInput): Promise<{ status: "succeeded" | "blocked" | "failed"; message?: string }>;
 
   executeSmartAssistantAction(
     input: FeishuSmartAssistantExecuteActionInput,

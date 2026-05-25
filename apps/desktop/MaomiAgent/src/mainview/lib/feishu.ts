@@ -35,8 +35,11 @@ import {
   fetchDesktopFeishuWorkspaceDocLocalDraft,
   loadDesktopFeishuDocTreeBranch,
   loadDesktopFeishuDocTreeRoot,
+  openDesktopFeishuDocIR,
   openDesktopFeishuWorkspaceDoc,
+  pullDesktopFeishuDocIR,
   pullDesktopFeishuWorkspaceDoc,
+  pushDesktopFeishuDocIR,
   pushDesktopFeishuWorkspaceDoc,
   refreshDesktopFeishuDeveloperToken,
   saveDesktopFeishuBotConfig,
@@ -44,6 +47,7 @@ import {
   saveDesktopFeishuPersonalConfig,
   saveDesktopFeishuWorkspaceDocLocalDraft,
 } from "./desktop-feishu";
+import type { FeishuDocIR } from "../../shared/desktop-feishu-doc-ir";
 
 const DESKTOP_FEISHU_MUTATION_EVENT = "maomi:desktop-feishu-mutation";
 
@@ -177,6 +181,37 @@ export async function openFeishuWorkspaceDoc(
   docId: string,
 ): Promise<FeishuDocContentView> {
   const result = await openDesktopFeishuWorkspaceDoc(workspaceId, docId);
+  notifyMutation();
+  return result;
+}
+
+export async function openFeishuDocIR(
+  _baseUrl: string,
+  input: { workspaceId: string; docId: string },
+): Promise<{ source: "cache" | "remote"; ir: FeishuDocIR }> {
+  const result = await openDesktopFeishuDocIR(input);
+  notifyMutation();
+  return result;
+}
+
+export async function pullFeishuDocIR(
+  _baseUrl: string,
+  input: { workspaceId: string; docId: string; overwrite?: boolean },
+): Promise<{ ir: FeishuDocIR; backupPath?: string }> {
+  const result = await pullDesktopFeishuDocIR({
+    workspaceId: input.workspaceId,
+    docId: input.docId,
+    overwrite: input.overwrite ?? true,
+  });
+  notifyMutation();
+  return result;
+}
+
+export async function pushFeishuDocIR(
+  _baseUrl: string,
+  input: { workspaceId: string; docId: string },
+): Promise<{ status: "succeeded" | "blocked" | "failed"; message?: string }> {
+  const result = await pushDesktopFeishuDocIR(input);
   notifyMutation();
   return result;
 }

@@ -20,6 +20,7 @@ import type {
   FeishuSmartAssistantExecuteActionInput,
   FeishuStateView,
 } from "../../shared/desktop-feishu";
+import type { FeishuDocIR } from "../../shared/desktop-feishu-doc-ir";
 import { DESKTOP_WINDOW_BRIDGE_READY_EVENT } from "./desktop-window";
 
 type DesktopFeishuBridge = {
@@ -50,6 +51,15 @@ type DesktopFeishuBridge = {
     input: { whiteboardTokens: string[] },
   ) => Promise<FeishuDocWhiteboardPreviewResult>;
   openDesktopFeishuWorkspaceDoc: (workspaceId: string, docId: string) => Promise<FeishuDocContentView>;
+  openDesktopFeishuDocIR: (
+    input: { workspaceId: string; docId: string },
+  ) => Promise<{ source: "cache" | "remote"; ir: FeishuDocIR }>;
+  pullDesktopFeishuDocIR: (
+    input: { workspaceId: string; docId: string; overwrite: boolean },
+  ) => Promise<{ ir: FeishuDocIR; backupPath?: string }>;
+  pushDesktopFeishuDocIR: (
+    input: { workspaceId: string; docId: string },
+  ) => Promise<{ status: "succeeded" | "blocked" | "failed"; message?: string }>;
   getDesktopFeishuWorkspaceDocLocalDraft: (
     workspaceId: string,
     docId: string,
@@ -186,6 +196,28 @@ export function openDesktopFeishuWorkspaceDoc(
   docId: string,
 ): Promise<FeishuDocContentView> {
   return getDesktopFeishuBridge().openDesktopFeishuWorkspaceDoc(workspaceId, docId);
+}
+
+export function openDesktopFeishuDocIR(input: {
+  workspaceId: string;
+  docId: string;
+}): Promise<{ source: "cache" | "remote"; ir: FeishuDocIR }> {
+  return getDesktopFeishuBridge().openDesktopFeishuDocIR(input);
+}
+
+export function pullDesktopFeishuDocIR(input: {
+  workspaceId: string;
+  docId: string;
+  overwrite: boolean;
+}): Promise<{ ir: FeishuDocIR; backupPath?: string }> {
+  return getDesktopFeishuBridge().pullDesktopFeishuDocIR(input);
+}
+
+export function pushDesktopFeishuDocIR(input: {
+  workspaceId: string;
+  docId: string;
+}): Promise<{ status: "succeeded" | "blocked" | "failed"; message?: string }> {
+  return getDesktopFeishuBridge().pushDesktopFeishuDocIR(input);
 }
 
 export function fetchDesktopFeishuWorkspaceDocLocalDraft(

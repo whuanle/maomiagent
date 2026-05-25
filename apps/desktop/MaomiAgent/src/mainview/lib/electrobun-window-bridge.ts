@@ -139,6 +139,9 @@ export function installElectrobunWindowBridge() {
         rpc.request.getDesktopFeishuDocWhiteboardPreviewUrls(input),
       openDesktopFeishuWorkspaceDoc: (workspaceId, docId) =>
         rpc.request.openDesktopFeishuWorkspaceDoc({ workspaceId, docId }),
+      openDesktopFeishuDocIR: (input) => rpc.request.openDesktopFeishuDocIR(input),
+      pullDesktopFeishuDocIR: (input) => rpc.request.pullDesktopFeishuDocIR(input),
+      pushDesktopFeishuDocIR: (input) => rpc.request.pushDesktopFeishuDocIR(input),
       getDesktopFeishuWorkspaceDocLocalDraft: (workspaceId, docId) =>
         rpc.request.getDesktopFeishuWorkspaceDocLocalDraft({ workspaceId, docId }),
       saveDesktopFeishuWorkspaceDocLocalDraft: (input) =>

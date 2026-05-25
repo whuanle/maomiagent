@@ -30,6 +30,7 @@ import type {
   FeishuStateView,
   FeishuWorkspaceDocInput,
 } from "../../../../../shared/desktop-feishu";
+import type { FeishuDocIR } from "../../../../../shared/desktop-feishu-doc-ir";
 import {
   mergeDesktopFeishuOAuthScopes,
   normalizeDesktopFeishuRedirectUri,
@@ -529,6 +530,18 @@ export class DesktopFeishuService implements DesktopFeishuPort {
     force?: boolean;
   }): Promise<FeishuDocWorkspacePushResult> {
     return this.docRuntime.pushWorkspaceDoc(input);
+  }
+
+  async openDocIR(input: FeishuWorkspaceDocInput): Promise<{ source: "cache" | "remote"; ir: FeishuDocIR }> {
+    return this.docRuntime.openDocIR(input);
+  }
+
+  async pullDocIR(input: FeishuWorkspaceDocInput & { overwrite: boolean }): Promise<{ ir: FeishuDocIR; backupPath?: string }> {
+    return this.docRuntime.pullDocIR(input);
+  }
+
+  async pushDocIR(input: FeishuWorkspaceDocInput): Promise<{ status: "succeeded" | "blocked" | "failed"; message?: string }> {
+    return this.docRuntime.pushDocIR(input);
   }
 
   async executeSmartAssistantAction(

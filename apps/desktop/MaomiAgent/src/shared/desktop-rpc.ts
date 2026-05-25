@@ -198,6 +198,7 @@ import type {
   FeishuSmartAssistantExecuteActionInput,
   FeishuStateView,
 } from "./desktop-feishu";
+import type { FeishuDocIR } from "./desktop-feishu-doc-ir";
 import type {
   DesktopGitBranchNameInput,
   DesktopGitBranchesResult,
@@ -493,6 +494,28 @@ export type DesktopRendererRPC = {
           docId: string;
         };
         response: FeishuDocContentView;
+      };
+      openDesktopFeishuDocIR: {
+        params: {
+          workspaceId: string;
+          docId: string;
+        };
+        response: { source: "cache" | "remote"; ir: FeishuDocIR };
+      };
+      pullDesktopFeishuDocIR: {
+        params: {
+          workspaceId: string;
+          docId: string;
+          overwrite: boolean;
+        };
+        response: { ir: FeishuDocIR; backupPath?: string };
+      };
+      pushDesktopFeishuDocIR: {
+        params: {
+          workspaceId: string;
+          docId: string;
+        };
+        response: { status: "succeeded" | "blocked" | "failed"; message?: string };
       };
       getDesktopFeishuWorkspaceDocLocalDraft: {
         params: {

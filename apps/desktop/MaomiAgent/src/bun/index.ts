@@ -717,6 +717,12 @@ try {
               resolveDesktopFeishuQueryPort(host).getDocWhiteboardPreviewUrls({ whiteboardTokens }),
             openDesktopFeishuWorkspaceDoc: ({ workspaceId, docId }) =>
               resolveDesktopFeishuCommandPort(host).openWorkspaceDoc({ workspaceId, docId }),
+            openDesktopFeishuDocIR: (input) =>
+              resolveDesktopFeishuQueryPort(host).openDocIR(input),
+            pullDesktopFeishuDocIR: (input) =>
+              resolveDesktopFeishuCommandPort(host).pullDocIR(input),
+            pushDesktopFeishuDocIR: (input) =>
+              resolveDesktopFeishuCommandPort(host).pushDocIR(input),
             getDesktopFeishuWorkspaceDocLocalDraft: ({ workspaceId, docId }) =>
               resolveDesktopFeishuQueryPort(host).getWorkspaceDocLocalDraft({ workspaceId, docId }),
             saveDesktopFeishuWorkspaceDocLocalDraft: (input) =>
