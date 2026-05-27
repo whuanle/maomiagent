@@ -165,6 +165,19 @@ describe("DesktopFeishuSmartAssistantActionRegistry docs.search", () => {
         listProviderRuntimes: () => [],
       },
       runtime,
+      {
+        listAgenda: async () => [],
+        findFreeBusy: async () => [],
+        createCalendarEvent: async () => {
+          throw new Error("not used in docs.search test");
+        },
+        createTask: async () => {
+          throw new Error("not used in docs.search test");
+        },
+        completeTask: async () => {
+          throw new Error("not used in docs.search test");
+        },
+      } as any,
     );
 
     const result = await registry.execute({

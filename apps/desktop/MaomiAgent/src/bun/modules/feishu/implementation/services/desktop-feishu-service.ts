@@ -42,6 +42,7 @@ import {
   refreshDesktopFeishuDeveloperToken,
   scheduleDesktopFeishuDeveloperAutoRefreshTask,
 } from "./desktop-feishu-developer-token";
+import { buildFeishuBotTenantCapabilityCatalog } from "./desktop-feishu-bot-tenant-capability-catalog";
 import { runDesktopFeishuStoreMutation } from "./desktop-feishu-store-mutation";
 import { hydrateDesktopFeishuStateView } from "./desktop-feishu-state-hydrator";
 import type { DesktopFeishuBotRuntimePort } from "./desktop-feishu-bot-runtime";
@@ -205,6 +206,7 @@ function hydrateFeishuBotState(state: FeishuBotStateView): FeishuBotStateView {
       descriptors: Array.isArray(state.catalog?.descriptors) ? [...state.catalog.descriptors] : [],
       transportMode: "websocket",
     },
+    tenantCapabilities: buildFeishuBotTenantCapabilityCatalog(),
     allowWorkspaceSwitch,
     workspaceSwitchScope:
       allowWorkspaceSwitch
@@ -901,7 +903,7 @@ export class DesktopFeishuService implements DesktopFeishuPort {
   async pushWorkspaceDoc(input: {
     workspaceId: string;
     docId: string;
-    title: string;
+    title?: string;
     markdown?: string;
     force?: boolean;
   }): Promise<FeishuDocWorkspacePushResult> {

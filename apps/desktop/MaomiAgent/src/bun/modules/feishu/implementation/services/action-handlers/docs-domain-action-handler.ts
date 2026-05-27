@@ -493,7 +493,6 @@ export class DocsDomainActionHandler implements DesktopFeishuDomainActionHandler
       const pushResult = await this.docRuntime.pushWorkspaceDoc({
         workspaceId: context.input.workspaceId,
         docId: context.input.docId,
-        title: context.input.title ?? context.input.docId,
         markdown: context.input.markdown,
         force: context.input.confirm,
       });

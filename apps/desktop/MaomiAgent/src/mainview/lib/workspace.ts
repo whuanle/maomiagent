@@ -12,6 +12,29 @@ export type WorkspaceRestoreState = {
 };
 
 const RESTORE_STATE_STORAGE_PREFIX = "maomi.workspace.restore";
+const CHAT_WORKSPACE_TABS_STORAGE_KEY = "maomiagent.chat.workspace-tabs.v1";
+
+function normalizeText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function readStoredActiveWorkspaceId(): string {
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  const raw = window.localStorage.getItem(CHAT_WORKSPACE_TABS_STORAGE_KEY);
+  if (!raw) {
+    return "";
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as { activeWorkspaceId?: unknown } | null;
+    return normalizeText(parsed?.activeWorkspaceId);
+  } catch {
+    return "";
+  }
+}
 
 function buildRestoreStorageKey(workspaceId: string): string {
   return `${RESTORE_STATE_STORAGE_PREFIX}:${workspaceId}`;
@@ -32,6 +55,21 @@ export async function fetchActiveWorkspace(_runtimeUrl: string): Promise<{
   item: Awaited<ReturnType<typeof getDesktopWorkspace>>;
   active: Awaited<ReturnType<typeof getDesktopWorkspace>>;
 }> {
+  const storedActiveWorkspaceId = readStoredActiveWorkspaceId();
+  if (storedActiveWorkspaceId) {
+    try {
+      const activeItem = await getDesktopWorkspace(storedActiveWorkspaceId);
+      if (activeItem) {
+        return {
+          item: activeItem,
+          active: activeItem,
+        };
+      }
+    } catch {
+      // Fall back to the workspace list when a previously selected workspace no longer resolves.
+    }
+  }
+
   const list = await listDesktopWorkspaces({
     limit: 1,
     offset: 0,

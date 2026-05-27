@@ -1081,6 +1081,7 @@ describe("DesktopFeishuDocRuntime", () => {
     const newDocId = "doc_new_1";
     const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-push-new-"));
     let remoteWriterCalls = 0;
+    let remoteWriterTitle = "";
 
     try {
       const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
@@ -1121,6 +1122,7 @@ describe("DesktopFeishuDocRuntime", () => {
           remoteWriter: {
             createDocument: async ({ title }) => {
               remoteWriterCalls += 1;
+              remoteWriterTitle = title;
               return { documentId: newDocId, title };
             },
           },
@@ -1132,12 +1134,12 @@ describe("DesktopFeishuDocRuntime", () => {
       const pushed = await runtime.pushWorkspaceDoc({
         workspaceId: "ws_1",
         docId: nodeToken,
-        title: "Generated",
         markdown: "<!--feishu:block:resolved-missing-->\n# Rewritten from scratch\n<!--/feishu:block:resolved-missing-->\n",
         force: true,
       });
 
       expect(remoteWriterCalls).toBe(1);
+      expect(remoteWriterTitle).toBe("Remote Doc");
       expect(pushed.pushStatus).toBe("published_new");
       expect(pushed.message).toContain(newDocId);
     } finally {

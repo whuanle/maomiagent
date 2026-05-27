@@ -545,7 +545,7 @@ export type DesktopRendererRPC = {
         params: {
           workspaceId: string;
           docId: string;
-          title: string;
+          title?: string;
           markdown?: string;
           force?: boolean;
         };

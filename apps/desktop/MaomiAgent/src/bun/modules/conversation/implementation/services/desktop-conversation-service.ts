@@ -990,9 +990,12 @@ export class DesktopConversationService implements DesktopConversationPort {
       await this.publishInitialProgressDetail(preflightSummary);
 
       try {
-        const runMetadata = mergeMetadata(executionStrategy.runMetadata, {
-          ...(input.composerMode ? { composerMode: input.composerMode } : {}),
-        });
+        const runMetadata = mergeMetadata(
+          mergeMetadata(executionStrategy.runMetadata, input.metadata),
+          {
+            ...(input.composerMode ? { composerMode: input.composerMode } : {}),
+          },
+        );
         const output = await this.requireConversationRuntime().startUserTurn({
           item: preflightSummary,
           ...(text ? { text } : {}),

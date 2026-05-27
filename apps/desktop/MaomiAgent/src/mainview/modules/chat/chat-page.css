@@ -3393,7 +3393,8 @@ button.chat-direct-tool-path:focus-visible {
 }
 
 .chat-module-attached-pane.is-code-preview,
-.chat-module-attached-pane.is-workspace-file-preview {
+.chat-module-attached-pane.is-workspace-file-preview,
+.chat-module-attached-pane.is-feishu-doc-preview {
   display: flex;
   flex-direction: column;
 }
@@ -3402,7 +3403,8 @@ button.chat-direct-tool-path:focus-visible {
 .chat-module-attached-pane.is-code-preview > .workspace-file-preview-panel,
 .chat-module-attached-pane.is-workspace-file-preview > .conversation-code-preview-surface,
 .chat-module-attached-pane.is-workspace-file-preview > .workspace-file-rich-preview,
-.chat-module-attached-pane.is-workspace-file-preview > .workspace-file-preview-panel {
+.chat-module-attached-pane.is-workspace-file-preview > .workspace-file-preview-panel,
+.chat-module-attached-pane.is-feishu-doc-preview > .feishu-doc-visual-editor {
   min-height: 0;
   flex: 1 1 auto;
 }

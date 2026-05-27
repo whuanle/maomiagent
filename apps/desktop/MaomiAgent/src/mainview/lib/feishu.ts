@@ -255,12 +255,12 @@ export async function pushFeishuWorkspaceDoc(
   _baseUrl: string,
   workspaceId: string,
   docId: string,
-  input: { title: string; markdown?: string; force?: boolean },
+  input: { title?: string; markdown?: string; force?: boolean },
 ) {
   const result = await pushDesktopFeishuWorkspaceDoc({
     workspaceId,
     docId,
-    title: input.title,
+    ...(input.title ? { title: input.title } : {}),
     markdown: input.markdown,
     force: input.force,
   });

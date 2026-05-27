@@ -25,10 +25,18 @@ import { ContactDomainActionHandler } from "./action-handlers/contact-domain-act
 import { MailDomainActionHandler } from "./action-handlers/mail-domain-action-handler";
 import { MeetingsDomainActionHandler } from "./action-handlers/meetings-domain-action-handler";
 import { FallbackDomainActionHandler } from "./action-handlers/fallback-domain-action-handler";
+import {
+  FEISHU_BOT_TENANT_ALLOWED_ACTION_IDS,
+} from "./desktop-feishu-bot-tenant-capability-catalog";
+import { normalizeFeishuBotTenantActionId } from "./desktop-feishu-bot-capability-policy";
+import type { DesktopFeishuBotTenantSdkGateway } from "./desktop-feishu-bot-tenant-sdk-gateway";
+import { BotTenantCalendarDomainActionHandler } from "./action-handlers/bot-tenant-calendar-domain-action-handler";
+import { BotTenantTasksDomainActionHandler } from "./action-handlers/bot-tenant-tasks-domain-action-handler";
 
 export class DesktopFeishuSmartAssistantActionRegistry
   implements DesktopFeishuSmartAssistantActionRegistryPort {
   private readonly handlers: DesktopFeishuDomainActionHandler[];
+  private readonly botTenantHandlers: DesktopFeishuDomainActionHandler[];
 
   constructor(
     private readonly aiRuntime: Pick<DesktopAiRuntimePort, "listProviderRuntimes">,
@@ -44,6 +52,7 @@ export class DesktopFeishuSmartAssistantActionRegistry
       | "pullWorkspaceDoc"
       | "pushWorkspaceDoc"
     >,
+    botTenantGateway: DesktopFeishuBotTenantSdkGateway,
   ) {
     this.handlers = [
       new DocsDomainActionHandler(docRuntime),
@@ -59,12 +68,20 @@ export class DesktopFeishuSmartAssistantActionRegistry
       new MeetingsDomainActionHandler(),
       new FallbackDomainActionHandler(),
     ];
+    this.botTenantHandlers = [
+      new BotTenantCalendarDomainActionHandler(botTenantGateway),
+      new BotTenantTasksDomainActionHandler(botTenantGateway),
+    ];
   }
 
   async execute(
     input: FeishuSmartAssistantExecuteActionInput,
   ): Promise<FeishuSmartAssistantActionExecuteResultView> {
-    const actionId = normalizeActionId(input.actionId);
+    const actionId = normalizeActionId(
+      input.executionProfile === "feishu_bot_tenant"
+        ? normalizeFeishuBotTenantActionId(input.actionId)
+        : input.actionId
+    );
     const domain = inferActionDomain(actionId);
     const availableRuntimeCount = this.aiRuntime.listProviderRuntimes().length;
 
@@ -77,7 +94,37 @@ export class DesktopFeishuSmartAssistantActionRegistry
       availableRuntimeCount,
     };
 
-    const handler = this.handlers.find((item) => item.supports(domain));
+    if (
+      input.executionProfile === "feishu_bot_tenant"
+      && !(FEISHU_BOT_TENANT_ALLOWED_ACTION_IDS as readonly string[]).includes(actionId)
+    ) {
+      return {
+        workspaceId: input.workspaceId,
+        actionId,
+        domain,
+        executionMode: "builtin_runtime",
+        executed: false,
+        confirmationRequired: false,
+        summary: {
+          headline: "当前飞书机器人未开通此能力",
+          details: ["当前 tenant-only 机器人仅开放日历和任务的首批动作。"],
+          nextSuggestedActionIds: [],
+        },
+        result: {
+          ok: false,
+          stage: "unsupported",
+          domain,
+          actionId,
+          message: "当前飞书机器人未开通此能力。",
+        },
+        notes: [],
+      };
+    }
+
+    const handlerPool = input.executionProfile === "feishu_bot_tenant"
+      ? [...this.botTenantHandlers, ...this.handlers]
+      : this.handlers;
+    const handler = handlerPool.find((item) => item.supports(domain));
     if (!handler) {
       return {
         workspaceId: input.workspaceId,

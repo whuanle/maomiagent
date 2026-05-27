@@ -88,6 +88,13 @@ export type ChatPreviewSource =
     path: string;
     targetWorkspaceId?: string;
     requestId?: string;
+  }
+  | {
+    kind: "feishu-doc";
+    docId: string;
+    path: string;
+    targetWorkspaceId?: string;
+    requestId?: string;
   };
 
 export type ChatAttachedTabRequest = {
@@ -109,6 +116,7 @@ export type ChatPendingDraft = {
 export type ChatConversationOpenRequest = {
   workspaceId?: string;
   sessionId?: string;
+  createSession?: boolean;
   draftText?: string;
   attachedTabs?: ChatAttachedTabRequest[];
 };

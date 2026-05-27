@@ -1,7 +1,7 @@
 import { App as AntdApp, ConfigProvider, Layout, Tabs, type TabsProps } from "antd";
 import enUS from "antd/locale/en_US";
 import zhCN from "antd/locale/zh_CN";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   APP_ROUTE_ITEMS,
   TITLEBAR_MENU_ITEMS,
@@ -17,6 +17,7 @@ import { createTranslator } from "./i18n";
 import { parseRouteFromHash, readInitialRoute, resolveVisibleMainviewRoute } from "./lib/app-route";
 import { bindNotificationApis } from "./lib/notifications";
 import { readShellPreferences, writeShellPreferences } from "./lib/shell-preferences";
+import type { ChatPageHandle } from "./modules/chat";
 import { AgentsPage } from "./modules/agents";
 import { ChatPage } from "./modules/chat";
 import { BrowserPage } from "./modules/browser";
@@ -38,6 +39,7 @@ import {
   resolveOrderedTitlebarMenuItems,
   writeTitlebarMenuSettings,
 } from "./lib/titlebar-menu-settings";
+import { registerAppServiceConversationLauncher } from "./services/app-service-container";
 import { getAntdTheme, type AppThemeMode } from "./theme/antd-theme";
 import { applyThemeStylesheet } from "./theme/theme-stylesheet";
 import type { RuntimeStatus } from "./types/status";
@@ -114,10 +116,47 @@ export default function App() {
     readTitlebarMenuSettings(TITLEBAR_MENU_ITEMS),
   );
   const previousActiveRouteRef = useRef<AppRouteKey>(initialRoute);
+  const chatPageRef = useRef<ChatPageHandle | null>(null);
+  const pendingConversationOpenRef = useRef<{
+    hasPending: boolean;
+    request: Parameters<ChatPageHandle["openConversation"]>[0];
+  }>({
+    hasPending: false,
+    request: undefined,
+  });
 
   const antdTheme = useMemo(() => getAntdTheme(themeMode), [themeMode]);
   const antdLocale = language === "en-US" ? enUS : zhCN;
   const t = useMemo(() => createTranslator(language), [language]);
+
+  const flushPendingConversationOpen = useCallback(() => {
+    if (!pendingConversationOpenRef.current.hasPending) {
+      return;
+    }
+
+    const chatPage = chatPageRef.current;
+    if (!chatPage) {
+      return;
+    }
+
+    const request = pendingConversationOpenRef.current.request;
+    pendingConversationOpenRef.current = {
+      hasPending: false,
+      request: undefined,
+    };
+    chatPage.openConversation(request);
+  }, []);
+
+  const handleChatPageRef = useCallback((instance: ChatPageHandle | null) => {
+    chatPageRef.current = instance;
+    if (!instance) {
+      return;
+    }
+
+    window.setTimeout(() => {
+      flushPendingConversationOpen();
+    }, 0);
+  }, [flushPendingConversationOpen]);
 
   useEffect(() => {
     writeShellPreferences({ version: 1, language, themeMode });
@@ -154,6 +193,31 @@ export default function App() {
     previousActiveRouteRef.current = activeRoute;
   }, [activeRoute]);
 
+  useEffect(() => {
+    registerAppServiceConversationLauncher({
+      async openConversation(input) {
+        const draft = input?.draftText ?? input?.content;
+        if (draft && draft.trim()) {
+          window.localStorage.setItem("maomi.chat.draft", draft);
+        }
+
+        pendingConversationOpenRef.current = {
+          hasPending: true,
+          request: input,
+        };
+
+        window.location.hash = "chat";
+        window.setTimeout(() => {
+          flushPendingConversationOpen();
+        }, 0);
+      },
+    });
+
+    return () => {
+      registerAppServiceConversationLauncher(null);
+    };
+  }, [flushPendingConversationOpen]);
+
   const visibleRoute = resolveVisibleMainviewRoute(activeRoute);
 
   const orderedMenuItems = useMemo(() => {
@@ -186,6 +250,7 @@ export default function App() {
             route.key,
             route.key === "chat" ? (
               <ChatPage
+                ref={handleChatPageRef}
                 active={route.key === visibleRoute}
                 language={language}
                 revealTerminalToken={chatTerminalRevealToken}
@@ -305,7 +370,7 @@ export default function App() {
           )
         : null,
     }));
-  }, [chatTerminalRevealToken, language, menuSettings.collapsedMenuKeys, orderedMenuItems, status, t, themeMode, visibleRoute]);
+  }, [chatTerminalRevealToken, handleChatPageRef, language, menuSettings.collapsedMenuKeys, orderedMenuItems, status, t, themeMode, visibleRoute]);
 
   return (
     <ConfigProvider locale={antdLocale} theme={antdTheme}>

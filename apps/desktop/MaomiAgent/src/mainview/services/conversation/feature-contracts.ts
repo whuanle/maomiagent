@@ -3,6 +3,7 @@ export type FrontendConversationLauncherPort = {
     workspaceId?: string;
     content?: string;
     draftText?: string;
+    createSession?: boolean;
     attachedTabs?: Array<Record<string, unknown>>;
     selectedChannelId?: string;
     selectedModelId?: string;

@@ -12,6 +12,7 @@ import type {
   ChatActionErrorType,
   ChatAttachedTabRequest,
   ChatCopy,
+  ChatConversationOpenRequest,
   ChatPendingDraft,
   ChatWorkspaceShellState,
 } from "../types";
@@ -37,6 +38,7 @@ type Props = {
 };
 
 export type ConversationWorkspacePaneHandle = {
+  openConversation: (input?: ChatConversationOpenRequest) => Promise<void>;
   activateSession: (sessionId: string) => void;
   applyDraftPrefill: (input: ChatPendingDraft) => void;
   openAttachedTab: (input: ChatAttachedTabRequest) => void;
@@ -78,12 +80,41 @@ export const ConversationWorkspacePane = forwardRef<ConversationWorkspacePaneHan
   });
 
   useImperativeHandle(ref, () => ({
+    openConversation: async (input) => {
+      const sessionId = input?.sessionId?.trim();
+      if (sessionId) {
+        state.activateSession(sessionId);
+      } else if (input?.createSession) {
+        const createdSession = await state.createSession();
+        if (!createdSession) {
+          return;
+        }
+
+        state.setDraftMessage(input.draftText ?? "");
+      }
+
+      if (!input?.createSession && input?.draftText?.trim()) {
+        state.setDraftMessage(input.draftText);
+      }
+
+      if (input?.attachedTabs?.length) {
+        window.setTimeout(() => {
+          for (const attachedTab of input.attachedTabs ?? []) {
+            try {
+              workbench.onOpenAttachedTab(attachedTab);
+            } catch {
+              // Keep session creation and draft prefill resilient even if an auxiliary preview request is malformed.
+            }
+          }
+        }, 0);
+      }
+    },
     activateSession: state.activateSession,
     applyDraftPrefill: (input) => {
       state.setDraftMessage(input.text);
     },
     openAttachedTab: workbench.onOpenAttachedTab,
-  }), [state.activateSession, state.setDraftMessage, workbench.onOpenAttachedTab]);
+  }), [state.activateSession, state.createSession, state.setDraftMessage, workbench.onOpenAttachedTab]);
 
   return (
     <ConversationWorkspaceWorkbench

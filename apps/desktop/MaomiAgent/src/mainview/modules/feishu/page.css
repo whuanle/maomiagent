@@ -1483,9 +1483,19 @@
   gap: 8px;
 }
 
+.feishu-docs-workspace-mode-stack {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
 .feishu-docs-workspace-view-switch.ant-radio-group {
   display: inline-flex;
   min-width: 0;
+}
+
+.feishu-docs-workspace-view-switch.ant-radio-group.is-secondary {
+  flex: 0 0 auto;
 }
 
 .feishu-docs-workspace-view-switch.ant-radio-group .ant-radio-button-wrapper {
@@ -1503,7 +1513,8 @@
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
 }
 
 .feishu-docs-toolbar-action.ant-btn {
@@ -1573,6 +1584,41 @@
   overflow: hidden;
 }
 
+.feishu-docs-source-edit-shell {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.feishu-docs-source-mode-note.ant-alert {
+  flex: 0 0 auto;
+  margin: 12px 12px 0;
+  border-radius: 12px;
+}
+
+.feishu-docs-visual-edit-shell {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+}
+
+.feishu-docs-visual-edit-preview,
+.feishu-docs-visual-edit-source {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.feishu-docs-visual-edit-source {
+  border-inline-start: 1px solid color-mix(in srgb, var(--app-border-soft) 72%, transparent);
+}
+
 .feishu-doc-visual-editor {
   display: grid;
   width: 100%;
@@ -1601,9 +1647,12 @@
   overflow: auto;
 }
 
+.feishu-doc-visual-preview-pane.is-editable {
+  overflow: hidden;
+}
+
 .feishu-doc-visual-outline {
   border-inline-start: 1px solid color-mix(in srgb, var(--app-border-soft) 78%, transparent);
-  background: color-mix(in srgb, var(--app-surface-subtle) 72%, transparent);
 }
 
 .feishu-doc-visual-outline-head {
@@ -1722,6 +1771,19 @@
   flex: 1;
   min-width: 0;
   min-height: 0;
+}
+
+.feishu-doc-visual-rich-editor.mdxeditor,
+.feishu-doc-visual-rich-editor.mdxeditor > .mdxeditor-root-contenteditable,
+.feishu-doc-visual-rich-editor.mdxeditor > .mdxeditor-root-contenteditable > div {
+  width: 100%;
+}
+
+.feishu-doc-visual-rich-content {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 16px 18px 28px;
 }
 
 .feishu-docs-local-preview-editor.is-nested.mdxeditor > .mdxeditor-root-contenteditable {
@@ -2579,17 +2641,63 @@
   padding: 0;
 }
 
-.feishu-docs-editor-textarea.ant-input {
-  min-height: 100% !important;
-  padding: 18px !important;
-  border: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  color: var(--app-text);
+.feishu-doc-source-editor {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.feishu-doc-source-editor-host,
+.feishu-doc-source-editor-wrapper,
+.feishu-doc-source-editor-monaco,
+.feishu-doc-source-editor-monaco .monaco-editor,
+.feishu-doc-source-editor-monaco .monaco-editor-background,
+.feishu-doc-source-editor-monaco .overflow-guard {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+}
+
+.feishu-doc-source-editor-host {
+  overflow: hidden;
+}
+
+.feishu-doc-source-editor-wrapper {
+  flex: 1;
+  align-self: stretch;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--app-surface-subtle) 74%, var(--app-surface) 26%);
+}
+
+.feishu-doc-source-editor-monaco {
+  flex: 1;
+}
+
+.feishu-doc-source-editor-monaco .margin,
+.feishu-doc-source-editor-monaco .monaco-editor,
+.feishu-doc-source-editor-monaco .monaco-editor-background {
+  background: color-mix(in srgb, var(--app-surface-subtle) 74%, var(--app-surface) 26%) !important;
+}
+
+.feishu-doc-source-editor-monaco .monaco-editor .view-lines {
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-  font-size: 13px;
-  line-height: 1.65;
-  resize: none;
+}
+
+@media (max-width: 1180px) {
+  .feishu-docs-visual-edit-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(320px, 0.95fr);
+  }
+
+  .feishu-docs-visual-edit-source {
+    border-inline-start: 0;
+    border-top: 1px solid color-mix(in srgb, var(--app-border-soft) 72%, transparent);
+  }
 }
 
 .feishu-docs-workspace-body > .ant-empty {
@@ -2737,6 +2845,12 @@
 .feishu-detail-summary-panel,
 .feishu-detail-meta-panel {
   gap: 12px;
+}
+
+.feishu-bot-editor-panel,
+.feishu-bot-status-panel {
+  flex: 1;
+  min-height: 0;
 }
 
 .feishu-bot-editor-panel.is-plain,
@@ -2994,6 +3108,52 @@
 .feishu-bot-primary-action.ant-btn {
   min-width: 156px;
   padding-inline: 22px;
+}
+
+.feishu-bot-scope-box {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--app-border-soft) 78%, transparent);
+  background: color-mix(in srgb, var(--app-surface-subtle) 76%, transparent);
+  overflow: hidden;
+}
+
+.feishu-bot-scope-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.feishu-bot-scope-copy.ant-btn {
+  flex: none;
+}
+
+.feishu-bot-scope-json.ant-input {
+  flex: 1;
+  margin: 0;
+  min-height: 0;
+  height: 100%;
+  max-height: none;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--app-border-soft) 72%, transparent);
+  background: color-mix(in srgb, var(--app-surface) 92%, transparent);
+  color: var(--app-text);
+  font-size: 12px;
+  line-height: 1.7;
+  font-family: Consolas, "SFMono-Regular", Monaco, monospace;
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+  resize: none;
 }
 
 .feishu-bot-status-grid,
@@ -3275,6 +3435,10 @@
   .feishu-docs-workspace-toolbar {
     grid-template-columns: minmax(0, 1fr);
     justify-content: flex-start;
+  }
+
+  .feishu-docs-workspace-mode-stack {
+    align-items: flex-start;
   }
 
   .feishu-docs-workspace-actions {

@@ -4,6 +4,7 @@ import {
   DesktopFeishuOpenApiClient,
   DesktopFeishuOpenApiError,
   isDesktopFeishuAccessTokenExpiredError,
+  isDesktopFeishuRefreshTokenExpiredError,
 } from "./desktop-feishu-openapi-client";
 
 describe("DesktopFeishuOpenApiClient", () => {
@@ -135,6 +136,41 @@ describe("DesktopFeishuOpenApiClient", () => {
     expect(result.refreshTokenExpiresAt).toBe("2026-06-20T00:00:00.000Z");
   });
 
+  test("fetches a self-built tenant access token", async () => {
+    const requests: Array<{ url: string; body: unknown }> = [];
+    const client = new DesktopFeishuOpenApiClient({
+      fetch: async (url, init) => {
+        requests.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+        return new Response(JSON.stringify({
+          code: 0,
+          tenant_access_token: "tenant_access_token_1",
+          expire: 7200,
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+      now: () => new Date("2026-05-26T10:00:00.000Z"),
+    });
+
+    const result = await client.getTenantAccessToken({
+      appId: "cli_bot_app",
+      appSecret: "bot_secret",
+    });
+
+    expect(requests[0]).toEqual({
+      url: "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+      body: {
+        app_id: "cli_bot_app",
+        app_secret: "bot_secret",
+      },
+    });
+    expect(result).toEqual({
+      tenantAccessToken: "tenant_access_token_1",
+      expiresAt: "2026-05-26T12:00:00.000Z",
+    });
+  });
+
   test("throws a readable error for Feishu error responses", async () => {
     const client = new DesktopFeishuOpenApiClient({
       fetch: async () => new Response(JSON.stringify({ code: 99991663, msg: "invalid code" }), { status: 200 }),
@@ -165,5 +201,15 @@ describe("DesktopFeishuOpenApiClient", () => {
     expect((caught as DesktopFeishuOpenApiError).status).toBe(400);
     expect((caught as DesktopFeishuOpenApiError).code).toBe(20006);
     expect(isDesktopFeishuAccessTokenExpiredError(caught)).toBe(true);
+  });
+
+  test("detects revoked refresh token errors that require reauthorization", () => {
+    const error = new DesktopFeishuOpenApiError({
+      message: "Feishu API HTTP error 400 (code 20064): The refresh token has been revoked. Please note that a refresh token can only be used once.",
+      status: 400,
+      code: 20064,
+    });
+
+    expect(isDesktopFeishuRefreshTokenExpiredError(error)).toBe(true);
   });
 });

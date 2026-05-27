@@ -292,6 +292,7 @@ export type DesktopConversationSendMessageInput = DesktopModelRuntimeSelectionQu
   attachments?: DesktopConversationAttachmentInput[];
   selectedAgentId?: string;
   composerMode?: DesktopConversationComposerMode;
+  metadata?: Record<string, unknown>;
 };
 
 export type DesktopConversationSendMessageResponse = {

@@ -160,6 +160,10 @@ function deriveDocTitle(docId: string, markdown: string): string {
   return heading?.replace(/^#\s+/, "").trim() || docId;
 }
 
+function resolvePushFallbackTitle(input: { docId: string; currentTitle?: string }): string {
+  return trimText(input.currentTitle) ?? input.docId;
+}
+
 function createMarkdownChecksum(markdown: string): string {
   return `sha256:${createHash("sha256").update(markdown).digest("hex")}`;
 }
@@ -1339,11 +1343,25 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
   async pushWorkspaceDoc(input: {
     workspaceId: string;
     docId: string;
-    title: string;
+    title?: string;
     markdown?: string;
     force?: boolean;
   }): Promise<FeishuDocWorkspacePushResult> {
-    const item = await this.saveWorkspaceDocLocalDraft(input);
+    const current = await this.getWorkspaceDocLocalDraft({
+      workspaceId: input.workspaceId,
+      docId: input.docId,
+    });
+    const pushTitle = resolvePushFallbackTitle({
+      docId: input.docId,
+      currentTitle: current.title,
+    });
+    const item = await this.saveWorkspaceDocLocalDraft({
+      workspaceId: input.workspaceId,
+      docId: input.docId,
+      title: pushTitle,
+      markdown: input.markdown,
+      force: input.force,
+    });
     if (item.cache?.hasBaseline && !item.cache.hasLocalChanges) {
       return {
         item,
@@ -1394,7 +1412,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       && this.remoteWriter
     ) {
       const accessToken = await this.accessToken();
-      const created = await this.remoteWriter.createDocument({ accessToken, title: input.title });
+      const created = await this.remoteWriter.createDocument({ accessToken, title: pushTitle });
       await this.saveWorkspaceDocLocalDraft({
         workspaceId: input.workspaceId,
         docId: created.documentId,

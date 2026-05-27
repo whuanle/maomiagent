@@ -247,7 +247,7 @@ export function pullDesktopFeishuWorkspaceDoc(
 export function pushDesktopFeishuWorkspaceDoc(input: {
   workspaceId: string;
   docId: string;
-  title: string;
+  title?: string;
   markdown?: string;
   force?: boolean;
 }): Promise<FeishuDocWorkspacePushResult> {

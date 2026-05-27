@@ -287,7 +287,14 @@ export function ConversationModulePanel(props: Props) {
       onClose: props.onCloseAttachedTab,
     }),
     children: (
-      <div className={`chat-module-attached-pane ${item.source.kind === "workspace-file" ? "is-workspace-file-preview" : "is-code-preview"}`.trim()}>
+      <div className={[
+        "chat-module-attached-pane",
+        item.source.kind === "workspace-file"
+          ? "is-workspace-file-preview"
+          : item.source.kind === "feishu-doc"
+            ? "is-feishu-doc-preview"
+            : "is-code-preview",
+      ].join(" ")}>
         <UnifiedPreviewPanel language={props.language} preview={item} />
       </div>
     ),

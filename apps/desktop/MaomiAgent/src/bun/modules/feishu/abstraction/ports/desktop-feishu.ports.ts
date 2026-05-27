@@ -65,7 +65,7 @@ export interface DesktopFeishuCommandPort {
   pushWorkspaceDoc(input: {
     workspaceId: string;
     docId: string;
-    title: string;
+    title?: string;
     markdown?: string;
     force?: boolean;
   }): Promise<FeishuDocWorkspacePushResult>;

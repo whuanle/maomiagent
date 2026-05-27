@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 
-import { createSingleInstanceCoordinator } from "../single-instance";
+import {
+  REFRESH_MAIN_VIEW_ROUTE_PATH,
+  createSingleInstanceCoordinator,
+  requestExistingInstanceMainViewRefresh,
+} from "../single-instance";
+import { DESKTOP_LOCAL_CONTROL_PROTOCOL } from "../../shared/desktop-feishu-oauth";
 
 const TEST_PORT_BASE = 35100;
 let nextTestPort = TEST_PORT_BASE;
@@ -115,6 +120,62 @@ describe("createSingleInstanceCoordinator", () => {
         );
         expect(response.status).toBe(200);
         expect(await response.text()).toBe("oauth-state-1");
+      } finally {
+        unregister();
+      }
+    } finally {
+      await primary.dispose();
+    }
+  });
+
+  test("requests mainview refresh on the existing primary control plane", async () => {
+    const appKey = `com.maomiagent.desktop.test.${randomUUID()}`;
+    const port = allocateTestPort();
+    const primary = await createSingleInstanceCoordinator({
+      appKey,
+      appName: "MaomiAgent Test",
+      port,
+    });
+
+    try {
+      let refreshCalls = 0;
+      const unregister = primary.registerHttpRoute({
+        method: "POST",
+        path: REFRESH_MAIN_VIEW_ROUTE_PATH,
+        async handler(request) {
+          const parsed = JSON.parse(request.bodyText) as {
+            action?: string;
+            appKey?: string;
+            protocol?: string;
+            devServerUrl?: string;
+          };
+          refreshCalls += 1;
+          expect(parsed.action).toBe("activate");
+          expect(parsed.appKey).toBe(appKey);
+          expect(parsed.protocol).toBe(DESKTOP_LOCAL_CONTROL_PROTOCOL);
+          expect(parsed.devServerUrl).toBe("http://127.0.0.1:5173");
+          return {
+            status: 200,
+            headers: {
+              "content-type": "application/json; charset=utf-8",
+            },
+            body: JSON.stringify({
+              accepted: true,
+              protocol: DESKTOP_LOCAL_CONTROL_PROTOCOL,
+            }),
+          };
+        },
+      });
+
+      try {
+        await expect(
+          requestExistingInstanceMainViewRefresh({
+            appKey,
+            port,
+            devServerUrl: "http://127.0.0.1:5173",
+          }),
+        ).resolves.toBe(true);
+        expect(refreshCalls).toBe(1);
       } finally {
         unregister();
       }

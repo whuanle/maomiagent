@@ -52,5 +52,10 @@ export function resolveFeishuDocsTagLabel(
 ): string {
   const normalized = normalizeFeishuDocsTagName(name)
   const key = FEISHU_DOCS_TAG_LABEL_KEYS[normalized as keyof typeof FEISHU_DOCS_TAG_LABEL_KEYS]
-  return key && t ? t(key) : fallback
+  if (!key || !t) {
+    return fallback
+  }
+
+  const translated = t(key)
+  return translated === key ? fallback : translated
 }

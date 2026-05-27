@@ -3,7 +3,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
   mergeFeishuDocsUiStateWithWorkspaceRestore,
   readFeishuPagePersistentState,
+  readSavedFeishuActiveWorkspaceId,
   writeFeishuPagePersistentState,
+  writeSavedFeishuActiveWorkspaceId,
 } from "./page-state";
 
 const TEST_ROOT_TOKEN = "GkfewPcB0ibJMMkXGZucdgR8nhh";
@@ -134,5 +136,117 @@ describe("Feishu page state helpers", () => {
       treeQuery: TEST_ROOT_TOKEN,
       treeRootDocId: TEST_ROOT_TOKEN,
     });
+  });
+
+  test("round-trips tree snapshot state for docs workspace recovery", () => {
+    installWindowStorage();
+
+    writeFeishuPagePersistentState("workspace_1", {
+      pageView: "docs-workspace",
+      docs: {
+        activeDocId: "doc_1",
+        treeQuery: TEST_ROOT_TOKEN,
+        treeRootDocId: TEST_ROOT_TOKEN,
+        workspaceMode: "workspace",
+        expandedKeys: ["folder_1"],
+        treeNodes: [
+          {
+            key: "folder_1",
+            title: "测试目录",
+            loaded: true,
+            isLeaf: false,
+            doc: {
+              id: "folder_1",
+              token: "folder_1",
+              docId: "folder_1",
+              title: "测试目录",
+              kind: "wiki_node",
+              hasChild: true,
+            },
+            children: [
+              {
+                key: "doc_1",
+                title: "测试文档",
+                loaded: true,
+                isLeaf: true,
+                doc: {
+                  id: "doc_1",
+                  token: "doc_1",
+                  docId: "doc_1",
+                  title: "测试文档",
+                  kind: "document",
+                  hasChild: false,
+                },
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(readFeishuPagePersistentState("workspace_1").docs).toMatchObject({
+      activeDocId: "doc_1",
+      expandedKeys: ["folder_1"],
+      treeNodes: [
+        {
+          key: "folder_1",
+          title: "测试目录",
+          children: [
+            {
+              key: "doc_1",
+              title: "测试文档",
+            },
+          ],
+        },
+      ],
+    });
+  });
+
+  test("keeps local tree snapshot when merging workspace restore state", () => {
+    const mergedState = mergeFeishuDocsUiStateWithWorkspaceRestore(
+      {
+        treeQuery: "",
+        treeRootDocId: "",
+        workspaceMode: "workspace",
+        expandedKeys: ["folder_1"],
+        treeNodes: [
+          {
+            key: "folder_1",
+            title: "测试目录",
+            loaded: true,
+          },
+        ],
+      },
+      {
+        ui: {
+          feishuDocsWorkspace: {
+            treeQuery: TEST_ROOT_TOKEN,
+            treeRootDocId: TEST_ROOT_TOKEN,
+            workspaceMode: "workspace",
+          },
+        },
+      },
+    );
+
+    expect(mergedState).toMatchObject({
+      treeQuery: TEST_ROOT_TOKEN,
+      treeRootDocId: TEST_ROOT_TOKEN,
+      expandedKeys: ["folder_1"],
+      treeNodes: [
+        {
+          key: "folder_1",
+          title: "测试目录",
+        },
+      ],
+    });
+  });
+
+  test("remembers the last active workspace id for docs workspace restore", () => {
+    installWindowStorage();
+
+    writeSavedFeishuActiveWorkspaceId("workspace_1");
+    writeSavedFeishuActiveWorkspaceId("");
+
+    expect(readSavedFeishuActiveWorkspaceId()).toBe("workspace_1");
   });
 });

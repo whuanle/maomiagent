@@ -156,86 +156,6 @@ function resolveStatusTagText(status: "blocked" | "limited" | "ready" | "probing
         : t("飞书页.文档.状态标签.当前阻断")
 }
 
-function resolvePublishRecommendationText(recommendation: string | undefined): string {
-  return recommendation === "publish_new"
-    ? "推荐发布方式：发布新文档"
-    : recommendation === "pull_required"
-      ? "推荐发布方式：先重新拉取远端基线"
-      : recommendation === "update_existing"
-        ? "推荐发布方式：覆盖原文"
-        : ""
-}
-
-function resolveBaselineAuthorityText(doc: FeishuDocContentView | null): string {
-  const cache = doc?.cache
-  if (!cache) {
-    return ""
-  }
-
-  if (cache.hasRawSourceBaseline && cache.hasStructuredBaseline) {
-    return "当前依据：飞书原始结构 + 结构化基线"
-  }
-  if (cache.hasRawSourceBaseline) {
-    return "当前依据：飞书原始结构基线"
-  }
-  if (cache.hasStructuredBaseline) {
-    return "当前依据：结构化基线"
-  }
-  return "当前依据：仅本地草稿"
-}
-
-function buildWorkspaceDiagnostic(doc: FeishuDocContentView | null): {
-  type: "info" | "warning" | "error"
-  message: string
-  description?: string
-} | null {
-  const cache = doc?.cache
-  if (!cache) {
-    return null
-  }
-
-  const authority = resolveBaselineAuthorityText(doc)
-  const details = [
-    authority,
-    resolvePublishRecommendationText(cache.publishModeRecommendation),
-    cache.hasRevisionConflict ? "远端版本已变化" : "",
-    cache.hasBlockedChanges ? "当前改动不适合直接覆盖原文" : "",
-    cache.unknownBlockCount ? `未知块保留：${cache.unknownBlockCount}` : "",
-  ].filter(Boolean)
-
-  if (cache.hasRevisionConflict) {
-    return {
-      type: "error",
-      message: "远端基线已变化，推送前请先重新拉取",
-      description: details.join("；"),
-    }
-  }
-
-  if (cache.hasBlockedChanges || cache.publishModeRecommendation === "publish_new") {
-    return {
-      type: "warning",
-      message: "当前改动不适合直接覆盖原文",
-      description: details.join("；"),
-    }
-  }
-
-  if (cache.publishModeRecommendation === "pull_required") {
-    return {
-      type: "info",
-      message: "当前缺少可直接推送的基线",
-      description: details.join("；"),
-    }
-  }
-
-  return authority
-    ? {
-        type: "info",
-        message: authority,
-        description: details.filter((detail) => detail !== authority).join("；") || undefined,
-      }
-    : null
-}
-
 function mapTreeNodes(items: FeishuDocTreeNode[]): DocsTreeNode[] {
   return items.map(mapTreeNode)
 }
@@ -948,7 +868,6 @@ export function FeishuDocsWorkbench(props: Props) {
       setSaveError("")
       setSaveState("pushing")
       const result = await pushFeishuWorkspaceDoc(props.baseUrl, props.workspaceId, currentDoc.docId, {
-        title: currentDoc.title,
         force: true,
       })
       commitEditSessionBaseline(result.item.markdown)
@@ -1190,8 +1109,6 @@ export function FeishuDocsWorkbench(props: Props) {
   const mediaTokenKey = useMemo(() => mediaTokens.join("|"), [mediaTokens])
   const whiteboardTokens = useMemo(() => extractFeishuWhiteboardTokens(draft), [draft])
   const whiteboardTokenKey = useMemo(() => whiteboardTokens.join("|"), [whiteboardTokens])
-  const hasPreviewAuth = props.state?.smartAssistant.authStatus === "authorized"
-    || props.state?.developer?.authStatus === "authorized"
   const mediaPreviewErrorMap = useMemo(
     () => Object.fromEntries(mediaPreviewErrors.map((item) => [item.fileToken, item.message])),
     [mediaPreviewErrors],
@@ -1224,7 +1141,7 @@ export function FeishuDocsWorkbench(props: Props) {
     })
     setMediaPreviewErrors((previous) => previous.filter((item) => activeTokens.has(item.fileToken)))
 
-    if (!props.baseUrl || mediaTokens.length === 0 || !hasPreviewAuth) {
+    if (!props.baseUrl || mediaTokens.length === 0) {
       mediaPreviewRequestIdRef.current += 1
       setMediaPreviewUrls((previous) => (Object.keys(previous).length === 0 ? previous : {}))
       setMediaPreviewErrors([])
@@ -1251,7 +1168,7 @@ export function FeishuDocsWorkbench(props: Props) {
       }
       setMediaPreviewErrors([])
     })
-  }, [hasPreviewAuth, mediaTokenKey, mediaTokens, props.baseUrl])
+  }, [mediaTokenKey, mediaTokens, props.baseUrl])
 
   useEffect(() => {
     const activeTokens = new Set(whiteboardTokens)
@@ -1271,7 +1188,7 @@ export function FeishuDocsWorkbench(props: Props) {
     })
     setWhiteboardPreviewErrors((previous) => previous.filter((item) => activeTokens.has(item.whiteboardToken)))
 
-    if (!props.baseUrl || whiteboardTokens.length === 0 || !hasPreviewAuth) {
+    if (!props.baseUrl || whiteboardTokens.length === 0) {
       whiteboardPreviewRequestIdRef.current += 1
       setWhiteboardPreviewUrls((previous) => (Object.keys(previous).length === 0 ? previous : {}))
       setWhiteboardPreviewFocusRects((previous) => (Object.keys(previous).length === 0 ? previous : {}))
@@ -1309,7 +1226,7 @@ export function FeishuDocsWorkbench(props: Props) {
       }
       setWhiteboardPreviewErrors([])
     })
-  }, [hasPreviewAuth, props.baseUrl, whiteboardTokenKey, whiteboardTokens])
+  }, [props.baseUrl, whiteboardTokenKey, whiteboardTokens])
 
   useEffect(() => {
     if (!props.baseUrl || !props.workspaceId) {
@@ -1444,7 +1361,6 @@ export function FeishuDocsWorkbench(props: Props) {
   )
   const pushConfirmDescription = useMemo(() => {
     const details = [
-      resolvePublishRecommendationText(currentDoc?.cache?.publishModeRecommendation),
       currentDoc?.cache?.hasRevisionConflict ? "远端基线已变化，本次推送会先阻止覆盖。" : "",
       currentDoc?.cache?.hasBlockedChanges ? "当前改动不适合覆盖原文，更适合发布新文档。" : "",
     ].filter(Boolean)
@@ -1459,7 +1375,7 @@ export function FeishuDocsWorkbench(props: Props) {
     }
 
     return details.join("；")
-  }, [currentDoc?.analysis.riskyBlocks, currentDoc?.cache?.hasBlockedChanges, currentDoc?.cache?.hasRevisionConflict, currentDoc?.cache?.publishModeRecommendation, props.t])
+  }, [currentDoc?.analysis.riskyBlocks, currentDoc?.cache?.hasBlockedChanges, currentDoc?.cache?.hasRevisionConflict, props.t])
   const selectedTreeKey = useMemo(() => {
     const currentDocId = currentDoc?.docId ?? activeDoc?.docId
     if (currentDocId) {
@@ -1484,7 +1400,6 @@ export function FeishuDocsWorkbench(props: Props) {
     }
     return ""
   }, [props.t, treeStatus])
-  const workspaceDiagnostic = useMemo(() => buildWorkspaceDiagnostic(currentDoc), [currentDoc])
   const handleTreeExpand = useCallback<NonNullable<TreeProps["onExpand"]>>((keys, info) => {
     const nextKeys = keys.map((item) => String(item))
     if (!info.expanded) {
@@ -1878,15 +1793,6 @@ export function FeishuDocsWorkbench(props: Props) {
                           showIcon
                           type="info"
                           message="当前没有活动工作区，文档工作区先以浏览模式打开。要使用加入对话、本地草稿和推送回写，请先激活一个工作区。"
-                          className="feishu-docs-workspace-alert"
-                        />
-                      ) : null}
-                      {hasWorkspaceContext && workspaceDiagnostic ? (
-                        <Alert
-                          showIcon
-                          type={workspaceDiagnostic.type}
-                          message={workspaceDiagnostic.message}
-                          description={workspaceDiagnostic.description}
                           className="feishu-docs-workspace-alert"
                         />
                       ) : null}

@@ -7,7 +7,10 @@ import {
   DEFAULT_DESKTOP_APP_UPDATE_PUBLIC_BASE_URL,
   normalizeDesktopAppUpdatePublicBaseUrl,
 } from "../src/bun/desktop-app-update/config";
-import { activateExistingInstance } from "../src/bun/single-instance";
+import {
+  activateExistingInstance,
+  requestExistingInstanceMainViewRefresh,
+} from "../src/bun/single-instance";
 import { DESKTOP_LOCAL_CONTROL_PORT } from "../src/shared/desktop-feishu-oauth";
 
 const APP_NAME = "MaomiAgent";
@@ -43,6 +46,18 @@ async function main(): Promise<void> {
     appKey: DEV_APP_KEY,
     port: DEV_LOCAL_CONTROL_PORT,
   })) {
+    if (useHmrDevServer) {
+      await attachExistingHmrInstance();
+      return;
+    }
+
+    const refreshed = await requestExistingInstanceMainViewRefresh({
+      appKey: DEV_APP_KEY,
+      port: DEV_LOCAL_CONTROL_PORT,
+    });
+    if (!refreshed) {
+      console.warn(`Activated existing MaomiAgent ${devInstanceMode} dev instance, but could not refresh its main view.`);
+    }
     console.log(`Activated existing MaomiAgent ${devInstanceMode} dev instance.`);
     return;
   }
@@ -55,6 +70,42 @@ async function main(): Promise<void> {
     return;
   }
 
+  const { devServerProcess, devServerUrl } = await startManagedHmrDevServer();
+
+  try {
+    await runDesktopDevApp(devServerUrl);
+  } finally {
+    stopCommand(devServerProcess);
+  }
+}
+
+async function attachExistingHmrInstance(): Promise<void> {
+  const { devServerProcess, devServerUrl } = await startManagedHmrDevServer();
+
+  const refreshed = await requestExistingInstanceMainViewRefresh({
+    appKey: DEV_APP_KEY,
+    port: DEV_LOCAL_CONTROL_PORT,
+    devServerUrl,
+  });
+
+  if (!refreshed) {
+    stopCommand(devServerProcess);
+    console.warn("Activated existing MaomiAgent hmr dev instance, but could not refresh its main view.");
+    return;
+  }
+
+  console.log(`Activated existing MaomiAgent hmr dev instance and switched it to ${devServerUrl}.`);
+  try {
+    await devServerProcess.exited;
+  } finally {
+    stopCommand(devServerProcess);
+  }
+}
+
+async function startManagedHmrDevServer(): Promise<{
+  devServerProcess: ReturnType<typeof spawnCommand>;
+  devServerUrl: string;
+}> {
   const devServerPort = await resolveAvailablePort();
   const devServerUrl = `http://${DEV_SERVER_HOST}:${devServerPort}`;
   console.log(`Starting MaomiAgent HMR dev server at ${devServerUrl}.`);
@@ -74,12 +125,12 @@ async function main(): Promise<void> {
     devServerExitCode = exitCode;
   });
 
-  try {
-    await waitForDevServer(devServerUrl, () => devServerExitCode);
-    await runDesktopDevApp(devServerUrl);
-  } finally {
-    stopCommand(devServerProcess);
-  }
+  await waitForDevServer(devServerUrl, () => devServerExitCode);
+
+  return {
+    devServerProcess,
+    devServerUrl,
+  };
 }
 
 async function runDesktopDevApp(devServerUrl?: string): Promise<void> {

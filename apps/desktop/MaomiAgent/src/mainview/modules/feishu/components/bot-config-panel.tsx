@@ -1,4 +1,4 @@
-import { ReloadOutlined } from "@ant-design/icons"
+import { CopyOutlined, ReloadOutlined } from "@ant-design/icons"
 import {
   Alert,
   Button,
@@ -16,6 +16,7 @@ import dayjs from "dayjs"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import type { FeishuBotConfigInput, FeishuBotStateView } from "../../../../shared/desktop-feishu"
 import type { DesktopWorkspaceItem as WorkspaceItem } from "../../../../shared/desktop-workspace"
+import { notifier } from "../../../lib/notifications"
 import type { FeishuTranslate as Translate } from "../types"
 import { RuntimeModelSelect } from "../../wechat/components/runtime-model-select"
 import {
@@ -192,6 +193,30 @@ export function FeishuBotConfigPanel(props: Props) {
     () => props.botState?.recentProcessedMessages ?? [],
     [props.botState?.recentProcessedMessages],
   )
+  const botTenantScopes = useMemo(() => (
+    [...new Set(
+      (props.botState?.tenantCapabilities?.tenantScopes ?? [])
+        .map((item) => item.trim())
+        .filter(Boolean)
+    )]
+  ), [props.botState?.tenantCapabilities?.tenantScopes])
+  const botScopeJson = useMemo(() => (
+    JSON.stringify({
+      scopes: {
+        tenant: botTenantScopes,
+      },
+    }, null, 2)
+  ), [botTenantScopes])
+
+  const handleCopyBotScopes = useCallback(async () => {
+    if (typeof navigator === "undefined" || !navigator.clipboard) {
+      notifier.warning(props.t("飞书页.智能助手.反馈.当前环境不支持复制JSON"))
+      return
+    }
+
+    await navigator.clipboard.writeText(botScopeJson).catch(() => undefined)
+    notifier.success("飞书机器人 tenant 权限 JSON 已复制")
+  }, [botScopeJson, props.t])
 
   return (
     <Card className="panel-card feishu-bot-card" bordered>
@@ -358,6 +383,31 @@ export function FeishuBotConfigPanel(props: Props) {
                   {props.t("飞书页.按钮.清除机器人配置")}
                 </Button>
               </Popconfirm>
+            </div>
+
+            <Divider className="feishu-bot-panel-divider" />
+
+            <div className="feishu-bot-scope-box">
+              <div className="feishu-bot-scope-head">
+                <Text type="secondary">{props.t("飞书页.智能助手.字段.权限JSON")}</Text>
+                <Button
+                  size="small"
+                  className="feishu-bot-scope-copy"
+                  icon={<CopyOutlined />}
+                  onClick={() => {
+                    void handleCopyBotScopes()
+                  }}
+                >
+                  {props.t("飞书页.智能助手.按钮.复制JSON")}
+                </Button>
+              </div>
+              <Input.TextArea
+                readOnly
+                autoSize={false}
+                className="feishu-bot-scope-json"
+                value={botScopeJson}
+                spellCheck={false}
+              />
             </div>
           </div>
         </section>

@@ -17,6 +17,9 @@ describe("Feishu docs translations", () => {
 
     expect(t("飞书页.文档.状态标签.已接通")).toBe("Ready");
     expect(t("飞书页.文档.按钮.推送文档")).toBe("Push Document");
+    expect(t("飞书页.文档.模式.预览")).toBe("Preview");
+    expect(t("飞书页.文档.模式.纯文本编辑")).toBe("Plain Text Edit");
+    expect(t("飞书页.文档.提示.工作区草稿说明")).toContain("original Markdown");
     expect(t("飞书页.文档.状态.正在加载")).toBe("Loading");
     expect(t("飞书页.文档.状态.已显示上次结果")).toBe("Showing previous results");
     expect(t("飞书页.文档.状态.加载失败")).toBe("Load failed");

@@ -1,7 +1,7 @@
 export type FeishuDocIRBlockType =
   | "page" | "text" | "heading1" | "heading2" | "heading3" | "heading4" | "heading5" | "heading6" | "heading7" | "heading8" | "heading9"
   | "bullet" | "ordered" | "code" | "quote" | "todo"
-  | "callout" | "quote-container" | "grid" | "grid-column" | "table" | "table-cell" | "view"
+  | "callout" | "divider" | "quote-container" | "grid" | "grid-column" | "table" | "table-cell" | "view"
   | "image" | "file" | "iframe" | "whiteboard" | "mindnote" | "diagram"
   | "sheet" | "bitable" | "board" | "chat-card" | "link-preview" | "jira-issue" | "add-ons" | "isv" | "okr"
   | "source-synced" | "reference-synced" | "ai-template" | "undefined";

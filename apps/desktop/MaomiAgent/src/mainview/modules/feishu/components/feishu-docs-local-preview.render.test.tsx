@@ -25,9 +25,7 @@ describe("FeishuDocsLocalPreview", () => {
 
   test("keeps image, bitable and multiline code on plain preview branches", async () => {
     const previewSource = await source("src/mainview/modules/feishu/components/feishu-docs-local-preview.tsx")
-    const imageBranch = previewSource
-      .split('if (input.name === "image") {')[1]
-      ?.split('if (input.name === "board" || input.name === "whiteboard") {')[0] ?? ""
+    const imageBranch = /if \(input\.name === "image"\) \{([\s\S]*?)\n  if \(/.exec(previewSource)?.[1] ?? ""
 
     expect(previewSource).toContain('className="feishu-docs-local-preview-plain-media is-image"')
     expect(previewSource).toContain('"feishu-docs-local-preview-plain-block"')
@@ -48,5 +46,22 @@ describe("FeishuDocsLocalPreview", () => {
     expect(previewSource).not.toContain("<PreviewPanelSourceEditor")
     expect(imageBranch.length).toBeGreaterThan(0)
     expect(imageBranch).not.toContain("renderNativePropItems(propItems)")
+  })
+
+  test("includes native table rendering and diagram-like preview branches", async () => {
+    const previewSource = await source("src/mainview/modules/feishu/components/feishu-docs-local-preview.tsx")
+
+    expect(previewSource).toContain("function collectNativeTableRows(")
+    expect(previewSource).toContain('if (input.name === "table") {')
+    expect(previewSource).toContain("parseFeishuDocsPreviewNodesFromMdxChildren(input.mdastNode.children)")
+    expect(previewSource).toContain('className="feishu-docs-local-preview-lark-table-shell"')
+    expect(previewSource).toContain('input.name === "board"')
+    expect(previewSource).toContain('input.name === "whiteboard"')
+    expect(previewSource).toContain('input.name === "mindnote"')
+    expect(previewSource).toContain('input.name === "diagram"')
+    expect(previewSource).toContain('["token", "mindnote-token", "mindnote_token"]')
+    expect(previewSource).toContain('["token", "diagram-token", "diagram_token"]')
+    expect(previewSource).toContain('["token", "whiteboard-token", "whiteboard_token"]')
+    expect(previewSource).toContain('className="feishu-docs-local-preview-plain-media is-image is-board-preview"')
   })
 })

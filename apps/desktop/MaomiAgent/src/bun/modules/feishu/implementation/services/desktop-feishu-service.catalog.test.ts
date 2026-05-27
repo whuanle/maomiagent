@@ -310,6 +310,39 @@ describe("DesktopFeishuService smart assistant catalog hydration", () => {
     }));
   });
 
+  test("hydrates a bot tenant capability catalog independently from smart assistant oauth", async () => {
+    const snapshot = createStoreSnapshot();
+    snapshot.state.smartAssistant.enabled = false;
+    const service = createService(snapshot);
+
+    const bot = await service.getBotState();
+
+    expect(bot.tenantCapabilities).toMatchObject({
+      profile: "feishu_bot_tenant",
+      credentialKind: "tenant_access_token",
+      allowUserAccessToken: false,
+      identitySource: "bot_app",
+      allowedUserIdTypes: ["open_id", "union_id"],
+    });
+    expect(bot.tenantCapabilities?.actions.map((item) => item.actionId)).toEqual([
+      "calendar.agenda",
+      "calendar.find_slot",
+      "calendar.create_event",
+      "tasks.create",
+      "tasks.complete",
+    ]);
+    expect(bot.tenantCapabilities?.blockedActionIds).toEqual(
+      expect.arrayContaining([
+        "docs.search",
+        "docs.read",
+        "docs.create",
+        "docs.update",
+        "meetings.search_records",
+        "meetings.read_minutes",
+      ]),
+    );
+  });
+
   test("hydrates the saved developer state with smart assistant catalog data", async () => {
     const service = createService();
 

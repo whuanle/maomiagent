@@ -328,6 +328,18 @@ export const FEISHU_DOCS_TAG_SPECS: FeishuDocsTagSpec[] = [
     props: [],
   },
   {
+    name: "undefined",
+    kind: "flow",
+    label: "未识别块",
+    description: "当前版本尚未识别具体类型的飞书原始块。预览模式保留块位置和属性，避免内容直接漏成原始标签文本。",
+    tone: "generic",
+    hasChildren: true,
+    props: [
+      { name: "block-id", label: "块 ID" },
+      { name: "blockId", label: "块 ID" },
+    ],
+  },
+  {
     name: "mention-user",
     kind: "text",
     label: "用户提及",

@@ -42,7 +42,9 @@ import {
   isSameDocsUiState,
   mergeFeishuDocsUiStateWithWorkspaceRestore,
   readFeishuPagePersistentState,
+  readSavedFeishuActiveWorkspaceId,
   writeFeishuPagePersistentState,
+  writeSavedFeishuActiveWorkspaceId,
   type FeishuPageView,
 } from "./page-state"
 import "./page.css"
@@ -62,6 +64,14 @@ function readResolvedFeishuPagePersistentState(activeWorkspaceId?: string) {
   }
 }
 
+function readInitialFeishuPageState() {
+  const activeWorkspaceId = readSavedFeishuActiveWorkspaceId()
+  return {
+    activeWorkspaceId,
+    persistedState: readResolvedFeishuPagePersistentState(activeWorkspaceId),
+  }
+}
+
 function resolveAssistantAppId(state: FeishuStateView | null): string {
   return state?.smartAssistant.appId ?? state?.developer?.appId ?? ""
 }
@@ -73,18 +83,24 @@ function resolveAssistantRedirectUri(state: FeishuStateView | null): string {
 export function FeishuPage(props: Props) {
   const baseUrl = "desktop://feishu"
   const wasActiveRef = useRef(props.active)
+  const initialPageStateRef = useRef<ReturnType<typeof readInitialFeishuPageState> | null>(null)
+  if (initialPageStateRef.current === null) {
+    initialPageStateRef.current = readInitialFeishuPageState()
+  }
+  const initialPageState = initialPageStateRef.current
 
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState("")
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState(initialPageState.activeWorkspaceId)
   const [pageView, setPageView] = useState<FeishuPageView>(
-    () => readResolvedFeishuPagePersistentState().pageView,
+    initialPageState.persistedState.pageView,
   )
   const [docsUiState, setDocsUiState] = useState<FeishuDocsWorkbenchUiState>(
-    () => readResolvedFeishuPagePersistentState().docs,
+    initialPageState.persistedState.docs,
   )
   const [docsWorkspaceReturnView, setDocsWorkspaceReturnView] =
     useState<FeishuPageTabKey>("bot")
   const [docsUiStateReady, setDocsUiStateReady] = useState(false)
   const [hydratedPageStateStorageKey, setHydratedPageStateStorageKey] = useState("")
+  const [workspaceContextReady, setWorkspaceContextReady] = useState(Boolean(initialPageState.activeWorkspaceId.trim()))
   const [state, setState] = useState<FeishuStateView | null>(null)
   const [botState, setBotState] = useState<FeishuBotStateView | null>(null)
   const [workspaces, setWorkspaces] = useState<WorkspaceItem[]>([])
@@ -125,6 +141,7 @@ export function FeishuPage(props: Props) {
       setBotState(null)
       setWorkspaces([])
       setActiveWorkspaceId("")
+      setWorkspaceContextReady(true)
       setLoadError("")
       return
     }
@@ -154,6 +171,19 @@ export function FeishuPage(props: Props) {
         fetchActiveWorkspace(baseUrl),
       ])
 
+      if (activeWorkspaceResult.status === "fulfilled") {
+        const nextActiveWorkspaceId = (
+          activeWorkspaceResult.value.item?.workspaceId
+          ?? activeWorkspaceResult.value.active?.workspaceId
+          ?? ""
+        ).trim()
+        if (nextActiveWorkspaceId) {
+          writeSavedFeishuActiveWorkspaceId(nextActiveWorkspaceId)
+        }
+        setActiveWorkspaceId(nextActiveWorkspaceId)
+      }
+      setWorkspaceContextReady(true)
+
       if (stateResult.status === "rejected") {
         throw stateResult.reason
       }
@@ -167,13 +197,6 @@ export function FeishuPage(props: Props) {
         workspaceResult.status === "fulfilled"
           ? workspaceResult.value.items
           : [],
-      )
-      setActiveWorkspaceId(
-        activeWorkspaceResult.status === "fulfilled"
-          ? activeWorkspaceResult.value.item?.workspaceId
-            ?? activeWorkspaceResult.value.active?.workspaceId
-            ?? ""
-          : "",
       )
       setLoadError("")
     } catch (error) {
@@ -255,7 +278,21 @@ export function FeishuPage(props: Props) {
     setPageView(persistedState.pageView)
     setDocsUiState(persistedDocs)
 
-    if (!baseUrl || !activeWorkspaceId.trim()) {
+    if (!baseUrl) {
+      setDocsUiStateReady(true)
+      setHydratedPageStateStorageKey(pageStateStorageKey)
+      return () => {
+        cancelled = true
+      }
+    }
+
+    if (!activeWorkspaceId.trim()) {
+      if (!workspaceContextReady) {
+        return () => {
+          cancelled = true
+        }
+      }
+
       setDocsUiStateReady(true)
       setHydratedPageStateStorageKey(pageStateStorageKey)
       return () => {
@@ -292,7 +329,7 @@ export function FeishuPage(props: Props) {
     return () => {
       cancelled = true
     }
-  }, [activeWorkspaceId, baseUrl, pageStateStorageKey, state?.docsWorkspace?.lastRootToken])
+  }, [activeWorkspaceId, baseUrl, pageStateStorageKey, state?.docsWorkspace?.lastRootToken, workspaceContextReady])
 
   useEffect(() => {
     if (hydratedPageStateStorageKey !== pageStateStorageKey) {
@@ -601,6 +638,8 @@ export function FeishuPage(props: Props) {
         ...nextState,
         treeQuery: nextTreeQuery || (nextTreeRootDocId ? nextState.treeQuery : previousTreeQuery),
         treeRootDocId: nextTreeRootDocId || previousTreeRootDocId,
+        treeNodes: nextState.treeNodes ?? previous.treeNodes,
+        expandedKeys: nextState.expandedKeys ?? previous.expandedKeys,
       }
 
       return isSameDocsUiState(previous, mergedState)
@@ -717,6 +756,12 @@ export function FeishuPage(props: Props) {
   ])
   const activeSection =
     pageSections.find((item) => item.key === pageView) ?? pageSections[0]
+  const hasRestorableDocsUiState = Boolean(
+    docsUiState.activeDocId?.trim()
+    || docsUiState.treeQuery.trim()
+    || docsUiState.treeRootDocId.trim()
+    || docsUiState.treeNodes?.length,
+  )
 
   if (!baseUrl) {
     return (
@@ -730,7 +775,7 @@ export function FeishuPage(props: Props) {
 
   if (pageView === "docs-workspace") {
     const docsWorkspaceId = activeWorkspaceId.trim()
-    if (!docsUiStateReady) {
+    if ((!docsUiStateReady && !hasRestorableDocsUiState) || (!docsWorkspaceId && !workspaceContextReady)) {
       return (
         <div className="feishu-page">
           <Card className="panel-card feishu-page-empty-card" bordered>
@@ -744,6 +789,7 @@ export function FeishuPage(props: Props) {
       <div className="feishu-page">
         <FeishuDocsWorkbench
           key={docsWorkspaceId || "feishu-docs-global"}
+          active={props.active}
           baseUrl={baseUrl}
           workspaceId={docsWorkspaceId}
           state={state}
@@ -753,6 +799,8 @@ export function FeishuPage(props: Props) {
           initialDocId={docsUiState.activeDocId}
           initialTreeQuery={docsUiState.treeQuery}
           initialTreeRootDocId={docsUiState.treeRootDocId}
+          initialTreeNodes={docsUiState.treeNodes}
+          initialExpandedKeys={docsUiState.expandedKeys}
           onReloadState={() => {
             void loadData(true)
           }}

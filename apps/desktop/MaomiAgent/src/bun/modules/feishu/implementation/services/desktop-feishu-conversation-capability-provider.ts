@@ -5,46 +5,78 @@ import type { ToolSource } from "#maomiagent/kernel/src/host/tools";
 import type { DesktopConversationCapabilityProvider } from "../../../conversation/abstraction/ports/desktop-conversation-capabilities.ports";
 import type { DesktopFeishuPort } from "../../abstraction/ports/desktop-feishu.ports";
 import type { FeishuSmartAssistantExecuteActionInput } from "../../../../../shared/desktop-feishu";
-import { inferActionDomain } from "./action-handlers/desktop-feishu-smart-assistant-action-handler.utils";
-import { readFeishuBotAllowedDomains } from "./desktop-feishu-bot-capability-policy";
+import {
+  actionRequiresConfirmation,
+} from "./action-handlers/desktop-feishu-smart-assistant-action-handler.utils";
+import {
+  applyFeishuBotActorToActionInput,
+  readFeishuBotActorContext,
+} from "./desktop-feishu-bot-actor-context";
+import {
+  isFeishuBotActionAllowed,
+  normalizeFeishuBotTenantActionId,
+  readFeishuBotAllowedActionIds,
+} from "./desktop-feishu-bot-capability-policy";
 
-const FEISHU_SMART_ASSISTANT_TOOL_DESCRIPTOR: ToolDescriptor = {
-  name: "feishu_execute_smart_assistant_action",
-  description: "Execute one Feishu smart assistant action for the current workspace conversation.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      actionId: { type: "string" },
-      workspaceId: { type: "string" },
-      confirm: { type: "boolean" },
-      query: { type: "string" },
-      docId: { type: "string" },
-      text: { type: "string" },
-      title: { type: "string" },
-      markdown: { type: "string" },
-      fields: { type: "object", additionalProperties: true },
-      attendeeIds: { type: "array", items: { type: "string" } },
-      startAt: { type: "string" },
-      endAt: { type: "string" },
-      dueAt: { type: "string" },
-      limit: { type: "number" },
-      pageSize: { type: "number" },
-      offset: { type: "number" },
-      fileTokens: { type: "array", items: { type: "string" } },
-      to: { type: "array", items: { type: "string" } },
-      cc: { type: "array", items: { type: "string" } },
-      bcc: { type: "array", items: { type: "string" } },
-      subject: { type: "string" },
+const FEISHU_SMART_ASSISTANT_TOOL_NAME = "feishu_execute_smart_assistant_action";
+
+const FEISHU_SMART_ASSISTANT_TOOL_BASE_PROPERTIES = {
+  workspaceId: { type: "string" },
+  confirm: { type: "boolean" },
+  query: { type: "string" },
+  docId: { type: "string" },
+  text: { type: "string" },
+  title: { type: "string" },
+  markdown: { type: "string" },
+  fields: { type: "object", additionalProperties: true },
+  attendeeIds: { type: "array", items: { type: "string" } },
+  startAt: { type: "string" },
+  endAt: { type: "string" },
+  dueAt: { type: "string" },
+  createMeeting: { type: "boolean" },
+  limit: { type: "number" },
+  pageSize: { type: "number" },
+  offset: { type: "number" },
+  fileTokens: { type: "array", items: { type: "string" } },
+  to: { type: "array", items: { type: "string" } },
+  cc: { type: "array", items: { type: "string" } },
+  bcc: { type: "array", items: { type: "string" } },
+  subject: { type: "string" },
+} as const;
+
+function buildFeishuSmartAssistantToolDescriptor(options: {
+  tenantOnly?: boolean;
+  visibleActionIds?: string[];
+} = {}): ToolDescriptor {
+  const visibleActionIds = options.visibleActionIds?.filter(Boolean) ?? [];
+  const description = options.tenantOnly && visibleActionIds.length > 0
+    ? `Execute exactly one tenant-only Feishu bot action. Allowed actionId values: ${visibleActionIds.join(", ")}.`
+    : "Execute one Feishu smart assistant action for the current workspace conversation.";
+
+  return {
+    name: FEISHU_SMART_ASSISTANT_TOOL_NAME,
+    description,
+    inputSchema: {
+      type: "object",
+      properties: {
+        actionId: visibleActionIds.length > 0
+          ? { type: "string", enum: visibleActionIds }
+          : { type: "string" },
+        ...FEISHU_SMART_ASSISTANT_TOOL_BASE_PROPERTIES,
+      },
+      required: ["actionId"],
+      additionalProperties: true,
     },
-    required: ["actionId"],
-    additionalProperties: true,
-  },
-  metadata: {
-    toolSourceKind: "desktop-feishu",
-    operationKind: "tool_execution",
-    operationLabel: "Execute Feishu smart assistant action",
-  },
-};
+    metadata: {
+      toolSourceKind: "desktop-feishu",
+      operationKind: "tool_execution",
+      operationLabel: "Execute Feishu smart assistant action",
+      ...(options.tenantOnly && visibleActionIds.length > 0
+        ? { visibleActionIds }
+        : {}),
+    },
+  };
+}
 
 function readWorkspaceId(metadata: Record<string, unknown> | undefined) {
   return typeof metadata?.workspaceId === "string" && metadata.workspaceId.trim()
@@ -71,7 +103,11 @@ function readCapabilityEnabled(sessionMetadata: Record<string, unknown> | undefi
 }
 
 class DesktopFeishuConversationToolSource implements ToolSource {
-  constructor(private readonly actionCount: number) {}
+  constructor(
+    private readonly descriptor: ToolDescriptor,
+    private readonly actionCount: number,
+    private readonly visibleActionIds: string[] = [],
+  ) {}
 
   async listTools() {
     return {
@@ -81,15 +117,13 @@ class DesktopFeishuConversationToolSource implements ToolSource {
         metadata: {
           toolSourceKind: "desktop-feishu",
           actionCount: this.actionCount,
+          ...(this.visibleActionIds.length > 0
+            ? { visibleActionIds: this.visibleActionIds }
+            : {}),
         },
       },
       tools: [
-        {
-          ...FEISHU_SMART_ASSISTANT_TOOL_DESCRIPTOR,
-          description: this.actionCount > 0
-            ? `Execute one of ${this.actionCount} available Feishu smart assistant actions for the current workspace conversation.`
-            : FEISHU_SMART_ASSISTANT_TOOL_DESCRIPTOR.description,
-        },
+        this.descriptor,
       ],
     };
   }
@@ -113,7 +147,7 @@ function describeAuthStatus(authStatus: string) {
 export class DesktopFeishuConversationCapabilityProvider
   implements DesktopConversationCapabilityProvider {
   constructor(
-    private readonly feishu: Pick<DesktopFeishuPort, "getState" | "executeSmartAssistantAction">,
+    private readonly feishu: Pick<DesktopFeishuPort, "getState" | "getBotState" | "executeSmartAssistantAction">,
   ) {}
 
   async listCapabilities() {
@@ -144,20 +178,33 @@ export class DesktopFeishuConversationCapabilityProvider
       return undefined;
     }
 
-    const state = await this.feishu.getState();
-    if (!state.smartAssistant.enabled) {
+    const allowedActionIds = readFeishuBotAllowedActionIds(input.sessionMetadata);
+    const isBotConversation = Array.isArray(allowedActionIds) && allowedActionIds.length > 0;
+
+    const state = isBotConversation ? undefined : await this.feishu.getState();
+    const botState = isBotConversation ? await this.feishu.getBotState() : undefined;
+
+    if (!isBotConversation && !state?.smartAssistant.enabled) {
       return undefined;
     }
-    const allowedDomains = readFeishuBotAllowedDomains(input.sessionMetadata);
-    const visibleActions = allowedDomains
-      ? state.smartAssistant.actions.filter((item) => allowedDomains.includes(item.domain))
-      : state.smartAssistant.actions;
+    const visibleActions = isBotConversation
+      ? (botState?.tenantCapabilities?.actions ?? [])
+        .filter((item) => allowedActionIds?.includes(item.actionId))
+      : (state?.smartAssistant.actions ?? []);
+    const visibleActionIds = visibleActions.map((item) => item.actionId);
+    const toolDescriptor = buildFeishuSmartAssistantToolDescriptor({
+      tenantOnly: isBotConversation,
+      visibleActionIds: isBotConversation ? visibleActionIds : undefined,
+    });
 
     const toolHandler: RegisteredToolHandler = {
-      descriptor: FEISHU_SMART_ASSISTANT_TOOL_DESCRIPTOR,
+      descriptor: toolDescriptor,
       execute: async ({ call, context }) => {
         const toolInput = call.input as FeishuSmartAssistantExecuteActionInput;
-        const actionId = typeof toolInput.actionId === "string" ? toolInput.actionId.trim() : "";
+        const rawActionId = typeof toolInput.actionId === "string" ? toolInput.actionId.trim() : "";
+        const actionId = isBotConversation
+          ? normalizeFeishuBotTenantActionId(rawActionId)
+          : rawActionId;
         if (!actionId) {
           throw {
             code: "invalid_argument",
@@ -165,19 +212,36 @@ export class DesktopFeishuConversationCapabilityProvider
             retryable: false,
           };
         }
-        const actionDomain = inferActionDomain(actionId);
-        if (allowedDomains && !allowedDomains.includes(actionDomain)) {
+        if (isBotConversation && !isFeishuBotActionAllowed(actionId, input.sessionMetadata)) {
           throw {
             code: "invalid_argument",
-            message: `Action domain ${actionDomain} is not enabled for this Feishu bot conversation.`,
+            message: "当前飞书机器人未开通此能力。",
+            retryable: false,
+          };
+        }
+        const actor = readFeishuBotActorContext(context.run.metadata)
+          ?? readFeishuBotActorContext(context.session.metadata);
+        const actionInput = isBotConversation
+          ? applyFeishuBotActorToActionInput({
+            ...toolInput,
+            actionId,
+            executionProfile: "feishu_bot_tenant",
+          }, actor)
+          : {
+            ...toolInput,
+            actionId,
+          };
+        if (isBotConversation && actionRequiresConfirmation(actionId) && !actionInput.userId) {
+          throw {
+            code: "invalid_argument",
+            message: "This Feishu bot action requires the sender identity, but the current websocket event did not provide a usable user id.",
             retryable: false,
           };
         }
 
         return this.feishu.executeSmartAssistantAction({
-          ...toolInput,
-          actionId,
-          workspaceId: toolInput.workspaceId
+          ...actionInput,
+          workspaceId: actionInput.workspaceId
             ?? readWorkspaceId(context.run.metadata)
             ?? readWorkspaceId(context.session.metadata)
             ?? input.workspaceId,
@@ -186,7 +250,7 @@ export class DesktopFeishuConversationCapabilityProvider
     };
 
     return {
-      toolSources: [new DesktopFeishuConversationToolSource(visibleActions.length)],
+      toolSources: [new DesktopFeishuConversationToolSource(toolDescriptor, visibleActions.length, visibleActionIds)],
       toolHandlers: [toolHandler],
     };
   }

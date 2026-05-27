@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useRef,
   type MutableRefObject,
 } from "react";
@@ -12,6 +13,7 @@ import type {
   ChatPendingDraft,
 } from "../types";
 import type { ConversationWorkspacePaneHandle } from "../components/workspace-pane";
+import { partitionConversationOpenRequestsByWorkspace } from "./conversation-open-resolution";
 
 type Input = {
   workspaceItems: DesktopWorkspaceItem[];
@@ -61,9 +63,24 @@ function withAttachedTabWorkspace(
 
 export function useChatWorkspacePaneBridge(input: Input): Result {
   const workspacePaneRefs = useRef<Record<string, ConversationWorkspacePaneHandle | null>>({});
+  const unresolvedConversationOpensRef = useRef<ChatConversationOpenRequest[]>([]);
+  const pendingConversationOpensRef = useRef<Record<string, ChatConversationOpenRequest[]>>({});
   const pendingSessionActivationsRef = useRef<Record<string, string[]>>({});
   const pendingDraftsRef = useRef<Record<string, ChatPendingDraft[]>>({});
   const pendingAttachedTabsRef = useRef<Record<string, ChatAttachedTabRequest[]>>({});
+
+  const flushPendingConversationOpens = useCallback((workspaceId: string) => {
+    const host = workspacePaneRefs.current[workspaceId];
+    const pendingItems = pendingConversationOpensRef.current[workspaceId];
+    if (!host || !pendingItems || pendingItems.length === 0) {
+      return;
+    }
+
+    delete pendingConversationOpensRef.current[workspaceId];
+    for (const item of pendingItems) {
+      void host.openConversation(item);
+    }
+  }, []);
 
   const flushPendingSessionActivations = useCallback((workspaceId: string) => {
     const host = workspacePaneRefs.current[workspaceId];
@@ -115,28 +132,39 @@ export function useChatWorkspacePaneBridge(input: Input): Result {
 
     window.setTimeout(() => {
       if (workspacePaneRefs.current[workspaceId] === instance) {
+        flushPendingConversationOpens(workspaceId);
         flushPendingSessionActivations(workspaceId);
         flushPendingDrafts(workspaceId);
         flushPendingAttachedTabs(workspaceId);
       }
     }, 0);
-  }, [flushPendingAttachedTabs, flushPendingDrafts, flushPendingSessionActivations]);
+  }, [flushPendingAttachedTabs, flushPendingConversationOpens, flushPendingDrafts, flushPendingSessionActivations]);
 
   const clearWorkspacePaneState = useCallback((workspaceId: string) => {
     delete workspacePaneRefs.current[workspaceId];
+    delete pendingConversationOpensRef.current[workspaceId];
     delete pendingSessionActivationsRef.current[workspaceId];
     delete pendingDraftsRef.current[workspaceId];
     delete pendingAttachedTabsRef.current[workspaceId];
   }, []);
 
-  const handleOpenConversation = useCallback((request?: ChatConversationOpenRequest) => {
-    const requestedWorkspaceId = resolveConversationTargetWorkspaceId({
-      requestedWorkspaceId: request?.workspaceId,
-      activeWorkspaceId: input.activeWorkspaceIdRef.current,
-      openWorkspaceIds: input.openWorkspaceIdsRef.current,
-      workspaceItems: input.workspaceItems,
-    });
-    if (!requestedWorkspaceId) {
+  const dispatchConversationOpen = useCallback((
+    requestedWorkspaceId: string,
+    request?: ChatConversationOpenRequest,
+  ) => {
+    if (request?.createSession) {
+      pendingConversationOpensRef.current[requestedWorkspaceId] = [
+        ...(pendingConversationOpensRef.current[requestedWorkspaceId] ?? []),
+        {
+          ...request,
+          workspaceId: requestedWorkspaceId,
+        },
+      ];
+
+      input.activateWorkspaceTab(requestedWorkspaceId);
+      window.setTimeout(() => {
+        flushPendingConversationOpens(requestedWorkspaceId);
+      }, 0);
       return;
     }
 
@@ -173,13 +201,77 @@ export function useChatWorkspacePaneBridge(input: Input): Result {
     }, 0);
   }, [
     flushPendingAttachedTabs,
+    flushPendingConversationOpens,
     flushPendingDrafts,
     flushPendingSessionActivations,
-    input.activeWorkspaceIdRef,
     input.activateWorkspaceTab,
+  ]);
+
+  const tryHandleOpenConversation = useCallback((request?: ChatConversationOpenRequest) => {
+    const requestedWorkspaceId = resolveConversationTargetWorkspaceId({
+      requestedWorkspaceId: request?.workspaceId,
+      activeWorkspaceId: input.activeWorkspaceIdRef.current,
+      openWorkspaceIds: input.openWorkspaceIdsRef.current,
+      workspaceItems: input.workspaceItems,
+    });
+    if (!requestedWorkspaceId) {
+      return false;
+    }
+
+    dispatchConversationOpen(requestedWorkspaceId, request);
+    return true;
+  }, [
+    dispatchConversationOpen,
+    input.activeWorkspaceIdRef,
     input.openWorkspaceIdsRef,
     input.workspaceItems,
   ]);
+
+  const flushUnresolvedConversationOpens = useCallback(() => {
+    const pendingItems = unresolvedConversationOpensRef.current;
+    if (pendingItems.length === 0) {
+      return;
+    }
+
+    const result = partitionConversationOpenRequestsByWorkspace({
+      requests: pendingItems,
+      activeWorkspaceId: input.activeWorkspaceIdRef.current,
+      openWorkspaceIds: input.openWorkspaceIdsRef.current,
+      workspaceItems: input.workspaceItems,
+    });
+
+    unresolvedConversationOpensRef.current = result.unresolved;
+    for (const item of result.ready) {
+      dispatchConversationOpen(item.workspaceId, item.request);
+    }
+  }, [
+    dispatchConversationOpen,
+    input.activeWorkspaceIdRef,
+    input.openWorkspaceIdsRef,
+    input.workspaceItems,
+  ]);
+
+  const handleOpenConversation = useCallback((request?: ChatConversationOpenRequest) => {
+    if (!tryHandleOpenConversation(request)) {
+      if (request) {
+        unresolvedConversationOpensRef.current = [
+          ...unresolvedConversationOpensRef.current,
+          request,
+        ];
+      }
+      return;
+    }
+  }, [
+    tryHandleOpenConversation,
+  ]);
+
+  const workspaceItemsKey = input.workspaceItems.map((item) => item.workspaceId).join("|");
+  const openWorkspaceIdsKey = input.openWorkspaceIdsRef.current.join("|");
+  const activeWorkspaceId = input.activeWorkspaceIdRef.current;
+
+  useEffect(() => {
+    flushUnresolvedConversationOpens();
+  }, [activeWorkspaceId, flushUnresolvedConversationOpens, openWorkspaceIdsKey, workspaceItemsKey]);
 
   const handleOpenAttachedTab = useCallback((request: ChatAttachedTabRequest) => {
     const fallbackWorkspaceId = resolveConversationTargetWorkspaceId({

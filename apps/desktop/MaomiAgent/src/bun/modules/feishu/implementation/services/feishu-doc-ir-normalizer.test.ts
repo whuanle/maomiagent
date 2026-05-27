@@ -27,4 +27,22 @@ describe("normalizeFeishuDocBlocksToIR", () => {
     expect(ir.blocks.custom.type).toBe("undefined");
     expect(ir.blocks.custom.raw).toMatchObject({ custom_payload: { value: true } });
   });
+
+  test("normalizes divider raw blocks", () => {
+    const ir = normalizeFeishuDocBlocksToIR({
+      documentId: "docx_1",
+      title: "Demo",
+      revisionId: "7",
+      pulledAt: "2026-05-23T00:00:00.000Z",
+      documentIdType: "document_id",
+      blocks: [
+        { block_id: "docx_1", block_type: 1, children: ["divider_by_number", "divider_by_payload"] },
+        { block_id: "divider_by_number", parent_id: "docx_1", block_type: 16 },
+        { block_id: "divider_by_payload", parent_id: "docx_1", divider: {} },
+      ],
+    });
+
+    expect(ir.blocks.divider_by_number.type).toBe("divider");
+    expect(ir.blocks.divider_by_payload.type).toBe("divider");
+  });
 });

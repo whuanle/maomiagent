@@ -29,6 +29,18 @@ function normalizeWorkspaceFilePreviewSource(
   };
 }
 
+function normalizeFeishuDocPreviewSource(
+  input: Extract<ChatPreviewSource, { kind: "feishu-doc" }>,
+): Extract<ChatPreviewSource, { kind: "feishu-doc" }> {
+  return {
+    kind: input.kind,
+    docId: input.docId.trim(),
+    path: input.path.trim().replaceAll("\\", "/"),
+    targetWorkspaceId: input.targetWorkspaceId?.trim() || undefined,
+    requestId: input.requestId?.trim() || undefined,
+  };
+}
+
 export function normalizeConversationAttachedTabRequest(
   input: ChatAttachedTabRequest,
 ): ChatAttachedTabRequest {
@@ -44,10 +56,20 @@ export function normalizeConversationAttachedTabRequest(
     };
   }
 
-  const source = normalizeWorkspaceFilePreviewSource(input.source);
+  if (input.source.kind === "workspace-file") {
+    const source = normalizeWorkspaceFilePreviewSource(input.source);
+    return {
+      kind: "preview",
+      title: input.title.trim() || source.path,
+      workspaceId,
+      source,
+    };
+  }
+
+  const source = normalizeFeishuDocPreviewSource(input.source);
   return {
     kind: "preview",
-    title: input.title.trim() || source.path,
+    title: input.title.trim() || source.docId,
     workspaceId,
     source,
   };
@@ -60,6 +82,17 @@ export function resolveConversationAttachedTabKey(
 
   if (normalized.source.kind === "message-code-block") {
     return `${CHAT_ATTACHED_TAB_PREFIX}code-preview:${normalized.source.tabId}`;
+  }
+
+  if (normalized.source.kind === "feishu-doc") {
+    return [
+      CHAT_ATTACHED_TAB_PREFIX,
+      "feishu-doc",
+      normalized.workspaceId ?? "global",
+      normalized.source.targetWorkspaceId ?? "default",
+      normalized.source.docId,
+      normalized.source.path,
+    ].join(":");
   }
 
   return [

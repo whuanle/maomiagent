@@ -4,13 +4,20 @@ import type {
   DesktopFeishuStoreSnapshot,
 } from "../../abstraction/ports/desktop-feishu-store.ports";
 import type { DesktopFeishuOpenApiClient } from "./desktop-feishu-openapi-client";
-import { isDesktopFeishuAccessTokenExpiredError } from "./desktop-feishu-openapi-client";
+import {
+  isDesktopFeishuAccessTokenExpiredError,
+  isDesktopFeishuRefreshTokenExpiredError,
+} from "./desktop-feishu-openapi-client";
 import { hydrateDesktopFeishuStateView } from "./desktop-feishu-state-hydrator";
 import { runDesktopFeishuStoreMutation } from "./desktop-feishu-store-mutation";
 
 const ACCESS_TOKEN_REFRESH_SKEW_MS = 5 * 60 * 1000;
+const FORCED_REFRESH_REUSE_WINDOW_MS = 30 * 1000;
 export const DESKTOP_FEISHU_DEVELOPER_TOKEN_AUTO_REFRESH_INTERVAL_MS = 60 * 60 * 1000;
 export const DESKTOP_FEISHU_DEVELOPER_TOKEN_AUTO_REFRESH_TASK_ID = "desktop.feishu.developer-token-auto-refresh";
+const FEISHU_REAUTHORIZE_MESSAGE = "飞书授权已过期，请重新授权";
+const FEISHU_REFRESH_TOKEN_REVOKED_MESSAGE = "refresh_token 已被撤销，请重新发起授权流程以获取新的 refresh_token";
+const developerTokenRefreshInFlight = new WeakMap<DesktopFeishuStorePort, Promise<string>>();
 
 type DesktopFeishuAutoRefreshTaskState = FeishuStateView["smartAssistant"]["autoRefreshTask"];
 type DesktopFeishuAutoRefreshTaskStatus = NonNullable<DesktopFeishuAutoRefreshTaskState["status"]>;
@@ -42,6 +49,35 @@ function hasFreshAccessToken(snapshot: DesktopFeishuStoreSnapshot, nowMs: number
 
   const expiresAt = getTime(snapshot.developerToken.accessTokenExpiresAt);
   return expiresAt == null || expiresAt - nowMs > ACCESS_TOKEN_REFRESH_SKEW_MS;
+}
+
+function hasReusableForcedRefreshResult(snapshot: DesktopFeishuStoreSnapshot, nowMs: number): boolean {
+  if (!hasFreshAccessToken(snapshot, nowMs)) {
+    return false;
+  }
+
+  const lastRefreshedAt = getTime(
+    snapshot.state.developer?.lastRefreshedAt
+    || snapshot.state.smartAssistant.lastRefreshedAt
+    || "",
+  );
+  return lastRefreshedAt != null && nowMs - lastRefreshedAt < FORCED_REFRESH_REUSE_WINDOW_MS;
+}
+
+function resolveReusableAccessToken(
+  snapshot: DesktopFeishuStoreSnapshot,
+  nowMs: number,
+  forceRefresh: boolean,
+): string | null {
+  if (!hasFreshAccessToken(snapshot, nowMs)) {
+    return null;
+  }
+
+  if (!forceRefresh || hasReusableForcedRefreshResult(snapshot, nowMs)) {
+    return snapshot.developerToken.accessToken;
+  }
+
+  return null;
 }
 
 function readDeveloperCredentials(snapshot: DesktopFeishuStoreSnapshot): {
@@ -132,12 +168,17 @@ export function failDesktopFeishuDeveloperAutoRefreshTask(
   applyDesktopFeishuAutoRefreshTaskToTarget(snapshot.state.smartAssistant, task);
 }
 
-function applyRefreshFailure(snapshot: DesktopFeishuStoreSnapshot, message: string, failedAt: Date): void {
+function applyRefreshFailure(
+  snapshot: DesktopFeishuStoreSnapshot,
+  message: string,
+  failedAt: Date,
+  authStatus: "error" | "expired",
+): void {
   if (snapshot.state.developer) {
-    snapshot.state.developer.authStatus = "error";
+    snapshot.state.developer.authStatus = authStatus;
     snapshot.state.developer.lastError = message;
   }
-  snapshot.state.smartAssistant.authStatus = "error";
+  snapshot.state.smartAssistant.authStatus = authStatus;
   snapshot.state.smartAssistant.lastError = message;
   failDesktopFeishuDeveloperAutoRefreshTask(snapshot, failedAt);
 }
@@ -165,17 +206,23 @@ export async function ensureDesktopFeishuDeveloperAccessToken(
 ): Promise<string> {
   const now = deps.now?.() ?? new Date();
   const nowMs = now.getTime();
+  const forceRefresh = deps.forceRefresh === true;
 
-  if (!deps.forceRefresh) {
-    const snapshot = await deps.store.read();
-    if (hasFreshAccessToken(snapshot, nowMs)) {
-      return snapshot.developerToken.accessToken;
-    }
+  const snapshot = await deps.store.read();
+  const reusableAccessToken = resolveReusableAccessToken(snapshot, nowMs, forceRefresh);
+  if (reusableAccessToken) {
+    return reusableAccessToken;
   }
 
-  return runDesktopFeishuStoreMutation(deps.store, async (snapshot) => {
-    if (!deps.forceRefresh && hasFreshAccessToken(snapshot, nowMs)) {
-      return snapshot.developerToken.accessToken;
+  const inFlightRefresh = developerTokenRefreshInFlight.get(deps.store);
+  if (inFlightRefresh) {
+    return inFlightRefresh;
+  }
+
+  const refreshPromise = runDesktopFeishuStoreMutation(deps.store, async (snapshot) => {
+    const reusableAccessToken = resolveReusableAccessToken(snapshot, nowMs, forceRefresh);
+    if (reusableAccessToken) {
+      return reusableAccessToken;
     }
 
     const { appId, appSecret, refreshToken } = readDeveloperCredentials(snapshot);
@@ -198,11 +245,25 @@ export async function ensureDesktopFeishuDeveloperAccessToken(
       applyRefreshSuccess(snapshot, now.toISOString(), now);
       return tokens.accessToken;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      applyRefreshFailure(snapshot, message, now);
+      const rawMessage = error instanceof Error ? error.message : String(error);
+      const isRefreshTokenExpired = rawMessage === FEISHU_REAUTHORIZE_MESSAGE;
+      const isRefreshTokenRevoked = isDesktopFeishuRefreshTokenExpiredError(error);
+      const authStatus = isRefreshTokenExpired || isRefreshTokenRevoked ? "expired" : "error";
+      const message = isRefreshTokenRevoked ? FEISHU_REFRESH_TOKEN_REVOKED_MESSAGE : rawMessage;
+      applyRefreshFailure(snapshot, message, now, authStatus);
       throw new Error(message);
     }
   });
+
+  developerTokenRefreshInFlight.set(deps.store, refreshPromise);
+
+  try {
+    return await refreshPromise;
+  } finally {
+    if (developerTokenRefreshInFlight.get(deps.store) === refreshPromise) {
+      developerTokenRefreshInFlight.delete(deps.store);
+    }
+  }
 }
 
 export async function refreshDesktopFeishuDeveloperToken(

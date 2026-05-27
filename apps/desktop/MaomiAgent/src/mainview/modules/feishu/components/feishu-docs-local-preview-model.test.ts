@@ -60,4 +60,24 @@ describe("parseFeishuDocsLocalPreview", () => {
       }),
     ])
   })
+
+  test("parses undefined native blocks from source markdown", () => {
+    const nodes = parseFeishuDocsLocalPreview([
+      "前文段落。",
+      "",
+      '<undefined blockId="doxcn0QsFdHNX4SwZvpEu7dnKje" />',
+      "",
+      "后文段落。",
+    ].join("\n"))
+
+    expect(nodes).toEqual([
+      expect.objectContaining({ kind: "markdown", markdown: "前文段落。" }),
+      expect.objectContaining({
+        kind: "native_block",
+        name: "undefined",
+        attributes: expect.objectContaining({ blockId: "doxcn0QsFdHNX4SwZvpEu7dnKje" }),
+      }),
+      expect.objectContaining({ kind: "markdown", markdown: "后文段落。" }),
+    ])
+  })
 })

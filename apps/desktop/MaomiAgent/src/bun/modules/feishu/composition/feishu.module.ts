@@ -20,7 +20,7 @@ import {
   type DesktopConversationQueryPort,
 } from "../../conversation";
 
-import { DESKTOP_AI_RUNTIME_PORT, DesktopAiModule } from "../../ai";
+import { DESKTOP_AI_ONE_SHOT_PORT, DESKTOP_AI_RUNTIME_PORT, DesktopAiModule } from "../../ai";
 import { DESKTOP_CONFIGURATION_PORT, DesktopConfigurationModule } from "../../configuration";
 import { RUNTIME_LOGGER_FACTORY_PORT, DesktopLogsModule } from "../../logs";
 import { DESKTOP_WORKSPACE_QUERY_PORT, DesktopWorkspaceModule } from "../../workspace";
@@ -42,6 +42,7 @@ import { FeishuDocTreeRemoteSource } from "../implementation/services/feishu-doc
 import { DesktopFeishuSmartAssistantActionRegistry } from "../implementation/services/desktop-feishu-smart-assistant-action-registry";
 import { DesktopFeishuSmartAssistantActionExecutor } from "../implementation/services/desktop-feishu-smart-assistant-action-executor";
 import { DesktopFeishuOpenApiClient } from "../implementation/services/desktop-feishu-openapi-client";
+import { DesktopFeishuBotTenantSdkGateway } from "../implementation/services/desktop-feishu-bot-tenant-sdk-gateway";
 import {
   DESKTOP_FEISHU_DEVELOPER_TOKEN_AUTO_REFRESH_INTERVAL_MS,
   ensureDesktopFeishuDeveloperAccessToken,
@@ -54,6 +55,7 @@ import {
   DesktopFeishuBotRuntime,
   type DesktopFeishuBotRuntimePort,
 } from "../implementation/services/desktop-feishu-bot-runtime";
+import { DesktopFeishuBotSemanticClassifier } from "../implementation/services/desktop-feishu-bot-semantic-classifier";
 import { DesktopFeishuService } from "../implementation/services/desktop-feishu-service";
 import { runDesktopFeishuStoreMutation } from "../implementation/services/desktop-feishu-store-mutation";
 import { DesktopFeishuStore } from "../implementation/stores/desktop-feishu-store";
@@ -138,6 +140,10 @@ export class DesktopFeishuModule extends DependencyModuleBase {
       useFactory: (services) => new DesktopFeishuSmartAssistantActionRegistry(
         services.resolve(DESKTOP_AI_RUNTIME_PORT),
         services.resolve(DESKTOP_FEISHU_DOC_RUNTIME_PORT),
+        new DesktopFeishuBotTenantSdkGateway({
+          store: services.resolve(DESKTOP_FEISHU_STORE_PORT),
+          openApiClient,
+        }),
       ),
       source: context.module.moduleId,
     });
@@ -155,6 +161,10 @@ export class DesktopFeishuModule extends DependencyModuleBase {
         services.resolve(DESKTOP_CONVERSATION_COMMAND_PORT) as DesktopConversationCommandPort,
         services.resolve(DESKTOP_CONVERSATION_QUERY_PORT) as DesktopConversationQueryPort,
         services.resolve(DESKTOP_WORKSPACE_QUERY_PORT),
+        services.resolve(DESKTOP_FEISHU_ACTION_EXECUTOR_PORT),
+        new DesktopFeishuBotSemanticClassifier(
+          services.resolve(DESKTOP_AI_ONE_SHOT_PORT),
+        ),
         services.resolve(RUNTIME_LOGGER_FACTORY_PORT).createLogger({
           source: "desktop",
           module: "desktop.feishu.bot",

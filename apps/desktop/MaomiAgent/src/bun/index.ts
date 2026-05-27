@@ -7,7 +7,11 @@ import {
 import { startDesktopApplication } from "./desktop-host";
 import { removeDesktopWorkspaceWithTaskCleanup } from "./desktop-workspace-task-cleanup";
 import type { ModuleHost } from "./shared/ioc";
-import { createSingleInstanceCoordinator } from "./single-instance";
+import {
+  REFRESH_MAIN_VIEW_ROUTE_PATH,
+  createSingleInstanceCoordinator,
+} from "./single-instance";
+import { DESKTOP_LOCAL_CONTROL_PROTOCOL } from "../shared/desktop-feishu-oauth";
 import type { DesktopRendererRPC, DesktopWindowAction } from "../shared/desktop-rpc";
 import type {
   FeishuDocTreeBranchInput,
@@ -81,6 +85,7 @@ import type {
 
 const APP_IDENTIFIER = "com.maomiagent.desktop";
 const DEFAULT_MAIN_VIEW_URL = "views://mainview/index.html";
+let activeDevServerUrl = process.env.MAOMI_DESKTOP_DEV_SERVER_URL?.trim() ?? "";
 
 function resolveSingleInstanceAppKey(channel: string): string {
   if (channel === "dev" && process.env.MAOMI_DESKTOP_DEV_APP_KEY?.trim()) {
@@ -91,7 +96,7 @@ function resolveSingleInstanceAppKey(channel: string): string {
 }
 
 async function resolveMainViewUrl(channel: string): Promise<string> {
-  const devServerUrl = process.env.MAOMI_DESKTOP_DEV_SERVER_URL?.trim();
+  const devServerUrl = activeDevServerUrl;
 
   if (channel === "dev" && devServerUrl) {
     try {
@@ -624,6 +629,54 @@ try {
     },
     createWindow(options) {
       let window: BrowserWindow | null = null;
+      const singleInstanceAppKey = resolveSingleInstanceAppKey(channel);
+      singleInstance.registerHttpRoute({
+        method: "POST",
+        path: REFRESH_MAIN_VIEW_ROUTE_PATH,
+        async handler(request) {
+          let accepted = false;
+          let requestedDevServerUrl = "";
+
+          try {
+            const parsed = JSON.parse(request.bodyText) as {
+              action?: string;
+              appKey?: string;
+              protocol?: string;
+              devServerUrl?: string;
+            };
+            accepted = parsed.action === "activate"
+              && parsed.appKey === singleInstanceAppKey
+              && parsed.protocol === DESKTOP_LOCAL_CONTROL_PROTOCOL;
+            requestedDevServerUrl = typeof parsed.devServerUrl === "string"
+              ? parsed.devServerUrl.trim()
+              : "";
+          } catch {
+            accepted = false;
+          }
+
+          if (accepted) {
+            try {
+              if (channel === "dev" && requestedDevServerUrl) {
+                activeDevServerUrl = requestedDevServerUrl;
+              }
+              await refreshMainView(window, channel);
+            } catch (error) {
+              console.warn("Failed to refresh the activated desktop main view.", error);
+            }
+          }
+
+          return {
+            status: 200,
+            headers: {
+              "content-type": "application/json; charset=utf-8",
+            },
+            body: JSON.stringify({
+              accepted,
+              protocol: DESKTOP_LOCAL_CONTROL_PROTOCOL,
+            }),
+          };
+        },
+      });
       const rpc = defineElectrobunRPC<DesktopRendererRPC, "bun">("bun", {
         maxRequestTime: Infinity,
         handlers: {

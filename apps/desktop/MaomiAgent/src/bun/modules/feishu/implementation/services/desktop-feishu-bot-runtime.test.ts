@@ -13,6 +13,7 @@ import {
   buildDesktopFeishuBotConversationKey,
   extractDesktopFeishuBotReplyText,
 } from "./desktop-feishu-bot-runtime";
+import { buildFeishuBotConversationMetadata } from "./desktop-feishu-bot-capability-policy";
 
 function createState(): FeishuStateView {
   return {
@@ -101,6 +102,7 @@ function createSnapshot(): DesktopFeishuStoreSnapshot {
       version: "1.0",
       bindings: [],
       processedMessages: [],
+      pendingActions: [],
     },
     docs: {} as Record<string, FeishuDocContentView>,
     developerCredential: {
@@ -164,6 +166,34 @@ function createLogger() {
       module: "desktop.feishu.bot.test",
       message: "error",
     }),
+  };
+}
+
+function createActionExecutor() {
+  return {
+    executeSmartAssistantAction: async () => {
+      throw new Error("not used in this test");
+    },
+  };
+}
+
+function createSemanticClassifier() {
+  return {
+    classify: async () => "unclear" as const,
+  };
+}
+
+function createBinding(partial: Partial<DesktopFeishuStoreSnapshot["botRuntime"]["bindings"][number]> = {}) {
+  return {
+    key: "tenant-1:oc_1:root",
+    tenantKey: "tenant-1",
+    chatId: "oc_1",
+    workspaceId: "workspace-a",
+    sessionId: "session-1",
+    createdAt: "2026-05-25T09:00:00.000Z",
+    updatedAt: "2026-05-25T09:00:00.000Z",
+    lastMessageId: "om_1",
+    ...partial,
   };
 }
 
@@ -275,15 +305,19 @@ class FakeChannel {
     messageId: string;
     chatId: string;
     senderId?: string;
+    senderName?: string;
     content: string;
+    chatType?: "p2p" | "group";
     threadId?: string;
+    rootId?: string;
     raw?: unknown;
   }) {
     const event = {
       messageId: input.messageId,
       chatId: input.chatId,
-      chatType: "p2p" as const,
-      senderId: input.senderId ?? "user_open_id",
+      chatType: input.chatType ?? "p2p" as const,
+      senderId: input.senderId ?? "ou_user_1",
+      senderName: input.senderName,
       content: input.content,
       rawContentType: "text",
       resources: [],
@@ -291,6 +325,7 @@ class FakeChannel {
       mentionAll: false,
       mentionedBot: true,
       threadId: input.threadId,
+      rootId: input.rootId,
       createTime: Date.parse("2026-05-25T00:00:00.000Z"),
       raw: input.raw,
     };
@@ -431,6 +466,8 @@ describe("DesktopFeishuBotRuntime", () => {
           },
         }),
       },
+      createActionExecutor(),
+      createSemanticClassifier(),
       createLogger(),
       {
         createChannel: () => channel,
@@ -454,7 +491,14 @@ describe("DesktopFeishuBotRuntime", () => {
     await waitFor(() => channel.sent.length === 1 && snapshot.botRuntime.processedMessages.length === 1);
 
     expect(createdSessions).toEqual(["workspace-a"]);
-    expect(sentMessages).toEqual(["你好"]);
+    expect(sentMessages).toEqual([[
+      "[飞书消息上下文]",
+      "会话类型: 私聊",
+      "发送者: ou_user_1",
+      "发送者ID: ou_user_1 (open_id)",
+      "内容:",
+      "你好",
+    ].join("\n")]);
     expect(channel.sent).toEqual([
       {
         to: "oc_1",
@@ -565,6 +609,8 @@ describe("DesktopFeishuBotRuntime", () => {
           },
         }),
       },
+      createActionExecutor(),
+      createSemanticClassifier(),
       createLogger(),
       {
         createChannel: () => channel,
@@ -591,5 +637,792 @@ describe("DesktopFeishuBotRuntime", () => {
       status: "duplicate",
       messageId: "om_dup",
     }));
+  });
+
+  test("rebinds legacy bot sessions that do not carry the bot capability metadata", async () => {
+    let snapshot = createSnapshot();
+    snapshot.botRuntime.bindings = [createBinding({
+      sessionId: "session-legacy",
+      lastMessageId: "om_old",
+    })];
+    const channel = new FakeChannel();
+    const createdMetadata: Array<Record<string, unknown> | undefined> = [];
+    const sentSessionIds: string[] = [];
+    const runtime = new DesktopFeishuBotRuntime(
+      {
+        read: async () => snapshot,
+        write: async (next) => {
+          snapshot = next;
+        },
+        mutate: async (mutator) => {
+          const result = await mutator(snapshot);
+          return result;
+        },
+      },
+      {
+        createSession: async (input) => {
+          createdMetadata.push(input.metadata);
+          return {
+            created: true,
+            item: {
+              sessionId: "session-2",
+              workspaceId: input.workspaceId,
+              title: input.title ?? "Feishu chat",
+              status: "idle",
+              createdAt: "2026-05-25T09:00:00.000Z",
+              updatedAt: "2026-05-25T09:00:00.000Z",
+              metadata: input.metadata,
+            },
+          };
+        },
+        sendMessage: async (input) => {
+          sentSessionIds.push(input.sessionId);
+          return {
+            detail: {
+              sessionId: input.sessionId,
+              workspaceId: input.workspaceId ?? "workspace-a",
+              title: "Feishu chat",
+              status: "idle",
+              createdAt: "2026-05-25T09:00:00.000Z",
+              updatedAt: "2026-05-25T09:00:01.000Z",
+              runs: [],
+              toolCalls: [],
+              interactions: [],
+              pendingInteractions: [],
+              checkpoints: [],
+              timeline: [],
+              messages: [{
+                messageId: "assistant-1",
+                sessionId: input.sessionId,
+                role: "assistant",
+                createdAt: 2,
+                parts: [{ type: "text", partId: "p1", text: "已切到新的飞书会话。" }],
+              }],
+            },
+          };
+        },
+      },
+      {
+        getSession: async () => ({
+          sessionId: "session-legacy",
+          workspaceId: "workspace-a",
+          title: "Legacy Feishu chat",
+          status: "idle",
+          createdAt: "2026-05-25T08:00:00.000Z",
+          updatedAt: "2026-05-25T08:05:00.000Z",
+        }),
+      },
+      {
+        get: async (workspaceId) => ({
+          workspaceId,
+          name: "Workspace A",
+          directoryPath: "E:\\workspace\\MaomiAgent",
+          isPinned: true,
+          tags: [],
+          createdAt: "2026-05-25T09:00:00.000Z",
+          updatedAt: "2026-05-25T09:00:00.000Z",
+        }),
+        list: async () => ({
+          items: [{
+            workspaceId: "workspace-a",
+            name: "Workspace A",
+            directoryPath: "E:\\workspace\\MaomiAgent",
+            isPinned: true,
+            tags: [],
+            createdAt: "2026-05-25T09:00:00.000Z",
+            updatedAt: "2026-05-25T09:00:00.000Z",
+          }],
+          meta: { total: 1, limit: 200, offset: 0, hasMore: false },
+        }),
+      },
+      createActionExecutor(),
+      createSemanticClassifier(),
+      createLogger(),
+      {
+        createChannel: () => channel,
+        now: () => new Date("2026-05-25T09:00:00.000Z"),
+      },
+    );
+
+    await runtime.start();
+    await channel.emitMessage({
+      messageId: "om_legacy",
+      chatId: "oc_1",
+      content: "继续这个飞书会话",
+      raw: {
+        header: {
+          tenant_key: "tenant-1",
+          event_id: "evt_legacy",
+          event_type: "im.message.receive_v1",
+        },
+      },
+    });
+    await waitFor(() => channel.sent.length === 1 && sentSessionIds.length === 1);
+
+    expect(sentSessionIds).toEqual(["session-2"]);
+    expect(createdMetadata[0]).toMatchObject({
+      source: expect.objectContaining({
+        kind: "feishu_bot",
+        conversationKey: "tenant-1:oc_1:root",
+      }),
+      conversationSettings: {
+        capabilityPreferences: {
+          "feishu.smartAssistant": true,
+        },
+      },
+      feishuBotPolicy: {
+        profile: "feishu_bot_tenant",
+        allowUserAccessToken: false,
+        allowedActionIds: [
+          "calendar.agenda",
+          "calendar.find_slot",
+          "calendar.create_event",
+          "tasks.create",
+          "tasks.complete",
+        ],
+      },
+    });
+    expect(snapshot.botRuntime.bindings[0]).toEqual(expect.objectContaining({
+      key: "tenant-1:oc_1:root",
+      sessionId: "session-2",
+      workspaceId: "workspace-a",
+    }));
+  });
+
+  test("stores a pending action when the conversation tool result requires confirmation", async () => {
+    let snapshot = createSnapshot();
+    const channel = new FakeChannel();
+    const runtime = new DesktopFeishuBotRuntime(
+      {
+        read: async () => snapshot,
+        write: async (next) => {
+          snapshot = next;
+        },
+        mutate: async (mutator) => {
+          const result = await mutator(snapshot);
+          return result;
+        },
+      },
+      {
+        createSession: async (input) => ({
+          created: true,
+          item: {
+            sessionId: "session-1",
+            workspaceId: input.workspaceId,
+            title: input.title ?? "Feishu chat",
+            status: "idle",
+            createdAt: "2026-05-25T09:00:00.000Z",
+            updatedAt: "2026-05-25T09:00:00.000Z",
+            metadata: input.metadata,
+          },
+        }),
+        sendMessage: async (input) => ({
+          detail: {
+            sessionId: input.sessionId,
+            workspaceId: input.workspaceId ?? "workspace-a",
+            title: "Feishu chat",
+            status: "idle",
+            createdAt: "2026-05-25T09:00:00.000Z",
+            updatedAt: "2026-05-25T09:00:01.000Z",
+            runs: [],
+            interactions: [],
+            pendingInteractions: [],
+            checkpoints: [],
+            timeline: [],
+            messages: [],
+            toolCalls: [{
+              callId: "tool-1",
+              sessionId: input.sessionId,
+              runId: "run-1",
+              turnId: "turn-1",
+              messageId: "assistant-1",
+              toolName: "feishu_execute_smart_assistant_action",
+              status: "completed",
+              input: {
+                actionId: "calendar.create_event",
+                workspaceId: "workspace-a",
+                title: "AI 落地讨论",
+                startAt: "2026-05-25T09:00:00+08:00",
+                endAt: "2026-05-25T10:00:00+08:00",
+              },
+              output: {
+                workspaceId: "workspace-a",
+                actionId: "calendar.create_event",
+                domain: "calendar",
+                executionMode: "builtin_runtime",
+                executed: false,
+                confirmationRequired: true,
+                summary: {
+                  headline: "准备创建会议",
+                  details: ["今天 9:00-10:00", "主题 AI 落地讨论"],
+                  nextSuggestedActionIds: [],
+                },
+                result: {
+                  ok: false,
+                  stage: "confirmation_required",
+                },
+                notes: [],
+              },
+              startedAt: 1,
+              updatedAt: 2,
+              operation: {
+                kind: "tool_execution",
+              },
+            }],
+          },
+        }),
+      },
+      {
+        getSession: async () => null,
+      },
+      {
+        get: async (workspaceId) => ({
+          workspaceId,
+          name: "Workspace A",
+          directoryPath: "E:\\workspace\\MaomiAgent",
+          isPinned: true,
+          tags: [],
+          createdAt: "2026-05-25T09:00:00.000Z",
+          updatedAt: "2026-05-25T09:00:00.000Z",
+        }),
+        list: async () => ({
+          items: [{
+            workspaceId: "workspace-a",
+            name: "Workspace A",
+            directoryPath: "E:\\workspace\\MaomiAgent",
+            isPinned: true,
+            tags: [],
+            createdAt: "2026-05-25T09:00:00.000Z",
+            updatedAt: "2026-05-25T09:00:00.000Z",
+          }],
+          meta: { total: 0, limit: 200, offset: 0, hasMore: false },
+        }),
+      },
+      createActionExecutor(),
+      createSemanticClassifier(),
+      createLogger(),
+      {
+        createChannel: () => channel,
+        now: () => new Date("2026-05-25T09:00:00.000Z"),
+      },
+    );
+
+    await runtime.start();
+    await channel.emitMessage({
+      messageId: "om_1",
+      chatId: "oc_1",
+      content: "帮我创建一个今天九点到十点的 AI 落地会议",
+      raw: {
+        header: {
+          tenant_key: "tenant-1",
+          event_id: "evt_1",
+          event_type: "im.message.receive_v1",
+        },
+      },
+    });
+    await waitFor(() => snapshot.botRuntime.pendingActions.length === 1 && channel.sent.length === 1);
+
+    expect(snapshot.botRuntime.pendingActions[0]).toEqual(expect.objectContaining({
+      actionId: "calendar.create_event",
+      chatId: "oc_1",
+      summary: "准备创建会议",
+      executeInput: expect.objectContaining({
+        userId: "ou_user_1",
+        userIdType: "open_id",
+        chatId: "oc_1",
+        messageId: "om_1",
+        attendeeIds: ["ou_user_1"],
+      }),
+    }));
+    expect(channel.sent[0]?.markdown).toContain("准备创建会议");
+  });
+
+  test("confirms the pending action with natural language and executes confirm=true", async () => {
+    let snapshot = createSnapshot();
+    snapshot.botRuntime.bindings = [createBinding()];
+    snapshot.botRuntime.pendingActions = [{
+      pendingId: "pending_1",
+      scopeKey: "tenant-1:oc_1:root",
+      chatId: "oc_1",
+      messageId: "om_1",
+      domain: "calendar",
+      actionId: "create_event",
+      workspaceId: "workspace-a",
+      summary: "准备创建会议",
+      details: ["今天 9:00-10:00"],
+      executeInput: {
+        actionId: "create_event",
+        workspaceId: "workspace-a",
+        title: "AI 落地讨论",
+        startAt: "2026-05-25T09:00:00+08:00",
+        endAt: "2026-05-25T10:00:00+08:00",
+      },
+      initiatorSenderId: "ou_user_1",
+      initiatorSenderName: "张三",
+      createdAt: "2026-05-25T09:00:00.000Z",
+      updatedAt: "2026-05-25T09:00:00.000Z",
+      expiresAt: "2026-05-25T09:30:00.000Z",
+    }];
+    const channel = new FakeChannel();
+    const executions: Array<Record<string, unknown>> = [];
+    const runtime = new DesktopFeishuBotRuntime(
+      {
+        read: async () => snapshot,
+        write: async (next) => {
+          snapshot = next;
+        },
+        mutate: async (mutator) => {
+          const result = await mutator(snapshot);
+          return result;
+        },
+      },
+      {
+        createSession: async () => {
+          throw new Error("not used");
+        },
+        sendMessage: async () => {
+          throw new Error("not used");
+        },
+      },
+      {
+        getSession: async () => ({
+          sessionId: "session-1",
+          workspaceId: "workspace-a",
+          title: "Feishu chat",
+          status: "idle",
+          createdAt: "2026-05-25T09:00:00.000Z",
+          updatedAt: "2026-05-25T09:00:00.000Z",
+          metadata: buildFeishuBotConversationMetadata({
+            tenantKey: "tenant-1",
+            chatId: "oc_1",
+            conversationKey: "tenant-1:oc_1:root",
+          }),
+        }),
+      },
+      {
+        get: async (workspaceId) => ({
+          workspaceId,
+          name: "Workspace A",
+          directoryPath: "E:\\workspace\\MaomiAgent",
+          isPinned: true,
+          tags: [],
+          createdAt: "2026-05-25T09:00:00.000Z",
+          updatedAt: "2026-05-25T09:00:00.000Z",
+        }),
+        list: async () => ({
+          items: [{
+            workspaceId: "workspace-a",
+            name: "Workspace A",
+            directoryPath: "E:\\workspace\\MaomiAgent",
+            isPinned: true,
+            tags: [],
+            createdAt: "2026-05-25T09:00:00.000Z",
+            updatedAt: "2026-05-25T09:00:00.000Z",
+          }],
+          meta: { total: 0, limit: 200, offset: 0, hasMore: false },
+        }),
+      },
+      {
+        executeSmartAssistantAction: async (input) => {
+          executions.push({ ...input });
+          return {
+            workspaceId: input.workspaceId,
+            actionId: input.actionId,
+            domain: "calendar",
+            executionMode: "builtin_runtime",
+            executed: true,
+            confirmationRequired: false,
+            summary: {
+              headline: "会议已创建",
+              details: ["AI 落地讨论"],
+              nextSuggestedActionIds: [],
+            },
+            result: { ok: true, eventId: "evt_created" },
+            notes: [],
+          };
+        },
+      },
+      {
+        classify: async () => "confirm" as const,
+      },
+      createLogger(),
+      {
+        createChannel: () => channel,
+        now: () => new Date("2026-05-25T09:05:00.000Z"),
+      },
+    );
+
+    await runtime.start();
+    await channel.emitMessage({
+      messageId: "om_2",
+      chatId: "oc_1",
+      content: "好的，没问题",
+      raw: {
+        header: {
+          tenant_key: "tenant-1",
+          event_id: "evt_2",
+          event_type: "im.message.receive_v1",
+        },
+      },
+    });
+    await waitFor(() => channel.sent.length === 1 && snapshot.botRuntime.pendingActions.length === 0);
+
+    expect(executions).toEqual([expect.objectContaining({
+      actionId: "calendar.create_event",
+      confirm: true,
+      workspaceId: "workspace-a",
+    })]);
+    expect(channel.sent[0]?.markdown).toContain("会议已创建");
+  });
+
+  test("rejects confirming a blocked pending bot action without executing it", async () => {
+    let snapshot = createSnapshot();
+    snapshot.botRuntime.bindings = [createBinding()];
+    snapshot.botRuntime.pendingActions = [{
+      pendingId: "pending_1",
+      scopeKey: "tenant-1:oc_1:root",
+      tenantKey: "tenant-1",
+      chatId: "oc_1",
+      messageId: "om_previous",
+      domain: "docs",
+      actionId: "docs.search",
+      workspaceId: "workspace-a",
+      summary: "准备搜索文档",
+      details: ["关键词: AI 落地"],
+      executeInput: {
+        actionId: "docs.search",
+        executionProfile: "feishu_bot_tenant",
+        query: "AI 落地",
+      },
+      initiatorSenderId: "ou_user_1",
+      initiatorSenderName: "Tester",
+      createdAt: "2026-05-25T09:00:00.000Z",
+      updatedAt: "2026-05-25T09:00:00.000Z",
+      expiresAt: "2026-05-25T09:30:00.000Z",
+    }];
+    const channel = new FakeChannel();
+    let executed = false;
+    const runtime = new DesktopFeishuBotRuntime(
+      {
+        read: async () => snapshot,
+        write: async (next) => {
+          snapshot = next;
+        },
+        mutate: async (mutator) => {
+          const result = await mutator(snapshot);
+          return result;
+        },
+      },
+      {
+        createSession: async () => {
+          throw new Error("not used");
+        },
+        sendMessage: async () => {
+          throw new Error("not used");
+        },
+      },
+      {
+        getSession: async () => ({
+          sessionId: "session-1",
+          workspaceId: "workspace-a",
+          title: "Feishu chat",
+          status: "idle",
+          createdAt: "2026-05-25T09:00:00.000Z",
+          updatedAt: "2026-05-25T09:00:00.000Z",
+          metadata: buildFeishuBotConversationMetadata({
+            tenantKey: "tenant-1",
+            chatId: "oc_1",
+            conversationKey: "tenant-1:oc_1:root",
+          }),
+        }),
+      },
+      {
+        get: async (workspaceId) => ({
+          workspaceId,
+          name: "Workspace A",
+          directoryPath: "E:\\workspace\\MaomiAgent",
+          isPinned: true,
+          tags: [],
+          createdAt: "2026-05-25T09:00:00.000Z",
+          updatedAt: "2026-05-25T09:00:00.000Z",
+        }),
+        list: async () => ({
+          items: [{
+            workspaceId: "workspace-a",
+            name: "Workspace A",
+            directoryPath: "E:\\workspace\\MaomiAgent",
+            isPinned: true,
+            tags: [],
+            createdAt: "2026-05-25T09:00:00.000Z",
+            updatedAt: "2026-05-25T09:00:00.000Z",
+          }],
+          meta: { total: 0, limit: 200, offset: 0, hasMore: false },
+        }),
+      },
+      {
+        executeSmartAssistantAction: async () => {
+          executed = true;
+          throw new Error("should not execute blocked action");
+        },
+      },
+      {
+        classify: async () => "confirm" as const,
+      },
+      createLogger(),
+      {
+        createChannel: () => channel,
+        now: () => new Date("2026-05-25T09:05:00.000Z"),
+      },
+    );
+
+    await runtime.start();
+    await channel.emitMessage({
+      messageId: "om_confirm",
+      chatId: "oc_1",
+      senderId: "ou_user_1",
+      content: "确认",
+      raw: {
+        header: {
+          event_id: "evt_1",
+          event_type: "im.message.receive_v1",
+          tenant_key: "tenant-1",
+        },
+      },
+    });
+    await waitFor(() => channel.sent.length === 1);
+
+    expect(executed).toBe(false);
+    expect(channel.sent[0]?.markdown).toContain("当前飞书机器人未开通此能力。");
+  });
+
+  test("expires old pending actions instead of executing a late confirmation", async () => {
+    let snapshot = createSnapshot();
+    snapshot.botRuntime.bindings = [createBinding()];
+    snapshot.botRuntime.pendingActions = [{
+      pendingId: "pending_1",
+      scopeKey: "tenant-1:oc_1:root",
+      chatId: "oc_1",
+      messageId: "om_1",
+      domain: "calendar",
+      actionId: "calendar.create_event",
+      workspaceId: "workspace-a",
+      summary: "准备创建会议",
+      details: [],
+      executeInput: {
+        actionId: "calendar.create_event",
+        workspaceId: "workspace-a",
+      },
+      createdAt: "2026-05-25T09:00:00.000Z",
+      updatedAt: "2026-05-25T09:00:00.000Z",
+      expiresAt: "2026-05-25T09:30:00.000Z",
+    }];
+    const channel = new FakeChannel();
+    const runtime = new DesktopFeishuBotRuntime(
+      {
+        read: async () => snapshot,
+        write: async (next) => {
+          snapshot = next;
+        },
+        mutate: async (mutator) => {
+          const result = await mutator(snapshot);
+          return result;
+        },
+      },
+      {
+        createSession: async () => {
+          throw new Error("not used");
+        },
+        sendMessage: async () => {
+          throw new Error("not used");
+        },
+      },
+      {
+        getSession: async () => ({
+          sessionId: "session-1",
+          workspaceId: "workspace-a",
+          title: "Feishu chat",
+          status: "idle",
+          createdAt: "2026-05-25T09:00:00.000Z",
+          updatedAt: "2026-05-25T09:00:00.000Z",
+          metadata: buildFeishuBotConversationMetadata({
+            tenantKey: "tenant-1",
+            chatId: "oc_1",
+            conversationKey: "tenant-1:oc_1:root",
+          }),
+        }),
+      },
+      {
+        get: async () => null,
+        list: async () => ({
+          items: [],
+          meta: { total: 0, limit: 200, offset: 0, hasMore: false },
+        }),
+      },
+      {
+        executeSmartAssistantAction: async () => {
+          throw new Error("late confirmation should not execute");
+        },
+      },
+      {
+        classify: async () => "confirm" as const,
+      },
+      createLogger(),
+      {
+        createChannel: () => channel,
+        now: () => new Date("2026-05-25T09:45:00.000Z"),
+      },
+    );
+
+    await runtime.start();
+    await channel.emitMessage({
+      messageId: "om_2",
+      chatId: "oc_1",
+      content: "确认",
+      raw: {
+        header: {
+          tenant_key: "tenant-1",
+          event_id: "evt_2",
+          event_type: "im.message.receive_v1",
+        },
+      },
+    });
+    await waitFor(() => channel.sent.length === 1 && snapshot.botRuntime.pendingActions.length === 0);
+
+    expect(channel.sent[0]?.markdown).toContain("已过期");
+  });
+
+  test("does not confirm a pending group-thread action from another thread", async () => {
+    let snapshot = createSnapshot();
+    snapshot.botRuntime.pendingActions = [{
+      pendingId: "pending_1",
+      scopeKey: "tenant-1:oc_group:thread-1",
+      chatId: "oc_group",
+      threadId: "thread-1",
+      messageId: "om_1",
+      domain: "calendar",
+      actionId: "calendar.create_event",
+      workspaceId: "workspace-a",
+      summary: "准备创建会议",
+      details: [],
+      executeInput: {
+        actionId: "calendar.create_event",
+        workspaceId: "workspace-a",
+      },
+      createdAt: "2026-05-25T09:00:00.000Z",
+      updatedAt: "2026-05-25T09:00:00.000Z",
+      expiresAt: "2026-05-25T09:30:00.000Z",
+    }];
+    const channel = new FakeChannel();
+    let executionCount = 0;
+    const runtime = new DesktopFeishuBotRuntime(
+      {
+        read: async () => snapshot,
+        write: async (next) => {
+          snapshot = next;
+        },
+        mutate: async (mutator) => {
+          const result = await mutator(snapshot);
+          return result;
+        },
+      },
+      {
+        createSession: async () => ({
+          created: true,
+          item: {
+            sessionId: "session-2",
+            workspaceId: "workspace-a",
+            title: "Feishu group thread",
+            status: "idle",
+            createdAt: "2026-05-25T09:00:00.000Z",
+            updatedAt: "2026-05-25T09:00:00.000Z",
+            metadata: {},
+          },
+        }),
+        sendMessage: async () => ({
+          detail: {
+            sessionId: "session-2",
+            workspaceId: "workspace-a",
+            title: "Feishu group thread",
+            status: "idle",
+            createdAt: "2026-05-25T09:00:00.000Z",
+            updatedAt: "2026-05-25T09:00:01.000Z",
+            runs: [],
+            messages: [{
+              messageId: "assistant-1",
+              sessionId: "session-2",
+              role: "assistant",
+              createdAt: 2,
+              parts: [{ type: "text", partId: "p1", text: "这是另一条线程的新对话。" }],
+            }],
+            toolCalls: [],
+            interactions: [],
+            pendingInteractions: [],
+            checkpoints: [],
+            timeline: [],
+          },
+        }),
+      },
+      {
+        getSession: async () => null,
+      },
+      {
+        get: async (workspaceId) => ({
+          workspaceId,
+          name: "Workspace A",
+          directoryPath: "E:\\workspace\\MaomiAgent",
+          isPinned: true,
+          tags: [],
+          createdAt: "2026-05-25T09:00:00.000Z",
+          updatedAt: "2026-05-25T09:00:00.000Z",
+        }),
+        list: async () => ({
+          items: [{
+            workspaceId: "workspace-a",
+            name: "Workspace A",
+            directoryPath: "E:\\workspace\\MaomiAgent",
+            isPinned: true,
+            tags: [],
+            createdAt: "2026-05-25T09:00:00.000Z",
+            updatedAt: "2026-05-25T09:00:00.000Z",
+          }],
+          meta: { total: 1, limit: 200, offset: 0, hasMore: false },
+        }),
+      },
+      {
+        executeSmartAssistantAction: async () => {
+          executionCount += 1;
+          throw new Error("should not execute from another thread");
+        },
+      },
+      {
+        classify: async () => "confirm" as const,
+      },
+      createLogger(),
+      {
+        createChannel: () => channel,
+        now: () => new Date("2026-05-25T09:05:00.000Z"),
+      },
+    );
+
+    await runtime.start();
+    await channel.emitMessage({
+      messageId: "om_2",
+      chatId: "oc_group",
+      content: "好的",
+      chatType: "group",
+      threadId: "thread-2",
+      raw: {
+        header: {
+          tenant_key: "tenant-1",
+          event_id: "evt_2",
+          event_type: "im.message.receive_v1",
+        },
+      },
+    });
+    await waitFor(() => channel.sent.length === 1);
+
+    expect(executionCount).toBe(0);
+    expect(snapshot.botRuntime.pendingActions).toHaveLength(1);
+    expect(channel.sent[0]?.markdown).toContain("另一条线程");
   });
 });

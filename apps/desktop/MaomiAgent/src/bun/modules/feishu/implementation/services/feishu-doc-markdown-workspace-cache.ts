@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
 
-const DOCUMENT_MARKDOWN_FILE = "document.md";
-const BASE_MARKDOWN_FILE = "base.md";
+const FEISHU_DOC_CACHE_DIR = ".maomi/feishu-docs";
+const FEISHU_DOC_BASELINE_DIR = ".maomi/feishu-docs/baselines";
 
 function sanitizePathPart(value: string, fallback: string): string {
   const sanitized = value.trim().replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -29,36 +29,37 @@ export class FeishuDocMarkdownWorkspaceCache {
   constructor(private readonly workspaceRoot: string) {}
 
   async readDocument(docId: string): Promise<FeishuDocMarkdownWorkspaceEntry | null> {
-    return this.readMarkdown(docId, DOCUMENT_MARKDOWN_FILE);
+    return this.readMarkdown(this.documentRelativePath(docId));
   }
 
   async readBase(docId: string): Promise<FeishuDocMarkdownWorkspaceEntry | null> {
-    return this.readMarkdown(docId, BASE_MARKDOWN_FILE);
+    return this.readMarkdown(this.baseRelativePath(docId));
   }
 
   async writeDocument(docId: string, markdown: string): Promise<FeishuDocMarkdownWorkspaceEntry> {
-    return this.writeMarkdown(docId, DOCUMENT_MARKDOWN_FILE, markdown);
+    return this.writeMarkdown(this.documentRelativePath(docId), markdown);
   }
 
   async writeBase(docId: string, markdown: string): Promise<FeishuDocMarkdownWorkspaceEntry> {
-    return this.writeMarkdown(docId, BASE_MARKDOWN_FILE, markdown);
+    return this.writeMarkdown(this.baseRelativePath(docId), markdown);
   }
 
-  private docPathParts(docId: string): string[] {
-    return [".maomi", "feishu-docs", sanitizePathPart(docId, "untitled-doc")];
+  private documentRelativePath(docId: string): string {
+    const safeDocId = sanitizePathPart(docId, "untitled-doc");
+    return posix.join(FEISHU_DOC_CACHE_DIR, `${safeDocId}.md`);
   }
 
-  private relativePath(docId: string, fileName: string): string {
-    return posix.join(...this.docPathParts(docId), fileName);
+  private baseRelativePath(docId: string): string {
+    const safeDocId = sanitizePathPart(docId, "untitled-doc");
+    return posix.join(FEISHU_DOC_BASELINE_DIR, `${safeDocId}.base.md`);
   }
 
-  private absolutePath(docId: string, fileName: string): string {
-    return join(this.workspaceRoot, ...this.docPathParts(docId), fileName);
+  private absolutePath(relativePath: string): string {
+    return join(this.workspaceRoot, ...relativePath.split("/"));
   }
 
-  private async readMarkdown(docId: string, fileName: string): Promise<FeishuDocMarkdownWorkspaceEntry | null> {
-    const absolutePath = this.absolutePath(docId, fileName);
-    const relativePath = this.relativePath(docId, fileName);
+  private async readMarkdown(relativePath: string): Promise<FeishuDocMarkdownWorkspaceEntry | null> {
+    const absolutePath = this.absolutePath(relativePath);
     let markdown: string;
 
     try {
@@ -78,9 +79,8 @@ export class FeishuDocMarkdownWorkspaceCache {
     };
   }
 
-  private async writeMarkdown(docId: string, fileName: string, markdown: string): Promise<FeishuDocMarkdownWorkspaceEntry> {
-    const absolutePath = this.absolutePath(docId, fileName);
-    const relativePath = this.relativePath(docId, fileName);
+  private async writeMarkdown(relativePath: string, markdown: string): Promise<FeishuDocMarkdownWorkspaceEntry> {
+    const absolutePath = this.absolutePath(relativePath);
     const tempPath = `${absolutePath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
 
     await mkdir(dirname(absolutePath), { recursive: true });

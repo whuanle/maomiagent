@@ -14,6 +14,7 @@ import {
 
 const ACTIVATION_TIMEOUT_MS = 1_500;
 const ACTIVATION_ROUTE_PATH = "/internal/activate";
+export const REFRESH_MAIN_VIEW_ROUTE_PATH = "/internal/dev/refresh-main-view";
 
 type ActivationHandler = () => void | Promise<void>;
 type Logger = Pick<typeof console, "log" | "warn" | "error">;
@@ -22,6 +23,10 @@ type ActivationRequest = {
   action: "activate";
   appKey: string;
   protocol: string;
+};
+
+type RefreshMainViewRequest = ActivationRequest & {
+  devServerUrl?: string;
 };
 
 type ActivationResponse = {
@@ -76,6 +81,24 @@ export async function activateExistingInstance(
       appKey: options.appKey,
       protocol: DESKTOP_LOCAL_CONTROL_PROTOCOL,
     } satisfies ActivationRequest,
+  );
+
+  return response?.accepted === true
+    && response.protocol === DESKTOP_LOCAL_CONTROL_PROTOCOL;
+}
+
+export async function requestExistingInstanceMainViewRefresh(
+  options: Pick<SingleInstanceOptions, "appKey" | "port"> & { devServerUrl?: string },
+): Promise<boolean> {
+  const port = resolveDesktopLocalControlPort(options.port);
+  const response = await postJson<ActivationResponse>(
+    `${resolveDesktopLocalControlBaseUrl(port)}${REFRESH_MAIN_VIEW_ROUTE_PATH}`,
+    {
+      action: "activate",
+      appKey: options.appKey,
+      protocol: DESKTOP_LOCAL_CONTROL_PROTOCOL,
+      ...(options.devServerUrl?.trim() ? { devServerUrl: options.devServerUrl.trim() } : {}),
+    } satisfies RefreshMainViewRequest,
   );
 
   return response?.accepted === true
