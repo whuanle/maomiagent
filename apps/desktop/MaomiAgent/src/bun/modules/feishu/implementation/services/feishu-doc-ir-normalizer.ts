@@ -42,6 +42,7 @@ const BLOCK_TYPE_BY_NUMBER: Record<number, FeishuDocIRBlockType> = {
   35: "sheet",
   36: "mindnote",
   37: "whiteboard",
+  43: "board",
 };
 
 const BLOCK_TYPE_BY_PAYLOAD_KEY: Array<[string, FeishuDocIRBlockType]> = [
@@ -116,6 +117,50 @@ const TEXT_CONTAINER_KEYS = [
   "quote",
   "code",
 ] as const;
+
+const RESOURCE_TOKEN_KEYS = [
+  "token",
+  "file_token",
+  "fileToken",
+  "whiteboard_token",
+  "whiteboardToken",
+  "mindnote_token",
+  "mindnoteToken",
+  "diagram_token",
+  "diagramToken",
+  "bitable_token",
+  "bitableToken",
+  "spreadsheet_token",
+  "spreadsheetToken",
+] as const;
+
+const TOP_LEVEL_ATTR_KEYS = [
+  "token",
+  "url",
+  "href",
+  "src",
+  "title",
+  "name",
+  "description",
+  "summary",
+  "type",
+  "view_type",
+  "viewType",
+  "sheet_id",
+  "sheetId",
+  "spreadsheet_token",
+  "spreadsheetToken",
+  "bitable_token",
+  "bitableToken",
+  "whiteboard_token",
+  "whiteboardToken",
+  "mindnote_token",
+  "mindnoteToken",
+  "diagram_token",
+  "diagramToken",
+] as const;
+
+const TABLE_ATTR_ALIAS_TYPES = new Set<FeishuDocIRBlockType>(["table", "table-cell"]);
 
 export function normalizeFeishuDocBlocksToIR(input: {
   documentId: string;
@@ -253,74 +298,167 @@ function extractResource(
   type: FeishuDocIRBlockType,
 ): { token: string; kind: FeishuDocIRAsset["kind"] } | null {
   if (type === "image") {
-    return resourceFromContainer(block.image, "image");
+    return resourceFromBlockOrContainer(block, block.image, "image");
   }
   if (type === "file") {
-    return resourceFromContainer(block.file, "file");
+    return resourceFromBlockOrContainer(block, block.file, "file");
+  }
+  if (type === "board") {
+    return resourceFromBlockOrContainer(block, resolveAttrsContainer(block, type), "whiteboard");
   }
   if (type === "whiteboard") {
-    return resourceFromContainer(block.whiteboard, "whiteboard");
+    return resourceFromBlockOrContainer(block, block.whiteboard, "whiteboard");
   }
   if (type === "mindnote") {
-    return resourceFromContainer(block.mindnote, "mindnote");
+    return resourceFromBlockOrContainer(block, block.mindnote, "mindnote");
   }
   if (type === "diagram") {
-    return resourceFromContainer(block.diagram, "diagram");
+    return resourceFromBlockOrContainer(block, block.diagram, "diagram");
   }
   return null;
 }
 
-function resourceFromContainer(value: unknown, kind: FeishuDocIRAsset["kind"]): { token: string; kind: FeishuDocIRAsset["kind"] } | null {
-  if (!isRecord(value) || typeof value.token !== "string" || value.token.length === 0) {
+function resourceFromBlockOrContainer(
+  block: FeishuRawDocBlock,
+  value: unknown,
+  kind: FeishuDocIRAsset["kind"],
+): { token: string; kind: FeishuDocIRAsset["kind"] } | null {
+  const token = readTokenValue(value) ?? readTokenValue(block);
+  if (!token) {
     return null;
   }
-  return { token: value.token, kind };
+  return { token, kind };
 }
 
 function extractAttrs(block: FeishuRawDocBlock, type: FeishuDocIRBlockType): Record<string, unknown> {
-  if (type === "callout") {
-    const container = block.callout;
-    if (!isRecord(container)) {
-      return {};
-    }
-
-    const attrs: Record<string, unknown> = {};
-    copyPrimitiveAttr(container, attrs, "emoji", "emoji");
-    copyPrimitiveAttr(container, attrs, "emoji_id", "emoji");
-    copyPrimitiveAttr(container, attrs, "emojiId", "emoji");
-    copyPrimitiveAttr(container, attrs, "title", "title");
-    copyPrimitiveAttr(container, attrs, "name", "name");
-    copyPrimitiveAttr(container, attrs, "background_color", "background-color");
-    copyPrimitiveAttr(container, attrs, "backgroundColor", "background-color");
-    copyPrimitiveAttr(container, attrs, "border_color", "border-color");
-    copyPrimitiveAttr(container, attrs, "borderColor", "border-color");
-    return attrs;
-  }
-
-  const container = type === "image" ? block.image : type === "file" ? block.file : null;
-  if (!isRecord(container)) {
-    return {};
-  }
-
   const attrs: Record<string, unknown> = {};
-  for (const key of ["width", "height", "name", "file_name", "mime", "mime_type"]) {
-    if (container[key] !== undefined) {
-      attrs[key === "file_name" ? "name" : key === "mime_type" ? "mime" : key] = container[key];
+  const container = resolveAttrsContainer(block, type);
+
+  if (container) {
+    collectPrimitiveAttrs(container, attrs);
+  }
+
+  for (const key of TOP_LEVEL_ATTR_KEYS) {
+    const value = block[key];
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      const normalizedKey = normalizeAttrKey(key);
+      if (normalizedKey && attrs[normalizedKey] === undefined) {
+        attrs[normalizedKey] = value;
+      }
     }
   }
+
+  if (TABLE_ATTR_ALIAS_TYPES.has(type)) {
+    aliasPrefixedPrimitiveAttrs(attrs, "property-");
+  }
+
+  aliasPrimitiveAttr(attrs, "file-name", "name");
+  aliasPrimitiveAttr(attrs, "mime-type", "mime");
   return attrs;
 }
 
-function copyPrimitiveAttr(
+function resolveAttrsContainer(
+  block: FeishuRawDocBlock,
+  type: FeishuDocIRBlockType,
+): Record<string, unknown> | null {
+  for (const [key, candidateType] of BLOCK_TYPE_BY_PAYLOAD_KEY) {
+    if (candidateType !== type) {
+      continue;
+    }
+
+    const value = block[key];
+    if (isRecord(value)) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function normalizeAttrKey(value: string): string {
+  return value
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .replace(/[_.\s]+/g, "-")
+    .replace(/-+/g, "-")
+    .toLowerCase();
+}
+
+function collectPrimitiveAttrs(
   source: Record<string, unknown>,
+  target: Record<string, unknown>,
+  prefix = "",
+  depth = 0,
+) {
+  if (depth > 2) {
+    return;
+  }
+
+  for (const [rawKey, value] of Object.entries(source)) {
+    const key = normalizeAttrKey(rawKey);
+    if (!key) {
+      continue;
+    }
+
+    const targetKey = prefix ? `${prefix}-${key}` : key;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      if (target[targetKey] === undefined) {
+        target[targetKey] = value;
+      }
+      continue;
+    }
+
+    if (Array.isArray(value)) {
+      if (value.length > 0 && value.every((item) => (
+        typeof item === "string" || typeof item === "number" || typeof item === "boolean"
+      ))) {
+        if (target[targetKey] === undefined) {
+          target[targetKey] = value.join(",");
+        }
+      }
+      continue;
+    }
+
+    if (isRecord(value)) {
+      collectPrimitiveAttrs(value, target, targetKey, depth + 1);
+    }
+  }
+}
+
+function aliasPrimitiveAttr(
   target: Record<string, unknown>,
   sourceKey: string,
   targetKey: string,
 ) {
-  const value = source[sourceKey];
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+  const value = target[sourceKey];
+  if ((typeof value === "string" || typeof value === "number" || typeof value === "boolean") && target[targetKey] === undefined) {
     target[targetKey] = value;
   }
+}
+
+function aliasPrefixedPrimitiveAttrs(target: Record<string, unknown>, prefix: string) {
+  for (const key of Object.keys(target)) {
+    if (!key.startsWith(prefix) || key.length <= prefix.length) {
+      continue;
+    }
+
+    aliasPrimitiveAttr(target, key, key.slice(prefix.length));
+  }
+}
+
+function readTokenValue(value: unknown): string | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  for (const key of RESOURCE_TOKEN_KEYS) {
+    const token = value[key];
+    if (typeof token === "string" && token.trim().length > 0) {
+      return token.trim();
+    }
+  }
+
+  return null;
 }
 
 function hashJson(value: unknown): string {

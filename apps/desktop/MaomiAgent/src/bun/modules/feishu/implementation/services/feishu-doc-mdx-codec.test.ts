@@ -101,6 +101,42 @@ describe("feishu-doc-mdx-codec", () => {
     expect(markdown).toContain('<FeishuWhiteboard blockId="whiteboard" token="board_token" title="Board" />');
   });
 
+  test("serializes board and iframe preview attributes into MDX", () => {
+    const sample = ir();
+    sample.blocks.docx_1.children.push("board", "iframe");
+    sample.blocks.board = {
+      id: "board",
+      type: "board",
+      parentId: "docx_1",
+      children: [],
+      editable: false,
+      text: [],
+      resource: { token: "board_token", kind: "whiteboard" },
+      attrs: { title: "Architecture Board" },
+      raw: {},
+    };
+    sample.blocks.iframe = {
+      id: "iframe",
+      type: "iframe",
+      parentId: "docx_1",
+      children: [],
+      editable: false,
+      text: [],
+      resource: null,
+      attrs: {
+        title: "Prototype Chart",
+        "component-url": "https%3A%2F%2Fexample.com%2Fchart",
+        "component-type": "0",
+      },
+      raw: {},
+    };
+
+    const markdown = feishuDocIRToMdx(sample);
+
+    expect(markdown).toContain('<FeishuBoard blockId="board" token="board_token" title="Architecture Board" />');
+    expect(markdown).toContain('<FeishuIframe blockId="iframe" title="Prototype Chart" component-url="https%3A%2F%2Fexample.com%2Fchart" component-type="0" />');
+  });
+
   test("parses simple heading text change as IR patch", () => {
     const patch = feishuDocMdxToIRPatch(ir(), "# New Title\n");
     expect(patch.blockUpdates).toEqual([{ blockId: "h1", text: "New Title" }]);

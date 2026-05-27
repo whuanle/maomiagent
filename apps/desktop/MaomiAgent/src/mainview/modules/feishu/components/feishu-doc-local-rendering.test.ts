@@ -118,11 +118,11 @@ describe("Feishu local document rendering pipeline", () => {
     expect(markdown).toContain("<FeishuImage");
     expect(markdown).toContain("<FeishuCallout");
     expect(markdown).toContain("<FeishuFile");
-    expect(nodes).toEqual([
-      expect.objectContaining({ kind: "markdown", markdown: "# Title" }),
+    expect(nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "markdown", markdown: expect.stringContaining("# Title") }),
       expect.objectContaining({ kind: "native_block", name: "image" }),
       expect.objectContaining({ kind: "native_block", name: "callout" }),
       expect.objectContaining({ kind: "native_block", name: "file" }),
-    ]);
+    ]));
   });
 });

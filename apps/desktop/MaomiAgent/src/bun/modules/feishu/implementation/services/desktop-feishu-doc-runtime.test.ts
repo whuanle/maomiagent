@@ -543,6 +543,40 @@ describe("DesktopFeishuDocRuntime", () => {
     expect([...preview.bytes]).toEqual([137, 80, 78, 71]);
   });
 
+  test("downloads whiteboard preview bytes through the board image endpoint", async () => {
+    const requests: Array<{ url: string; authorization: string }> = [];
+    const runtime = new DesktopFeishuDocRuntime({
+      store: createStore(createSnapshot()),
+      loader: {
+        loadRoot: async () => { throw new Error("not used"); },
+        loadBranch: async () => { throw new Error("not used"); },
+      },
+      accessToken: async () => "access_token_1",
+      fetchImpl: async (input, init) => {
+        const headers = init?.headers as Record<string, string> | undefined;
+        requests.push({
+          url: String(input),
+          authorization: String(headers?.authorization ?? ""),
+        });
+        return new Response(new Uint8Array([137, 80, 78, 71]), {
+          status: 200,
+          headers: {
+            "content-type": "image/png",
+          },
+        });
+      },
+    });
+
+    const preview = await runtime.readDocWhiteboardPreview("board_token");
+
+    expect(requests).toEqual([{
+      url: "https://open.feishu.cn/open-apis/board/v1/whiteboards/board_token/download_as_image",
+      authorization: "Bearer access_token_1",
+    }]);
+    expect(preview.contentType).toBe("image/png");
+    expect([...preview.bytes]).toEqual([137, 80, 78, 71]);
+  });
+
   test("retries document image preview download after refreshing an expired access token", async () => {
     const requests: Array<{ url: string; authorization: string }> = [];
     let currentToken = "access_token_1";

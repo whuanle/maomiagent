@@ -11,6 +11,7 @@ describe("feishu doc preview support", () => {
     const markdown = [
       '<image token="img_1" />',
       '<whiteboard token="wb_1" />',
+      '<FeishuBoard token="board_1" />',
       '<diagram token="diagram_1" />',
       '<mindnote mindnote-token="mind_1" />',
       "",
@@ -22,7 +23,7 @@ describe("feishu doc preview support", () => {
     ].join("\n")
 
     expect(extractFeishuMediaTokens(markdown)).toEqual(["img_1"])
-    expect(extractFeishuWhiteboardTokens(markdown)).toEqual(["wb_1", "diagram_1", "mind_1"])
+    expect(extractFeishuWhiteboardTokens(markdown)).toEqual(["wb_1", "board_1", "diagram_1", "mind_1"])
   })
 
   test("creates a minimal readonly preview IR", () => {

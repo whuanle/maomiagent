@@ -2255,6 +2255,10 @@
   align-items: stretch;
 }
 
+.feishu-docs-local-preview-table-block {
+  margin: 10px 0 18px;
+}
+
 .feishu-docs-local-preview-lark-table-shell {
   width: 100%;
   overflow-x: auto;

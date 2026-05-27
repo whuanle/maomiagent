@@ -52,6 +52,12 @@ import {
 import { renderHighlightedFeishuDocsCode, resolveFeishuDocsHighlightLanguage } from "./feishu-docs-markdown-highlight"
 import { parseFeishuDocsLocalPreview, type FeishuDocsPreviewNode } from "./feishu-docs-local-preview-model"
 import {
+  collectNativeTableRows,
+  TABLE_COLUMN_COUNT_ATTRIBUTE_NAMES,
+  TABLE_ROW_COUNT_ATTRIBUTE_NAMES,
+  type NativeTableRow,
+} from "./feishu-docs-native-table-layout"
+import {
   resolveFeishuDocsPreviewBlockName,
   splitFeishuDocsEmbeddedNativeBlocks,
 } from "./feishu-docs-embedded-native-blocks"
@@ -164,6 +170,9 @@ type FeishuDocsMdxMarkdownProps = FeishuDocsMdxPreviewContext & {
 
 type FeishuDocsMdxJsxNode = JsxEditorProps["mdastNode"]
 
+const FEISHU_DOCS_BOARD_PREVIEW_MAX_WIDTH = 700
+const FEISHU_DOCS_BOARD_PREVIEW_MAX_HEIGHT = 700
+
 export const FEISHU_DOCS_MARKDOWN_CODE_BLOCK_LANGUAGE_LABELS: Record<string, string> = {
   bash: "Bash",
   c: "C",
@@ -261,48 +270,6 @@ type LarkTableRow = {
   key: string
   header: boolean
   cells: NativePreviewNode[]
-}
-
-type NativeTableCellPlacement = {
-  key: string
-  node: NativePreviewNode
-  header: boolean
-  rowSpan: number
-  colSpan: number
-  columnIndex: number
-}
-
-type NativeTableRow = {
-  key: string
-  header: boolean
-  cells: NativeTableCellPlacement[]
-}
-
-function readPositiveIntegerAttribute(attributes: Record<string, string>, names: string[]): number | null {
-  const value = readPreferredFeishuDocsAttribute(attributes, names)?.trim() ?? ""
-  if (!value) {
-    return null
-  }
-
-  const parsed = Number.parseInt(value, 10)
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null
-}
-
-function readBooleanAttribute(attributes: Record<string, string>, names: string[]): boolean | null {
-  const value = readPreferredFeishuDocsAttribute(attributes, names)?.trim().toLowerCase() ?? ""
-  if (!value) {
-    return null
-  }
-
-  if (["true", "1", "yes", "y", "header", "head", "th"].includes(value)) {
-    return true
-  }
-
-  if (["false", "0", "no", "n"].includes(value)) {
-    return false
-  }
-
-  return null
 }
 
 function resolveToneClassName(spec: FeishuDocsTagSpec | null): string {
@@ -2306,8 +2273,8 @@ function buildNativePropItems(
     )
   }
   if (name === "table") {
-    pushNativeProp(items, previewText(t, "飞书页.文档.预览.属性.列数", "列数"), attributes, ["column-size", "column_size", "column-count", "column_count", "columns", "cols"])
-    pushNativeProp(items, previewText(t, "飞书页.文档.预览.属性.行数", "行数"), attributes, ["row-size", "row_size", "row-count", "row_count", "rows"])
+    pushNativeProp(items, previewText(t, "飞书页.文档.预览.属性.列数", "列数"), attributes, [...TABLE_COLUMN_COUNT_ATTRIBUTE_NAMES])
+    pushNativeProp(items, previewText(t, "飞书页.文档.预览.属性.行数", "行数"), attributes, [...TABLE_ROW_COUNT_ATTRIBUTE_NAMES])
   }
   if (name === "iframe") {
     pushNativeProp(items, previewText(t, "飞书页.文档.预览.属性.组件类型", "组件类型"), attributes, ["component-type", "component_type", "type"])
@@ -2360,6 +2327,26 @@ function renderNativeBlockHeader(input: {
   )
 }
 
+function renderStandaloneFeishuTable(input: {
+  headRows?: ReactNode[]
+  bodyRows?: ReactNode[]
+}) {
+  return (
+    <section className="feishu-docs-local-preview-table-block">
+      <div className="feishu-docs-local-preview-lark-table-shell">
+        <table className="feishu-docs-local-preview-lark-table">
+          {input.headRows && input.headRows.length > 0 ? (
+            <thead>{input.headRows}</thead>
+          ) : null}
+          {input.bodyRows && input.bodyRows.length > 0 ? (
+            <tbody>{input.bodyRows}</tbody>
+          ) : null}
+        </table>
+      </div>
+    </section>
+  )
+}
+
 function collectLarkTableRows(
   nodes: FeishuDocsPreviewNode[],
   section: "head" | "body" = "body",
@@ -2390,112 +2377,6 @@ function collectLarkTableRows(
       key: node.key,
       header: section === "head" || cells.some((cell) => cell.name === "lark-th"),
       cells,
-    })
-  }
-
-  return rows
-}
-
-function collectNativeTableRows(
-  tableAttributes: Record<string, string>,
-  nodes: FeishuDocsPreviewNode[],
-): NativeTableRow[] {
-  const cells = nodes.filter(
-    (node): node is NativePreviewNode => node.kind === "native_block" && node.name === "table-cell",
-  )
-
-  if (cells.length === 0) {
-    return []
-  }
-
-  const explicitColumnCount = readPositiveIntegerAttribute(
-    tableAttributes,
-    ["column-size", "column_size", "column-count", "column_count", "columns", "cols"],
-  )
-  const explicitRowCount = readPositiveIntegerAttribute(
-    tableAttributes,
-    ["row-size", "row_size", "row-count", "row_count", "rows"],
-  )
-  const explicitHeaderRowCount = readPositiveIntegerAttribute(
-    tableAttributes,
-    ["header-row-size", "header_row_size", "header-row-count", "header_row_count", "head-row-size", "head_row_size"],
-  ) ?? 0
-
-  const placements = cells.map((cell, index) => {
-    const cellAttributes = normalizeFeishuDocsAttributes(cell.attributes)
-    return {
-      key: cell.key || `cell:${index}`,
-      node: cell,
-      header: readBooleanAttribute(cellAttributes, ["header", "is-header", "is_header", "head", "thead"]) === true,
-      rowSpan: readPositiveIntegerAttribute(cellAttributes, ["row-span", "row_span", "rowspan"]) ?? 1,
-      colSpan: readPositiveIntegerAttribute(cellAttributes, ["column-span", "column_span", "col-span", "col_span", "colspan"]) ?? 1,
-      rowIndex: readPositiveIntegerAttribute(cellAttributes, ["row-index", "row_index", "row", "data-row", "table-row", "table_row"]),
-      columnIndex: readPositiveIntegerAttribute(cellAttributes, ["column-index", "column_index", "column", "col", "data-column", "data-col", "table-column", "table_column"]),
-    }
-  })
-
-  const hasExplicitCoordinates = placements.some((cell) => cell.rowIndex !== null || cell.columnIndex !== null)
-  if (hasExplicitCoordinates) {
-    const rows = new Map<number, NativeTableRow>()
-
-    for (const [index, cell] of placements.entries()) {
-      const resolvedRowIndex = (cell.rowIndex ?? (explicitColumnCount ? Math.floor(index / explicitColumnCount) + 1 : 1)) - 1
-      const resolvedColumnIndex = (cell.columnIndex ?? (explicitColumnCount ? (index % explicitColumnCount) + 1 : index + 1)) - 1
-      const row = rows.get(resolvedRowIndex) ?? {
-        key: `row:${resolvedRowIndex}`,
-        header: resolvedRowIndex < explicitHeaderRowCount,
-        cells: [],
-      }
-
-      row.header = row.header || cell.header
-      row.cells.push({
-        key: cell.key,
-        node: cell.node,
-        header: cell.header,
-        rowSpan: cell.rowSpan,
-        colSpan: cell.colSpan,
-        columnIndex: Math.max(resolvedColumnIndex, 0),
-      })
-      rows.set(resolvedRowIndex, row)
-    }
-
-    return [...rows.entries()]
-      .sort(([left], [right]) => left - right)
-      .map(([, row]) => ({
-        ...row,
-        cells: [...row.cells].sort((left, right) => left.columnIndex - right.columnIndex),
-      }))
-  }
-
-  let inferredColumnCount = explicitColumnCount
-  if (!inferredColumnCount && explicitRowCount && cells.length % explicitRowCount === 0) {
-    inferredColumnCount = Math.max(1, cells.length / explicitRowCount)
-  }
-  if (!inferredColumnCount) {
-    inferredColumnCount = cells.length
-  }
-
-  const rows: NativeTableRow[] = []
-  for (let index = 0; index < cells.length; index += inferredColumnCount) {
-    const slice = cells.slice(index, index + inferredColumnCount)
-    const rowIndex = rows.length
-    rows.push({
-      key: `row:${rowIndex}`,
-      header: rowIndex < explicitHeaderRowCount || slice.some((cell) => {
-        const cellAttributes = normalizeFeishuDocsAttributes(cell.attributes)
-        return readBooleanAttribute(cellAttributes, ["header", "is-header", "is_header", "head", "thead"]) === true
-      }),
-      cells: slice.map((cell, cellIndex) => {
-        const cellAttributes = normalizeFeishuDocsAttributes(cell.attributes)
-        return {
-          key: cell.key || `row:${rowIndex}:cell:${cellIndex}`,
-          node: cell,
-          header: readBooleanAttribute(cellAttributes, ["header", "is-header", "is_header", "head", "thead"]) === true,
-          rowSpan: readPositiveIntegerAttribute(cellAttributes, ["row-span", "row_span", "rowspan"]) ?? 1,
-          colSpan: readPositiveIntegerAttribute(cellAttributes, ["column-span", "column_span", "col-span", "col_span", "colspan"]) ?? 1,
-          columnIndex: cellIndex,
-        }
-      }),
     })
   }
 
@@ -2720,34 +2601,10 @@ function FeishuDocsNativeBlockPreview(input: {
         </tr>
       )
 
-      return (
-        <section className={`feishu-docs-local-preview-native-block ${resolveToneClassName(spec)} is-container`}>
-          <div className="feishu-docs-local-preview-native-icon">{resolveBlockIcon(spec)}</div>
-          <div className="feishu-docs-local-preview-native-meta">
-            {renderNativeBlockHeader({
-              title,
-              readonlyTagText: input.t?.("飞书页.文档.标签.只读"),
-              readonly: FEISHU_DOCS_READONLY_BLOCKS.has(input.name),
-              extraBadges: [input.t ? input.t("飞书页.文档.标签.容器") : "容器"],
-            })}
-            {renderNativePropItems(propItems)}
-            <div className="feishu-docs-local-preview-lark-table-shell">
-              <table className="feishu-docs-local-preview-lark-table">
-                {headRows.length > 0 ? (
-                  <thead>
-                    {headRows.map((row, rowIndex) => renderRow(row, rowIndex, "th"))}
-                  </thead>
-                ) : null}
-                {visibleBodyRows.length > 0 ? (
-                  <tbody>
-                    {visibleBodyRows.map((row, rowIndex) => renderRow(row, rowIndex, "td"))}
-                  </tbody>
-                ) : null}
-              </table>
-            </div>
-          </div>
-        </section>
-      )
+      return renderStandaloneFeishuTable({
+        headRows: headRows.map((row, rowIndex) => renderRow(row, rowIndex, "th")),
+        bodyRows: visibleBodyRows.map((row, rowIndex) => renderRow(row, rowIndex, "td")),
+      })
     }
   }
 
@@ -2804,34 +2661,10 @@ function FeishuDocsNativeBlockPreview(input: {
         </tr>
       )
 
-      return (
-        <section className={`feishu-docs-local-preview-native-block ${resolveToneClassName(spec)} is-container`}>
-          <div className="feishu-docs-local-preview-native-icon">{resolveBlockIcon(spec)}</div>
-          <div className="feishu-docs-local-preview-native-meta">
-            {renderNativeBlockHeader({
-              title,
-              readonlyTagText: input.t?.("飞书页.文档.标签.只读"),
-              readonly: FEISHU_DOCS_READONLY_BLOCKS.has(input.name),
-              extraBadges: [input.t ? input.t("飞书页.文档.标签.容器") : "容器"],
-            })}
-            {renderNativePropItems(propItems)}
-            <div className="feishu-docs-local-preview-lark-table-shell">
-              <table className="feishu-docs-local-preview-lark-table">
-                {headRows.length > 0 ? (
-                  <thead>
-                    {headRows.map((row, rowIndex) => renderRow(row, rowIndex))}
-                  </thead>
-                ) : null}
-                {visibleBodyRows.length > 0 ? (
-                  <tbody>
-                    {visibleBodyRows.map((row, rowIndex) => renderRow(row, rowIndex))}
-                  </tbody>
-                ) : null}
-              </table>
-            </div>
-          </div>
-        </section>
-      )
+      return renderStandaloneFeishuTable({
+        headRows: headRows.map((row, rowIndex) => renderRow(row, rowIndex)),
+        bodyRows: visibleBodyRows.map((row, rowIndex) => renderRow(row, rowIndex)),
+      })
     }
   }
 
@@ -2911,6 +2744,8 @@ function FeishuDocsNativeBlockPreview(input: {
             alt={boardTitle}
             displayMode="board"
             plain
+            preferredWidth={FEISHU_DOCS_BOARD_PREVIEW_MAX_WIDTH}
+            preferredHeight={FEISHU_DOCS_BOARD_PREVIEW_MAX_HEIGHT}
             focusRect={focusRect}
             t={input.t}
           />
@@ -3654,34 +3489,10 @@ function FeishuDocsMdxBlockPreview(input: {
         </tr>
       )
 
-      return (
-        <section className={`feishu-docs-local-preview-native-block ${resolveToneClassName(spec)} is-container`}>
-          <div className="feishu-docs-local-preview-native-icon">{resolveBlockIcon(spec)}</div>
-          <div className="feishu-docs-local-preview-native-meta">
-            {renderNativeBlockHeader({
-              title,
-              readonlyTagText: input.t?.("飞书页.文档.标签.只读"),
-              readonly: FEISHU_DOCS_READONLY_BLOCKS.has(input.name),
-              extraBadges: [input.t ? input.t("飞书页.文档.标签.容器") : "容器"],
-            })}
-            {renderNativePropItems(propItems)}
-            <div className="feishu-docs-local-preview-lark-table-shell">
-              <table className="feishu-docs-local-preview-lark-table">
-                {headRows.length > 0 ? (
-                  <thead>
-                    {headRows.map((row, rowIndex) => renderRow(row, rowIndex, "th"))}
-                  </thead>
-                ) : null}
-                {visibleBodyRows.length > 0 ? (
-                  <tbody>
-                    {visibleBodyRows.map((row, rowIndex) => renderRow(row, rowIndex, "td"))}
-                  </tbody>
-                ) : null}
-              </table>
-            </div>
-          </div>
-        </section>
-      )
+      return renderStandaloneFeishuTable({
+        headRows: headRows.map((row, rowIndex) => renderRow(row, rowIndex, "th")),
+        bodyRows: visibleBodyRows.map((row, rowIndex) => renderRow(row, rowIndex, "td")),
+      })
     }
   }
 
@@ -3738,34 +3549,10 @@ function FeishuDocsMdxBlockPreview(input: {
         </tr>
       )
 
-      return (
-        <section className={`feishu-docs-local-preview-native-block ${resolveToneClassName(spec)} is-container`}>
-          <div className="feishu-docs-local-preview-native-icon">{resolveBlockIcon(spec)}</div>
-          <div className="feishu-docs-local-preview-native-meta">
-            {renderNativeBlockHeader({
-              title,
-              readonlyTagText: input.t?.("飞书页.文档.标签.只读"),
-              readonly: FEISHU_DOCS_READONLY_BLOCKS.has(input.name),
-              extraBadges: [input.t ? input.t("飞书页.文档.标签.容器") : "容器"],
-            })}
-            {renderNativePropItems(propItems)}
-            <div className="feishu-docs-local-preview-lark-table-shell">
-              <table className="feishu-docs-local-preview-lark-table">
-                {headRows.length > 0 ? (
-                  <thead>
-                    {headRows.map((row, rowIndex) => renderRow(row, rowIndex))}
-                  </thead>
-                ) : null}
-                {visibleBodyRows.length > 0 ? (
-                  <tbody>
-                    {visibleBodyRows.map((row, rowIndex) => renderRow(row, rowIndex))}
-                  </tbody>
-                ) : null}
-              </table>
-            </div>
-          </div>
-        </section>
-      )
+      return renderStandaloneFeishuTable({
+        headRows: headRows.map((row, rowIndex) => renderRow(row, rowIndex)),
+        bodyRows: visibleBodyRows.map((row, rowIndex) => renderRow(row, rowIndex)),
+      })
     }
   }
 
@@ -3802,6 +3589,8 @@ function FeishuDocsMdxBlockPreview(input: {
             alt={boardTitle}
             displayMode="board"
             plain
+            preferredWidth={FEISHU_DOCS_BOARD_PREVIEW_MAX_WIDTH}
+            preferredHeight={FEISHU_DOCS_BOARD_PREVIEW_MAX_HEIGHT}
             focusRect={focusRect}
             t={input.t}
           />

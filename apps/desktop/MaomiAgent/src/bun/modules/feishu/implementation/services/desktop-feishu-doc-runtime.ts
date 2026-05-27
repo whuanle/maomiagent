@@ -1072,7 +1072,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
     return this.downloadPreviewBinary({
       token: normalizedToken,
       label: "文档白板",
-      openApiPath: `/drive/v1/medias/${encodeURIComponent(normalizedToken)}/download`,
+      openApiPath: `/board/v1/whiteboards/${encodeURIComponent(normalizedToken)}/download_as_image`,
     });
   }
 

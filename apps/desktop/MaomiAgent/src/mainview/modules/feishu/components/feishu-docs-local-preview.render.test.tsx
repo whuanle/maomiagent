@@ -7,10 +7,12 @@ import {
 } from "../../../../shared/desktop-feishu-oauth"
 import { normalizeFeishuDocsPreviewHref } from "./feishu-docs-render-utils"
 
-const workspaceRoot = process.cwd()
+async function source(): Promise<string> {
+  return readFile(new URL("./feishu-docs-local-preview.tsx", import.meta.url), "utf8")
+}
 
-async function source(path: string): Promise<string> {
-  return readFile(`${workspaceRoot}/${path}`, "utf8")
+async function tableLayoutSource(): Promise<string> {
+  return readFile(new URL("./feishu-docs-native-table-layout.ts", import.meta.url), "utf8")
 }
 
 describe("FeishuDocsLocalPreview", () => {
@@ -24,7 +26,7 @@ describe("FeishuDocsLocalPreview", () => {
   })
 
   test("keeps image, bitable and multiline code on plain preview branches", async () => {
-    const previewSource = await source("src/mainview/modules/feishu/components/feishu-docs-local-preview.tsx")
+    const previewSource = await source()
     const imageBranch = /if \(input\.name === "image"\) \{([\s\S]*?)\n  if \(/.exec(previewSource)?.[1] ?? ""
 
     expect(previewSource).toContain('className="feishu-docs-local-preview-plain-media is-image"')
@@ -49,10 +51,19 @@ describe("FeishuDocsLocalPreview", () => {
   })
 
   test("includes native table rendering and diagram-like preview branches", async () => {
-    const previewSource = await source("src/mainview/modules/feishu/components/feishu-docs-local-preview.tsx")
+    const previewSource = await source()
+    const layoutSource = await tableLayoutSource()
+    const standaloneTableCallCount = previewSource.match(/return renderStandaloneFeishuTable\(\{/g)?.length ?? 0
 
-    expect(previewSource).toContain("function collectNativeTableRows(")
+    expect(layoutSource).toContain("export function collectNativeTableRows(")
+    expect(layoutSource).toContain('"property-column-size"')
+    expect(layoutSource).toContain('"property-row-size"')
+    expect(layoutSource).toContain('"property-header-row-size"')
+    expect(previewSource).toContain("function renderStandaloneFeishuTable(")
+    expect(previewSource).toContain('className="feishu-docs-local-preview-table-block"')
+    expect(standaloneTableCallCount).toBeGreaterThanOrEqual(4)
     expect(previewSource).toContain('if (input.name === "table") {')
+    expect(previewSource).toContain("collectNativeTableRows(attributes, input.childrenNodes)")
     expect(previewSource).toContain("parseFeishuDocsPreviewNodesFromMdxChildren(input.mdastNode.children)")
     expect(previewSource).toContain('className="feishu-docs-local-preview-lark-table-shell"')
     expect(previewSource).toContain('input.name === "board"')
@@ -63,5 +74,9 @@ describe("FeishuDocsLocalPreview", () => {
     expect(previewSource).toContain('["token", "diagram-token", "diagram_token"]')
     expect(previewSource).toContain('["token", "whiteboard-token", "whiteboard_token"]')
     expect(previewSource).toContain('className="feishu-docs-local-preview-plain-media is-image is-board-preview"')
+    expect(previewSource).toContain("const FEISHU_DOCS_BOARD_PREVIEW_MAX_WIDTH = 700")
+    expect(previewSource).toContain("const FEISHU_DOCS_BOARD_PREVIEW_MAX_HEIGHT = 700")
+    expect(previewSource).toContain("preferredWidth={FEISHU_DOCS_BOARD_PREVIEW_MAX_WIDTH}")
+    expect(previewSource).toContain("preferredHeight={FEISHU_DOCS_BOARD_PREVIEW_MAX_HEIGHT}")
   })
 })
