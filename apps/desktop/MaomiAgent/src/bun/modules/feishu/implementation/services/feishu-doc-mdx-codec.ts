@@ -6,6 +6,10 @@ export type FeishuDocMdxPatch = {
   blockUpdates: Array<{ blockId: string; text: string }>;
 };
 
+function withEditableAnchor(blockId: string, markdown: string): string {
+  return `<!--feishu:block:${blockId}-->\n${markdown}\n<!--/feishu:block:${blockId}-->`;
+}
+
 export function feishuDocIRToMdx(ir: FeishuDocIR): string {
   const root = ir.blocks[ir.document.rootBlockId];
   const lines = (root?.children ?? [])
@@ -15,6 +19,11 @@ export function feishuDocIRToMdx(ir: FeishuDocIR): string {
 }
 
 export function feishuDocMdxToIRPatch(base: FeishuDocIR, mdx: string): FeishuDocMdxPatch {
+  const anchoredHeading = /<!--feishu:block:([^>]+)-->\s*#\s+([^\n]+?)\s*<!--\/feishu:block:\1-->/s.exec(mdx);
+  if (anchoredHeading) {
+    return { blockUpdates: [{ blockId: anchoredHeading[1]!, text: anchoredHeading[2]!.trim() }] };
+  }
+
   const heading = /^#\s+(.+)$/m.exec(mdx);
   const firstHeading = firstBlockByType(base, "heading1");
   return heading && firstHeading
@@ -51,22 +60,22 @@ function blockToMdx(ir: FeishuDocIR, blockId: string): string {
 
   if (block.type.startsWith("heading")) {
     const level = headingLevel(block.type);
-    return level ? (hasVisibleText ? `${"#".repeat(level)} ${text}` : "") : nativeBlockComponent(ir, block, body);
+    return level ? (hasVisibleText ? withEditableAnchor(block.id, `${"#".repeat(level)} ${text}`) : "") : nativeBlockComponent(ir, block, body);
   }
 
   switch (block.type) {
     case "text":
-      return hasVisibleText ? text : "";
+      return hasVisibleText ? withEditableAnchor(block.id, text) : "";
     case "bullet":
-      return hasVisibleText ? `- ${text}` : "";
+      return hasVisibleText ? withEditableAnchor(block.id, `- ${text}`) : "";
     case "ordered":
-      return hasVisibleText ? `1. ${text}` : "";
+      return hasVisibleText ? withEditableAnchor(block.id, `1. ${text}`) : "";
     case "quote":
-      return hasVisibleText ? `> ${text}` : "";
+      return hasVisibleText ? withEditableAnchor(block.id, `> ${text}`) : "";
     case "code":
-      return hasVisibleText ? `\`\`\`\n${text}\n\`\`\`` : "";
+      return hasVisibleText ? withEditableAnchor(block.id, `\`\`\`\n${text}\n\`\`\``) : "";
     case "todo":
-      return hasVisibleText ? `- [ ] ${text}` : "";
+      return hasVisibleText ? withEditableAnchor(block.id, `- [ ] ${text}`) : "";
     case "image":
       return selfClosingComponent("FeishuImage", componentAttrs(componentPropsFromBlock(ir, block)));
     case "file":

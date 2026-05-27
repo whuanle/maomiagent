@@ -202,7 +202,7 @@ describe("FeishuDocTreeRemoteSource", () => {
     expect(content.totalLength).toBe(content.markdown.length);
   });
 
-  test("serializes structured native docx blocks into Feishu tag markdown", async () => {
+  test("serializes structured native docx blocks into source markdown", async () => {
     const source = createSource({
       "/docx/v1/documents/doc_1/blocks": {
         items: [
@@ -242,10 +242,42 @@ describe("FeishuDocTreeRemoteSource", () => {
     const content = await source.readDocumentContent("access", "doc_1");
 
     expect(content.markdown).toContain("# 项目标题");
-    expect(content.markdown).toContain('<FeishuCallout blockId="callout_1" emoji="bulb" background-color="yellow" border-color="orange">');
+    expect(content.markdown).toContain('<callout blockId="callout_1" emoji="bulb" background-color="yellow" border-color="orange">');
     expect(content.markdown).toContain("Callout body");
-    expect(content.markdown).toContain('<FeishuImage token="img_token" width="640" height="360" name="封面" />');
+    expect(content.markdown).toContain('<image token="img_token" width="640" height="360" name="封面" />');
     expect(content.length).toBe(content.markdown.length);
+  });
+
+  test("readDocumentBundle keeps a raw source snapshot separate from normalized content blocks", async () => {
+    const source = createSource({
+      "/docx/v1/documents/doc_1/blocks": {
+        items: [
+          {
+            block_id: "p1",
+            parent_id: "doc_1",
+            block_type: 2,
+            text: { elements: [{ text_run: { content: "Hello" } }] },
+          },
+        ],
+      },
+      "/docx/v1/documents/doc_1": {
+        document: { document_id: "doc_1", title: "Raw Demo", revision_id: 7 },
+      },
+    });
+
+    const bundle = await source.readDocumentBundle("access", "doc_1");
+
+    expect(bundle.source.sourceKind).toBe("docx_remote_raw");
+    expect(bundle.source.resolvedDocId).toBe("doc_1");
+    expect(bundle.source.blocks).toEqual([
+      {
+        block_id: "p1",
+        parent_id: "doc_1",
+        block_type: 2,
+        text: { elements: [{ text_run: { content: "Hello" } }] },
+      },
+    ]);
+    expect(bundle.content.blocks[0]?.block_id).toBe("doc_1");
   });
 
   test("falls back to reading docx content by wiki node token when document id lookup fails", async () => {

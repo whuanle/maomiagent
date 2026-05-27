@@ -1,4 +1,5 @@
 import {
+  CloseOutlined,
   ApartmentOutlined,
   ArrowLeftOutlined,
   CaretRightFilled,
@@ -6,10 +7,12 @@ import {
   FileTextOutlined,
   MessageOutlined,
   ReloadOutlined,
+  SaveOutlined,
   UploadOutlined,
 } from "@ant-design/icons"
 import {
   Alert,
+  Modal,
   Button,
   Empty,
   Input,
@@ -51,33 +54,42 @@ import {
 import { notificationCenter, notifier } from "../../../lib/notifications"
 import { useAppService } from "../../../services/app-service-container"
 import { FRONTEND_CONVERSATION_LAUNCHER_PORT } from "../../../services/conversation/feature-contracts"
-import { FeishuDocDiffView } from "./feishu-doc-diff-view"
 import { FeishuDocSourceEditor } from "./feishu-doc-source-editor"
 import { FeishuDocVisualEditor } from "./feishu-doc-visual-editor"
+import {
+  createFeishuDocPreviewIR,
+  extractFeishuMediaTokens,
+  extractFeishuWhiteboardTokens,
+} from "./feishu-doc-preview-support"
 
 const { Text, Title } = Typography
 
-type FeishuDocEditorMode = "visual" | "diff" | "source"
+type FeishuDocWorkspaceViewMode = "preview" | "edit"
 
 export type FeishuDocWorkspaceMode = "workspace"
+
+export type FeishuDocsTreeSnapshotNode = {
+  key: string
+  title: string
+  isLeaf?: boolean
+  loaded?: boolean
+  doc?: FeishuDocSummary
+  children?: FeishuDocsTreeSnapshotNode[]
+}
 
 export type FeishuDocsWorkbenchUiState = {
   activeDocId?: string
   treeQuery: string
   treeRootDocId: string
   workspaceMode: FeishuDocWorkspaceMode
+  treeNodes?: FeishuDocsTreeSnapshotNode[]
+  expandedKeys?: string[]
 }
 
-type DocsTreeNode = TreeDataNode & {
-  key: string
-  title: string
-  isLeaf?: boolean
-  loaded?: boolean
-  doc?: FeishuDocSummary
-  children?: DocsTreeNode[]
-}
+type DocsTreeNode = TreeDataNode & FeishuDocsTreeSnapshotNode
 
 type Props = {
+  active: boolean
   baseUrl: string
   workspaceId: string
   state: FeishuStateView | null
@@ -87,6 +99,8 @@ type Props = {
   initialDocId?: string
   initialTreeQuery?: string
   initialTreeRootDocId?: string
+  initialTreeNodes?: FeishuDocsTreeSnapshotNode[]
+  initialExpandedKeys?: string[]
   onReloadState?: () => void
   onBackToSettings?: () => void
   onUiStateChange?: (state: FeishuDocsWorkbenchUiState) => void
@@ -142,6 +156,86 @@ function resolveStatusTagText(status: "blocked" | "limited" | "ready" | "probing
         : t("飞书页.文档.状态标签.当前阻断")
 }
 
+function resolvePublishRecommendationText(recommendation: string | undefined): string {
+  return recommendation === "publish_new"
+    ? "推荐发布方式：发布新文档"
+    : recommendation === "pull_required"
+      ? "推荐发布方式：先重新拉取远端基线"
+      : recommendation === "update_existing"
+        ? "推荐发布方式：覆盖原文"
+        : ""
+}
+
+function resolveBaselineAuthorityText(doc: FeishuDocContentView | null): string {
+  const cache = doc?.cache
+  if (!cache) {
+    return ""
+  }
+
+  if (cache.hasRawSourceBaseline && cache.hasStructuredBaseline) {
+    return "当前依据：飞书原始结构 + 结构化基线"
+  }
+  if (cache.hasRawSourceBaseline) {
+    return "当前依据：飞书原始结构基线"
+  }
+  if (cache.hasStructuredBaseline) {
+    return "当前依据：结构化基线"
+  }
+  return "当前依据：仅本地草稿"
+}
+
+function buildWorkspaceDiagnostic(doc: FeishuDocContentView | null): {
+  type: "info" | "warning" | "error"
+  message: string
+  description?: string
+} | null {
+  const cache = doc?.cache
+  if (!cache) {
+    return null
+  }
+
+  const authority = resolveBaselineAuthorityText(doc)
+  const details = [
+    authority,
+    resolvePublishRecommendationText(cache.publishModeRecommendation),
+    cache.hasRevisionConflict ? "远端版本已变化" : "",
+    cache.hasBlockedChanges ? "当前改动不适合直接覆盖原文" : "",
+    cache.unknownBlockCount ? `未知块保留：${cache.unknownBlockCount}` : "",
+  ].filter(Boolean)
+
+  if (cache.hasRevisionConflict) {
+    return {
+      type: "error",
+      message: "远端基线已变化，推送前请先重新拉取",
+      description: details.join("；"),
+    }
+  }
+
+  if (cache.hasBlockedChanges || cache.publishModeRecommendation === "publish_new") {
+    return {
+      type: "warning",
+      message: "当前改动不适合直接覆盖原文",
+      description: details.join("；"),
+    }
+  }
+
+  if (cache.publishModeRecommendation === "pull_required") {
+    return {
+      type: "info",
+      message: "当前缺少可直接推送的基线",
+      description: details.join("；"),
+    }
+  }
+
+  return authority
+    ? {
+        type: "info",
+        message: authority,
+        description: details.filter((detail) => detail !== authority).join("；") || undefined,
+      }
+    : null
+}
+
 function mapTreeNodes(items: FeishuDocTreeNode[]): DocsTreeNode[] {
   return items.map(mapTreeNode)
 }
@@ -156,7 +250,8 @@ function mapTreeNode(item: FeishuDocTreeNode): DocsTreeNode {
       id: item.token,
       token: item.token,
       kind: item.kind,
-      docId: item.docId ?? item.token,
+      docId: item.token,
+      resolvedDocId: item.resolvedDocId ?? item.docId ?? item.token,
       title: item.title,
       objType: item.objType,
       updateTime: item.updatedAt ?? item.updateTime,
@@ -229,6 +324,58 @@ function mergeExpandedKeyLists(currentKeys: string[], nextKeys: string[]): strin
   return merged
 }
 
+function normalizeExpandedKeys(keys: string[] | undefined): string[] {
+  if (!keys?.length) {
+    return []
+  }
+
+  const normalizedKeys: string[] = []
+  const knownKeys = new Set<string>()
+
+  for (const key of keys) {
+    const normalizedKey = key.trim()
+    if (!normalizedKey || knownKeys.has(normalizedKey)) {
+      continue
+    }
+
+    knownKeys.add(normalizedKey)
+    normalizedKeys.push(normalizedKey)
+  }
+
+  return normalizedKeys
+}
+
+function snapshotTreeNodes(nodes: DocsTreeNode[]): FeishuDocsTreeSnapshotNode[] {
+  return nodes.map((node) => ({
+    key: node.key,
+    title: node.title,
+    ...(typeof node.isLeaf === "boolean" ? { isLeaf: node.isLeaf } : {}),
+    ...(typeof node.loaded === "boolean" ? { loaded: node.loaded } : {}),
+    ...(node.doc ? { doc: node.doc } : {}),
+    ...(node.children?.length ? { children: snapshotTreeNodes(node.children) } : {}),
+  }))
+}
+
+function restoreTreeNodesSnapshot(nodes: FeishuDocsTreeSnapshotNode[] | undefined): DocsTreeNode[] {
+  if (!nodes?.length) {
+    return []
+  }
+
+  return nodes.map((node) => ({
+    key: node.key,
+    title: node.title,
+    ...(typeof node.isLeaf === "boolean" ? { isLeaf: node.isLeaf } : {}),
+    ...(typeof node.loaded === "boolean" ? { loaded: node.loaded } : {}),
+    ...(node.doc ? { doc: node.doc } : {}),
+    ...(node.children?.length ? { children: restoreTreeNodesSnapshot(node.children) } : {}),
+  }))
+}
+
+function resolveInitialExpandedKeys(nodes: DocsTreeNode[], keys: string[] | undefined): string[] {
+  const normalizedKeys = normalizeExpandedKeys(keys)
+  return normalizedKeys.length > 0 ? normalizedKeys : collectExpandableKeys(nodes)
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value)
 }
@@ -236,29 +383,41 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function buildDocChatDraftText(input: {
   title: string
   docId: string
+  resolvedDocId?: string
   rootDocId?: string
   url?: string
   updateTime?: string
-  cacheRelativePath?: string
+  originalRelativePath?: string
+  draftRelativePath?: string
   t: Translate
 }): string {
   const relativeUpdate = formatRelativeDocUpdateTime(input.updateTime, input.t)
 
   return [
-    "请直接使用这篇飞书文档对应的本地 Markdown 草稿，不可以直接改动飞书远端。",
-    "如果要修改内容，只能修改本地 Markdown 草稿，只能由用户操作推送，不能由任何自动化流程改动飞书远端文档内容。",
+    "请先读取这篇飞书文档拉取到工作区的原始 Markdown 文件，所有总结、改写和重新生成都必须基于这个原始文件。",
+    "如果需要生成修改稿，只能写入本地 Markdown 草稿，不可以直接改动飞书远端，也不能由任何自动化流程直接推送远端。",
     "",
     "<feishu_doc_context>",
     `doc_token: ${input.docId}`,
+    input.resolvedDocId && input.resolvedDocId !== input.docId ? `resolved_document_id: ${input.resolvedDocId}` : undefined,
     `title: ${input.title}`,
     input.rootDocId ? `root_doc_token: ${input.rootDocId}` : undefined,
     input.url ? `url: ${input.url}` : undefined,
     relativeUpdate ? `updated_at: ${relativeUpdate}` : undefined,
-    input.cacheRelativePath ? `local_draft_path: ${input.cacheRelativePath}` : undefined,
+    input.originalRelativePath ? `original_markdown_path: ${input.originalRelativePath}` : undefined,
+    input.draftRelativePath ? `local_draft_path: ${input.draftRelativePath}` : undefined,
     input.rootDocId ? "create_target: root_doc_token" : "create_target: query_workspace_root_doc_first",
-    "workflow: edit_local_markdown",
+    "workflow: read_original_then_edit_local_draft",
     "</feishu_doc_context>",
   ].filter((item): item is string => Boolean(item)).join("\n")
+}
+
+function resolveRemoteDocId(doc: {
+  docId?: string
+  resolvedDocId?: string
+  cache?: { resolvedDocId?: string }
+} | null | undefined): string {
+  return doc?.resolvedDocId ?? doc?.cache?.resolvedDocId ?? doc?.docId ?? ""
 }
 
 function findTreeNodeKeyByDocId(nodes: DocsTreeNode[], docId: string): string | null {
@@ -274,114 +433,6 @@ function findTreeNodeKeyByDocId(nodes: DocsTreeNode[], docId: string): string | 
     }
   }
   return null
-}
-
-function stripMarkdownFencedCode(markdown: string): string {
-  const lines = markdown.replace(/\r\n/g, "\n").split("\n")
-  const output: string[] = []
-  let activeFence: string | null = null
-
-  for (const line of lines) {
-    const fenceMatch = /^(```+|~~~+)/.exec(line.trim())
-    if (fenceMatch) {
-      const fence = fenceMatch[1]
-      if (activeFence === fence) {
-        activeFence = null
-      } else if (activeFence === null) {
-        activeFence = fence
-      }
-      continue
-    }
-
-    if (!activeFence) {
-      output.push(line)
-    }
-  }
-
-  return output.join("\n")
-}
-
-function extractFeishuMediaTokens(markdown: string): string[] {
-  const source = stripMarkdownFencedCode(markdown)
-  const tokens = new Set<string>()
-  const pattern = /<(?:feishu-?)?(?:image|file)\b[^>]*\b(?:token|file-token|file_token)=(?:"([^"]+)"|'([^']+)'|{([^}]+)}|([^\s"'=<>`]+))/gi
-  let match: RegExpExecArray | null
-
-  while ((match = pattern.exec(source)) !== null) {
-    const token = match[1] ?? match[2] ?? match[3] ?? match[4] ?? ""
-    const normalized = token.trim()
-    if (normalized) {
-      tokens.add(normalized)
-    }
-  }
-
-  return [...tokens]
-}
-
-function extractFeishuWhiteboardTokens(markdown: string): string[] {
-  const source = stripMarkdownFencedCode(markdown)
-  const tokens = new Set<string>()
-  const pattern = /<(?:feishu-?)?(?:board|whiteboard)\b[^>]*\btoken=(?:"([^"]+)"|'([^']+)'|{([^}]+)}|([^\s"'=<>`]+))/gi
-  let match: RegExpExecArray | null
-
-  while ((match = pattern.exec(source)) !== null) {
-    const token = match[1] ?? match[2] ?? match[3] ?? match[4] ?? ""
-    const normalized = token.trim()
-    if (normalized) {
-      tokens.add(normalized)
-    }
-  }
-
-  return [...tokens]
-}
-
-function createDraftDocIR(doc: FeishuDocContentView, markdown: string): FeishuDocIR {
-  return {
-    schemaVersion: 1,
-    document: {
-      id: doc.docId,
-      title: doc.title,
-      revisionId: "local-draft",
-      rootBlockId: doc.docId,
-      pulledAt: new Date(0).toISOString(),
-      source: { documentIdType: "document_id" },
-    },
-    blocks: {
-      [doc.docId]: { id: doc.docId, type: "page", parentId: null, children: [], editable: false, text: [], resource: null, attrs: {}, raw: {} },
-    },
-    assets: {},
-    integrity: {
-      contentHash: `draft:${markdown.length}:${markdown}`,
-      rawHash: `draft:${doc.docId}`,
-    },
-  }
-}
-
-function createMarkdownDiff(base: string, current: string): string {
-  if (base === current) {
-    return ""
-  }
-
-  const baseLines = base.replace(/\r\n/g, "\n").split("\n")
-  const currentLines = current.replace(/\r\n/g, "\n").split("\n")
-  const output: string[] = []
-  const maxLength = Math.max(baseLines.length, currentLines.length)
-
-  for (let index = 0; index < maxLength; index += 1) {
-    const baseLine = baseLines[index]
-    const currentLine = currentLines[index]
-    if (baseLine === currentLine) {
-      continue
-    }
-    if (baseLine !== undefined) {
-      output.push(`- ${baseLine}`)
-    }
-    if (currentLine !== undefined) {
-      output.push(`+ ${currentLine}`)
-    }
-  }
-
-  return output.join("\n")
 }
 
 function getDocsMcp(state: FeishuStateView | null) {
@@ -420,6 +471,11 @@ export function FeishuDocsWorkbench(props: Props) {
     state: props.state,
   })
   const statePending = Boolean(props.baseUrl.trim()) && !props.state && !props.loadError.trim()
+  const restoredInitialTreeNodesRef = useRef<DocsTreeNode[] | null>(null)
+  if (restoredInitialTreeNodesRef.current === null) {
+    restoredInitialTreeNodesRef.current = restoreTreeNodesSnapshot(props.initialTreeNodes)
+  }
+  const initialTreeNodes = restoredInitialTreeNodesRef.current
   const restoredTreeQuery = props.initialTreeQuery ?? props.initialTreeRootDocId ?? ""
   const restoredTreeRootDocId = props.initialTreeRootDocId?.trim() ? props.initialTreeRootDocId : restoredTreeQuery
   const [treeQuery, setTreeQuery] = useState(restoredTreeQuery)
@@ -431,11 +487,15 @@ export function FeishuDocsWorkbench(props: Props) {
   const [capabilityLoading, setCapabilityLoading] = useState(false)
   const [capabilityError, setCapabilityError] = useState("")
   const [capabilities, setCapabilities] = useState<Awaited<ReturnType<typeof fetchFeishuDocsCapabilities>> | null>(null)
-  const [treeNodes, setTreeNodes] = useState<DocsTreeNode[]>([])
+  const [treeNodes, setTreeNodes] = useState<DocsTreeNode[]>(initialTreeNodes)
   const [treeLoading, setTreeLoading] = useState(false)
-  const [treeStatus, setTreeStatus] = useState<"idle" | "loading" | "cached" | "refreshing" | "ready" | "error">("idle")
+  const [treeStatus, setTreeStatus] = useState<"idle" | "loading" | "cached" | "refreshing" | "ready" | "error">(
+    initialTreeNodes.length > 0 ? "cached" : "idle",
+  )
   const [treeError, setTreeError] = useState("")
-  const [expandedKeys, setExpandedKeys] = useState<string[]>([])
+  const [expandedKeys, setExpandedKeys] = useState<string[]>(
+    () => resolveInitialExpandedKeys(initialTreeNodes, props.initialExpandedKeys),
+  )
   const [activeDoc, setActiveDoc] = useState<FeishuDocSummary | null>(null)
   const [currentDoc, setCurrentDoc] = useState<FeishuDocContentView | null>(null)
   const [docLoading, setDocLoading] = useState(false)
@@ -443,7 +503,7 @@ export function FeishuDocsWorkbench(props: Props) {
   const [draft, setDraft] = useState("")
   const [saveState, setSaveState] = useState<"idle" | "dirty" | "caching" | "pulling" | "pushing" | "saved" | "error">("idle")
   const [saveError, setSaveError] = useState("")
-  const [viewMode, setViewMode] = useState<FeishuDocEditorMode>("visual")
+  const [workspaceViewMode, setWorkspaceViewMode] = useState<FeishuDocWorkspaceViewMode>("preview")
   const [mediaPreviewUrls, setMediaPreviewUrls] = useState<Record<string, string>>({})
   const [mediaPreviewErrors, setMediaPreviewErrors] = useState<FeishuDocMediaPreviewErrorItem[]>([])
   const [whiteboardPreviewUrls, setWhiteboardPreviewUrls] = useState<Record<string, string>>({})
@@ -455,6 +515,8 @@ export function FeishuDocsWorkbench(props: Props) {
   const initialDocLoadedRef = useRef(false)
   const draftRef = useRef("")
   const saveStateRef = useRef(saveState)
+  const editSessionBaselineRef = useRef("")
+  const hasPendingEditChangesRef = useRef(false)
   const activeDocIdRef = useRef("")
   const mediaPreviewRequestIdRef = useRef(0)
   const whiteboardPreviewRequestIdRef = useRef(0)
@@ -462,7 +524,20 @@ export function FeishuDocsWorkbench(props: Props) {
   const lastAccessNoticeRef = useRef("")
   const loadingTreeNodeKeysRef = useRef<Set<string>>(new Set())
   const treeHydrationRunIdRef = useRef(0)
-  const treeNodesLengthRef = useRef(0)
+  const treeNodesLengthRef = useRef(initialTreeNodes.length)
+  const [hasPendingEditChanges, setHasPendingEditChanges] = useState(false)
+  const [modal, modalContextHolder] = Modal.useModal()
+  const wasPageActiveRef = useRef(props.active)
+
+  const syncPendingEditChanges = useCallback((nextValue: boolean) => {
+    hasPendingEditChangesRef.current = nextValue
+    setHasPendingEditChanges((previous) => previous === nextValue ? previous : nextValue)
+  }, [])
+
+  const commitEditSessionBaseline = useCallback((markdown: string) => {
+    editSessionBaselineRef.current = markdown
+    syncPendingEditChanges(false)
+  }, [syncPendingEditChanges])
 
   const persistDraftIfDirty = useCallback(async () => {
     if (!hasWorkspaceContext) {
@@ -490,6 +565,107 @@ export function FeishuDocsWorkbench(props: Props) {
     })
     return item
   }, [currentDoc, draft, hasWorkspaceContext, props.baseUrl, props.workspaceId])
+
+  const handleSaveEditSession = useCallback(async () => {
+    if (!currentDoc?.docId || !hasWorkspaceContext) {
+      return false
+    }
+
+    try {
+      const item = await persistDraftIfDirty()
+      const nextDoc = item ?? currentDoc
+      const nextMarkdown = item?.markdown ?? draft
+
+      lastSavedDraftRef.current = nextMarkdown
+      commitEditSessionBaseline(nextMarkdown)
+      startTransition(() => {
+        setCurrentDoc(nextDoc)
+        setDraft(nextMarkdown)
+        setSaveError("")
+        setSaveState("saved")
+      })
+      notifier.success(props.t("飞书页.文档.反馈.草稿已保存"))
+      return true
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : String(error))
+      setSaveState("error")
+      return false
+    }
+  }, [commitEditSessionBaseline, currentDoc, draft, hasWorkspaceContext, persistDraftIfDirty, props.t])
+
+  const handleCancelEditSession = useCallback(async () => {
+    if (!currentDoc) {
+      return false
+    }
+
+    const baselineMarkdown = editSessionBaselineRef.current
+    if (baselineMarkdown === draft) {
+      commitEditSessionBaseline(baselineMarkdown)
+      setWorkspaceViewMode("preview")
+      return true
+    }
+
+    try {
+      setSaveError("")
+      if (hasWorkspaceContext && currentDoc.docId) {
+        setSaveState("caching")
+        const item = await saveFeishuWorkspaceDocLocalDraft(
+          props.baseUrl,
+          props.workspaceId,
+          currentDoc.docId,
+          {
+            title: currentDoc.title,
+            markdown: baselineMarkdown,
+            force: true,
+          },
+        )
+
+        lastSavedDraftRef.current = item.markdown
+        commitEditSessionBaseline(item.markdown)
+        startTransition(() => {
+          setCurrentDoc(item)
+          setDraft(item.markdown)
+          setSaveState("saved")
+          setWorkspaceViewMode("preview")
+        })
+      } else {
+        commitEditSessionBaseline(baselineMarkdown)
+        startTransition(() => {
+          setCurrentDoc((previous) => previous ? { ...previous, markdown: baselineMarkdown } : previous)
+          setDraft(baselineMarkdown)
+          setSaveState("saved")
+          setWorkspaceViewMode("preview")
+        })
+      }
+
+      notifier.success(props.t("飞书页.文档.反馈.已取消编辑"))
+      return true
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : String(error))
+      setSaveState("error")
+      return false
+    }
+  }, [commitEditSessionBaseline, currentDoc, draft, hasWorkspaceContext, props.baseUrl, props.t, props.workspaceId])
+
+  const confirmSaveBeforeLeave = useCallback(async () => {
+    if (!hasPendingEditChangesRef.current) {
+      return true
+    }
+
+    const confirmed = await modal.confirm({
+      title: props.t("飞书页.文档.提示.离开前保存"),
+      content: props.t("飞书页.文档.提示.离开前保存说明"),
+      okText: props.t("飞书页.文档.按钮.保存并继续"),
+      cancelText: props.t("飞书页.文档.按钮.继续编辑"),
+      okButtonProps: { type: "primary" },
+    })
+
+    if (!confirmed) {
+      return false
+    }
+
+    return handleSaveEditSession()
+  }, [handleSaveEditSession, modal, props.t])
 
   const loadCapabilities = useCallback(async () => {
     if (!props.baseUrl || !remoteDocsReady) {
@@ -636,6 +812,7 @@ export function FeishuDocsWorkbench(props: Props) {
 
   const handleOpenDoc = useCallback(async (doc: FeishuDocSummary) => {
     const docId = doc.docId ?? doc.id
+    const remoteDocId = resolveRemoteDocId(doc) || docId
     if (!docId) {
       return
     }
@@ -645,33 +822,54 @@ export function FeishuDocsWorkbench(props: Props) {
     }
 
     try {
+      if (currentDoc?.docId && currentDoc.docId !== docId && hasPendingEditChangesRef.current) {
+        const canLeaveCurrentDoc = await confirmSaveBeforeLeave()
+        if (!canLeaveCurrentDoc) {
+          return
+        }
+      }
+
       if (currentDoc?.docId && currentDoc.docId !== docId && draft !== lastSavedDraftRef.current) {
         await persistDraftIfDirty()
       }
 
       setDocLoading(true)
-      const item = props.workspaceId
+      let item = props.workspaceId
         ? await openFeishuWorkspaceDoc(props.baseUrl, props.workspaceId, docId)
-        : await fetchFeishuDocContent(props.baseUrl, docId)
+        : await fetchFeishuDocContent(props.baseUrl, remoteDocId)
+
       setActiveDoc((previous) => ({
         ...previous,
         ...doc,
+        id: doc.id ?? docId,
         docId,
+        resolvedDocId: item.resolvedDocId ?? doc.resolvedDocId ?? remoteDocId ?? undefined,
         url: doc.url ?? (previous?.docId === docId ? previous.url : undefined),
       }))
+      commitEditSessionBaseline(item.markdown)
       setCurrentDoc(item)
       setDraft(item.markdown)
       lastSavedDraftRef.current = item.markdown
       setDocError("")
       setSaveError("")
       setSaveState("saved")
-      setViewMode("visual")
+      setWorkspaceViewMode("preview")
     } catch (error) {
       setDocError(error instanceof Error ? error.message : String(error))
     } finally {
       setDocLoading(false)
     }
-  }, [capabilities, currentDoc?.docId, draft, persistDraftIfDirty, props.baseUrl, props.t, props.workspaceId])
+  }, [
+    capabilities,
+    commitEditSessionBaseline,
+    confirmSaveBeforeLeave,
+    currentDoc?.docId,
+    draft,
+    persistDraftIfDirty,
+    props.baseUrl,
+    props.t,
+    props.workspaceId,
+  ])
 
   const handleReloadAll = useCallback(() => {
     void (async () => {
@@ -689,6 +887,7 @@ export function FeishuDocsWorkbench(props: Props) {
         void handleOpenDoc({
           id: currentDoc.docId,
           docId: currentDoc.docId,
+          resolvedDocId: currentDoc.resolvedDocId ?? currentDoc.cache?.resolvedDocId,
           title: currentDoc.title,
           updateTime: activeDoc?.updateTime,
         })
@@ -717,11 +916,16 @@ export function FeishuDocsWorkbench(props: Props) {
       setSaveState("pulling")
       if (hasWorkspaceContext) {
         const result = await pullFeishuWorkspaceDoc(props.baseUrl, props.workspaceId, currentDoc.docId)
+        commitEditSessionBaseline(result.item.markdown)
         setCurrentDoc(result.item)
         setDraft(result.item.markdown)
         lastSavedDraftRef.current = result.item.markdown
       } else {
-        const item = await fetchFeishuDocContent(props.baseUrl, currentDoc.docId)
+        const item = await fetchFeishuDocContent(
+          props.baseUrl,
+          resolveRemoteDocId(currentDoc) || resolveRemoteDocId(activeDoc) || currentDoc.docId,
+        )
+        commitEditSessionBaseline(item.markdown)
         setCurrentDoc(item)
         setDraft(item.markdown)
         lastSavedDraftRef.current = item.markdown
@@ -732,7 +936,7 @@ export function FeishuDocsWorkbench(props: Props) {
       setSaveError(error instanceof Error ? error.message : String(error))
       setSaveState("error")
     }
-  }, [currentDoc?.docId, hasWorkspaceContext, props.baseUrl, props.workspaceId])
+  }, [activeDoc, commitEditSessionBaseline, currentDoc, hasWorkspaceContext, props.baseUrl, props.workspaceId])
 
   const handlePushDoc = useCallback(async () => {
     if (!currentDoc?.docId || !hasWorkspaceContext) {
@@ -747,16 +951,25 @@ export function FeishuDocsWorkbench(props: Props) {
         title: currentDoc.title,
         force: true,
       })
+      commitEditSessionBaseline(result.item.markdown)
       setCurrentDoc(result.item)
       setDraft(result.item.markdown)
       lastSavedDraftRef.current = result.item.markdown
-      setSaveError("")
-      setSaveState("saved")
+      setSaveError(result.pushStatus === "blocked" ? (result.message ?? "文档未推送") : "")
+      setSaveState(result.pushStatus === "blocked" ? "error" : "saved")
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : String(error))
       setSaveState("error")
     }
-  }, [currentDoc?.docId, currentDoc?.title, hasWorkspaceContext, persistDraftIfDirty, props.baseUrl, props.workspaceId])
+  }, [
+    commitEditSessionBaseline,
+    currentDoc?.docId,
+    currentDoc?.title,
+    hasWorkspaceContext,
+    persistDraftIfDirty,
+    props.baseUrl,
+    props.workspaceId,
+  ])
 
   const handleTreeSubmit = useCallback(() => {
     const nextRoot = treeQuery.trim()
@@ -837,11 +1050,11 @@ export function FeishuDocsWorkbench(props: Props) {
 
   useEffect(() => {
     if (statePending) {
-      setTreeNodes([])
-      setExpandedKeys([])
       setTreeError("")
-      setTreeLoading(true)
-      setTreeStatus("loading")
+      if (treeNodesLengthRef.current === 0) {
+        setTreeLoading(true)
+        setTreeStatus("loading")
+      }
       return
     }
 
@@ -880,18 +1093,23 @@ export function FeishuDocsWorkbench(props: Props) {
       treeQuery,
       treeRootDocId,
       workspaceMode: "workspace",
+      treeNodes: snapshotTreeNodes(treeNodes),
+      expandedKeys: normalizeExpandedKeys(expandedKeys),
     })
-  }, [activeDoc?.docId, activeDoc?.id, currentDoc?.docId, props, treeQuery, treeRootDocId])
+  }, [activeDoc?.docId, activeDoc?.id, currentDoc?.docId, expandedKeys, props, treeNodes, treeQuery, treeRootDocId])
 
   useEffect(() => {
     if (!currentDoc) {
+      commitEditSessionBaseline("")
       return
     }
+
+    syncPendingEditChanges(draft !== editSessionBaselineRef.current)
 
     if (draft !== lastSavedDraftRef.current) {
       setSaveState((previous) => previous === "pushing" || previous === "pulling" ? previous : "dirty")
     }
-  }, [currentDoc, draft])
+  }, [commitEditSessionBaseline, currentDoc, draft, syncPendingEditChanges])
 
   useEffect(() => {
     draftRef.current = draft
@@ -900,6 +1118,33 @@ export function FeishuDocsWorkbench(props: Props) {
   useEffect(() => {
     saveStateRef.current = saveState
   }, [saveState])
+
+  useEffect(() => {
+    if (!hasWorkspaceContext || !hasPendingEditChanges) {
+      return undefined
+    }
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ""
+    }
+
+    window.addEventListener("beforeunload", handleBeforeUnload)
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload)
+    }
+  }, [hasPendingEditChanges, hasWorkspaceContext])
+
+  useEffect(() => {
+    const becameInactive = !props.active && wasPageActiveRef.current
+    wasPageActiveRef.current = props.active
+
+    if (!becameInactive || !hasPendingEditChangesRef.current) {
+      return
+    }
+
+    void confirmSaveBeforeLeave()
+  }, [confirmSaveBeforeLeave, props.active])
 
   useEffect(() => {
     if (!hasWorkspaceContext) {
@@ -955,9 +1200,14 @@ export function FeishuDocsWorkbench(props: Props) {
     () => Object.fromEntries(whiteboardPreviewErrors.map((item) => [item.whiteboardToken, item.message])),
     [whiteboardPreviewErrors],
   )
-  const draftDocIR = useMemo(() => currentDoc ? createDraftDocIR(currentDoc, draft) : null, [currentDoc, draft])
-  const baseDocIR = useMemo(() => currentDoc ? createDraftDocIR(currentDoc, currentDoc.markdown) : null, [currentDoc])
-  const draftMdxDiff = useMemo(() => currentDoc ? createMarkdownDiff(currentDoc.markdown, draft) : "", [currentDoc, draft])
+  const draftDocIR = useMemo(
+    () => currentDoc ? createFeishuDocPreviewIR({
+      docId: currentDoc.docId,
+      title: currentDoc.title,
+      markdown: draft,
+    }) : null,
+    [currentDoc, draft],
+  )
 
   useEffect(() => {
     activeDocIdRef.current = activeDocId
@@ -1087,6 +1337,7 @@ export function FeishuDocsWorkbench(props: Props) {
         try {
           const item = await fetchFeishuWorkspaceDocLocalDraft(props.baseUrl, props.workspaceId, docId)
           lastSavedDraftRef.current = item.markdown
+          commitEditSessionBaseline(item.markdown)
           startTransition(() => {
             setCurrentDoc(item)
             setDraft(item.markdown)
@@ -1098,7 +1349,7 @@ export function FeishuDocsWorkbench(props: Props) {
         }
       })()
     })
-  }, [props.baseUrl, props.workspaceId])
+  }, [commitEditSessionBaseline, props.baseUrl, props.workspaceId])
 
   const access = useMemo(() => {
     if (statePending) {
@@ -1187,14 +1438,28 @@ export function FeishuDocsWorkbench(props: Props) {
     saveState,
   ])
   const pushDisabled = Boolean(pushDisabledReason)
+  const sourceEditorPath = useMemo(
+    () => currentDoc?.docId ? `feishu-doc://${currentDoc.docId}.md` : "feishu-doc://draft.md",
+    [currentDoc?.docId],
+  )
   const pushConfirmDescription = useMemo(() => {
-    if (!currentDoc?.analysis.riskyBlocks.length) {
+    const details = [
+      resolvePublishRecommendationText(currentDoc?.cache?.publishModeRecommendation),
+      currentDoc?.cache?.hasRevisionConflict ? "远端基线已变化，本次推送会先阻止覆盖。" : "",
+      currentDoc?.cache?.hasBlockedChanges ? "当前改动不适合覆盖原文，更适合发布新文档。" : "",
+    ].filter(Boolean)
+
+    if (!currentDoc?.analysis.riskyBlocks.length && details.length === 0) {
       return props.t("飞书页.文档.提示.推送说明.普通")
     }
-    return props.t("飞书页.文档.提示.推送说明.原生块", {
-      原因: currentDoc.analysis.riskyBlocks.join("；"),
-    })
-  }, [currentDoc?.analysis.riskyBlocks, props.t])
+    if (currentDoc?.analysis.riskyBlocks.length) {
+      details.push(props.t("飞书页.文档.提示.推送说明.原生块", {
+        原因: currentDoc.analysis.riskyBlocks.join("；"),
+      }))
+    }
+
+    return details.join("；")
+  }, [currentDoc?.analysis.riskyBlocks, currentDoc?.cache?.hasBlockedChanges, currentDoc?.cache?.hasRevisionConflict, currentDoc?.cache?.publishModeRecommendation, props.t])
   const selectedTreeKey = useMemo(() => {
     const currentDocId = currentDoc?.docId ?? activeDoc?.docId
     if (currentDocId) {
@@ -1219,6 +1484,7 @@ export function FeishuDocsWorkbench(props: Props) {
     }
     return ""
   }, [props.t, treeStatus])
+  const workspaceDiagnostic = useMemo(() => buildWorkspaceDiagnostic(currentDoc), [currentDoc])
   const handleTreeExpand = useCallback<NonNullable<TreeProps["onExpand"]>>((keys, info) => {
     const nextKeys = keys.map((item) => String(item))
     if (!info.expanded) {
@@ -1240,11 +1506,26 @@ export function FeishuDocsWorkbench(props: Props) {
     if (saveState === "pushing") return { color: "blue", text: props.t("飞书页.文档.保存状态.推送中") }
     if (saveState === "caching") return { color: "processing", text: props.t("飞书页.文档.保存状态.写入缓存") }
     if (saveState === "error") return { color: "red", text: props.t("飞书页.文档.保存状态.操作失败") }
-    if (draft !== lastSavedDraftRef.current) return { color: "gold", text: props.t("飞书页.文档.保存状态.本地有改动") }
+    if (hasPendingEditChanges || draft !== lastSavedDraftRef.current) {
+      return { color: "gold", text: props.t("飞书页.文档.保存状态.本地有改动") }
+    }
+    if (currentDoc?.cache?.hasLocalChanges) {
+      return { color: "gold", text: props.t("飞书页.文档.保存状态.本地有改动") }
+    }
     if (currentDoc?.cache?.hasBaseline) return { color: "green", text: props.t("飞书页.文档.保存状态.已同步本地") }
     if (currentDoc?.cache) return { color: "default", text: props.t("飞书页.文档.保存状态.仅本地缓存") }
     return { color: "default", text: props.t("飞书页.文档.保存状态.未缓存") }
-  }, [currentDoc?.cache, draft, props.t, saveState])
+  }, [currentDoc?.cache, draft, hasPendingEditChanges, props.t, saveState])
+
+  const handleBackToSettings = useCallback(() => {
+    void (async () => {
+      const canLeaveWorkspace = await confirmSaveBeforeLeave()
+      if (!canLeaveWorkspace) {
+        return
+      }
+      props.onBackToSettings?.()
+    })()
+  }, [confirmSaveBeforeLeave, props])
 
   useEffect(() => {
     const loadError = props.loadError.trim()
@@ -1292,13 +1573,15 @@ export function FeishuDocsWorkbench(props: Props) {
   }, [access.message, access.status, access.title, props.loading])
 
   return (
-    <div className="feishu-docs-shell">
+    <>
+      {modalContextHolder}
+      <div className="feishu-docs-shell">
       <div className="feishu-docs-page-layout">
         <aside className="feishu-docs-page-sidebar">
           <section className="feishu-docs-panel feishu-docs-page-sidebar-panel">
             <div className="feishu-docs-page-sidebar-header">
               {props.onBackToSettings ? (
-                <button type="button" className="feishu-docs-back-link" onClick={props.onBackToSettings}>
+                <button type="button" className="feishu-docs-back-link" onClick={handleBackToSettings}>
                   <ArrowLeftOutlined />
                   <span>{props.t("飞书页.文档.导航.返回设置页")}</span>
                 </button>
@@ -1377,28 +1660,43 @@ export function FeishuDocsWorkbench(props: Props) {
                                   }
                                   event.preventDefault()
                                   event.stopPropagation()
-                                  conversationLauncher.openConversation({
-                                    workspaceId: props.workspaceId,
-                                    draftText: buildDocChatDraftText({
-                                      title: target.doc?.title ?? target.title,
-                                      docId,
-                                      rootDocId: treeRootDocId || undefined,
-                                      url: target.doc?.url,
-                                      updateTime: target.doc?.updateTime,
-                                      cacheRelativePath:
-                                        currentDoc?.docId === docId
-                                          ? currentDoc.cache?.cacheRelativePath
+                                  void (async () => {
+                                    try {
+                                      const chatDoc = currentDoc?.docId === docId
+                                        ? currentDoc
+                                        : await openFeishuWorkspaceDoc(props.baseUrl, props.workspaceId, docId)
+
+                                      conversationLauncher.openConversation({
+                                        workspaceId: props.workspaceId,
+                                        createSession: true,
+                                        draftText: buildDocChatDraftText({
+                                          title: target.doc?.title ?? target.title,
+                                          docId,
+                                          resolvedDocId: chatDoc.resolvedDocId ?? target.doc?.resolvedDocId,
+                                          rootDocId: treeRootDocId || undefined,
+                                          url: target.doc?.url,
+                                          updateTime: target.doc?.updateTime,
+                                          originalRelativePath: chatDoc.cache?.originalRelativePath,
+                                          draftRelativePath: chatDoc.cache?.draftRelativePath,
+                                          t: props.t,
+                                        }),
+                                        attachedTabs: chatDoc.cache?.originalRelativePath
+                                          ? [{
+                                              kind: "preview",
+                                              title: target.doc?.title ?? target.title,
+                                              workspaceId: props.workspaceId || undefined,
+                                              source: {
+                                                kind: "feishu-doc",
+                                                docId,
+                                                path: chatDoc.cache.originalRelativePath,
+                                              },
+                                            }]
                                           : undefined,
-                                      t: props.t,
-                                    }),
-                                    attachedTabs: [{
-                                      kind: "feishu-docs-workspace",
-                                      title: target.doc?.title ?? target.title,
-                                      workspaceId: props.workspaceId || undefined,
-                                      docId,
-                                      rootDocId: treeRootDocId || undefined,
-                                    }],
-                                  })
+                                      })
+                                    } catch (error) {
+                                      notifier.error(props.t("飞书页.反馈.加载失败", { 错误: error instanceof Error ? error.message : String(error) }))
+                                    }
+                                  })()
                                 }}
                               />
                             ) : null}
@@ -1467,24 +1765,48 @@ export function FeishuDocsWorkbench(props: Props) {
                   </div>
 
                   <div className="feishu-docs-workspace-toolbar">
-                    <Radio.Group
-                      optionType="button"
-                      buttonStyle="solid"
-                      className="feishu-docs-workspace-view-switch"
-                      value={viewMode}
-                      onChange={(event) => setViewMode(event.target.value as FeishuDocEditorMode)}
-                    >
-                      <Radio.Button value="visual">
-                        可视化编辑
-                      </Radio.Button>
-                      <Radio.Button value="diff">
-                        Diff
-                      </Radio.Button>
-                      <Radio.Button value="source">
-                        纯文本编辑
-                      </Radio.Button>
-                    </Radio.Group>
+                    <div className="feishu-docs-workspace-mode-stack">
+                      <Radio.Group
+                        optionType="button"
+                        buttonStyle="solid"
+                        className="feishu-docs-workspace-view-switch"
+                        value={workspaceViewMode}
+                        onChange={(event) => setWorkspaceViewMode(event.target.value as FeishuDocWorkspaceViewMode)}
+                      >
+                        <Radio.Button value="preview">
+                          {props.t("飞书页.文档.模式.预览")}
+                        </Radio.Button>
+                        <Radio.Button value="edit">
+                          {props.t("飞书页.文档.模式.编辑")}
+                        </Radio.Button>
+                      </Radio.Group>
+                    </div>
                     <div className="feishu-docs-workspace-actions">
+                      {hasWorkspaceContext && currentDoc?.docId && (workspaceViewMode === "edit" || hasPendingEditChanges) ? (
+                        <>
+                          <Button
+                            type="primary"
+                            className="feishu-docs-toolbar-action"
+                            icon={<SaveOutlined />}
+                            disabled={!hasPendingEditChanges || saveState === "pulling" || saveState === "pushing"}
+                            onClick={() => {
+                              void handleSaveEditSession()
+                            }}
+                          >
+                            {props.t("飞书页.文档.按钮.保存草稿")}
+                          </Button>
+                          <Button
+                            className="feishu-docs-toolbar-action"
+                            icon={<CloseOutlined />}
+                            disabled={!hasPendingEditChanges || saveState === "pulling" || saveState === "pushing"}
+                            onClick={() => {
+                              void handleCancelEditSession()
+                            }}
+                          >
+                            {props.t("飞书页.文档.按钮.取消编辑")}
+                          </Button>
+                        </>
+                      ) : null}
                       <Button type="primary" className="feishu-docs-toolbar-action" icon={<ReloadOutlined />} onClick={handleReloadAll}>
                         {props.t("飞书页.文档.按钮.刷新")}
                       </Button>
@@ -1493,7 +1815,7 @@ export function FeishuDocsWorkbench(props: Props) {
                         description={props.t("飞书页.文档.提示.拉取覆盖说明")}
                         okText={props.t("飞书页.文档.按钮.确认覆盖")}
                         cancelText={props.t("危险操作.弹窗.取消")}
-                        disabled={draft === lastSavedDraftRef.current}
+                        disabled={!hasPendingEditChanges}
                         onConfirm={() => {
                           void handlePullDoc()
                         }}
@@ -1559,12 +1881,21 @@ export function FeishuDocsWorkbench(props: Props) {
                           className="feishu-docs-workspace-alert"
                         />
                       ) : null}
+                      {hasWorkspaceContext && workspaceDiagnostic ? (
+                        <Alert
+                          showIcon
+                          type={workspaceDiagnostic.type}
+                          message={workspaceDiagnostic.message}
+                          description={workspaceDiagnostic.description}
+                          className="feishu-docs-workspace-alert"
+                        />
+                      ) : null}
                       {saveError ? (
                         <Alert showIcon type="error" message={saveError} className="feishu-docs-workspace-alert" />
                       ) : null}
 
                       <div className="feishu-docs-editor-shell">
-                        {viewMode === "visual" && draftDocIR ? (
+                        {workspaceViewMode === "preview" && draftDocIR ? (
                           <div className="feishu-docs-preview-shell">
                             <FeishuDocVisualEditor
                               ir={draftDocIR}
@@ -1578,16 +1909,18 @@ export function FeishuDocsWorkbench(props: Props) {
                               onChange={setDraft}
                             />
                           </div>
-                        ) : viewMode === "diff" && draftDocIR ? (
-                          <FeishuDocDiffView base={baseDocIR} current={draftDocIR} mdxDiff={draftMdxDiff} />
                         ) : (
-                          <div className="feishu-docs-editor-shell-inner">
-                            <FeishuDocSourceEditor
-                              value={draft}
-                              error=""
-                              readOnly={!hasWorkspaceContext}
-                              onChange={setDraft}
-                            />
+                          <div className="feishu-docs-source-edit-shell">
+                            <div className="feishu-docs-editor-shell-inner">
+                              <FeishuDocSourceEditor
+                                path={sourceEditorPath}
+                                language="markdown"
+                                value={draft}
+                                error=""
+                                readOnly={!hasWorkspaceContext}
+                                onChange={setDraft}
+                              />
+                            </div>
                           </div>
                         )}
                       </div>
@@ -1599,6 +1932,7 @@ export function FeishuDocsWorkbench(props: Props) {
           </div>
         </main>
       </div>
-    </div>
+      </div>
+    </>
   )
 }

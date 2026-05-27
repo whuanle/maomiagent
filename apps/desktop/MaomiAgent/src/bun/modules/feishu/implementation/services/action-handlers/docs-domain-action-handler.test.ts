@@ -10,6 +10,7 @@ function createDocContentView(input: {
   docId: string;
   title: string;
   markdown: string;
+  cache?: FeishuDocContentView["cache"];
 }): FeishuDocContentView {
   return {
     docId: input.docId,
@@ -24,6 +25,7 @@ function createDocContentView(input: {
       syncMode: null,
       riskyBlockMode: "safe",
     },
+    ...(input.cache ? { cache: input.cache } : {}),
   };
 }
 
@@ -51,7 +53,14 @@ function createDocTreeView(): FeishuDocTreeView {
   };
 }
 
-function createHandler() {
+function createHandler(options: {
+  pushWorkspaceDoc?: () => Promise<{
+    item: FeishuDocContentView;
+    pushStatus: "succeeded" | "accepted" | "noop" | "blocked" | "published_new";
+    message?: string;
+    warnings: string[];
+  }>;
+} = {}) {
   const docs = {
     "doc-roadmap": createDocContentView({
       docId: "doc-roadmap",
@@ -94,9 +103,9 @@ function createHandler() {
     pullWorkspaceDoc: async () => {
       throw new Error("not used in docs search test");
     },
-    pushWorkspaceDoc: async () => {
+    pushWorkspaceDoc: options.pushWorkspaceDoc ?? (async () => {
       throw new Error("not used in docs search test");
-    },
+    }),
   });
 }
 
@@ -156,4 +165,77 @@ describe("DocsDomainActionHandler docs.search", () => {
       }),
     );
   });
+
+  test("summarizes blocked push results with recommendation diagnostics", async () => {
+    const handler = createHandler({
+      pushWorkspaceDoc: async () => ({
+        item: createDocContentView({
+          docId: "doc-roadmap",
+          title: "产品路线图",
+          markdown: "# 产品路线图",
+          cache: {
+            workspaceId: "ws_1",
+            publishModeRecommendation: "pull_required",
+            hasRevisionConflict: true,
+            hasBlockedChanges: false,
+            unknownBlockCount: 1,
+          },
+        }),
+        pushStatus: "blocked",
+        message: "请先重新拉取远端文档基线。",
+        warnings: [],
+      }),
+    })
+
+    const result = await handler.execute({
+      input: {
+        actionId: "docs.push",
+        workspaceId: "ws_1",
+        docId: "doc-roadmap",
+        confirm: true,
+      },
+      domain: "docs",
+      availableRuntimeCount: 1,
+    })
+
+    expect(result.summary.headline).toBe("文档未推送")
+    expect(result.summary.details).toContain("推荐发布方式：先重新拉取远端基线")
+    expect(result.summary.details).toContain("远端基线已变化，请先重新拉取。")
+    expect(result.summary.nextSuggestedActionIds).toContain("docs.pull")
+    expect(result.result).toEqual(expect.objectContaining({ ok: false, stage: "blocked" }))
+  })
+
+  test("summarizes publish-new push results as a new document publish", async () => {
+    const handler = createHandler({
+      pushWorkspaceDoc: async () => ({
+        item: createDocContentView({
+          docId: "doc-new-1",
+          title: "新文档",
+          markdown: "# 新文档",
+          cache: {
+            workspaceId: "ws_1",
+            publishModeRecommendation: "update_existing",
+          },
+        }),
+        pushStatus: "published_new",
+        message: "已发布为新文档：doc-new-1",
+        warnings: ["unsupported or unknown block removed from draft"],
+      }),
+    })
+
+    const result = await handler.execute({
+      input: {
+        actionId: "docs.push",
+        workspaceId: "ws_1",
+        docId: "doc-roadmap",
+        confirm: true,
+      },
+      domain: "docs",
+      availableRuntimeCount: 1,
+    })
+
+    expect(result.summary.headline).toBe("已发布为新文档")
+    expect(result.summary.details).toContain("已发布为新文档：doc-new-1")
+    expect(result.summary.details).toContain("warnings: unsupported or unknown block removed from draft")
+  })
 });

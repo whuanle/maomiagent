@@ -17,8 +17,9 @@ function ir(): FeishuDocIR {
       source: { documentIdType: "document_id" },
     },
     blocks: {
-      docx_1: { id: "docx_1", type: "page", parentId: null, children: ["h1", "img"], editable: false, text: [], resource: null, attrs: {}, raw: {} },
+      docx_1: { id: "docx_1", type: "page", parentId: null, children: ["h1", "p1", "img"], editable: false, text: [], resource: null, attrs: {}, raw: {} },
       h1: { id: "h1", type: "heading1", parentId: "docx_1", children: [], editable: true, text: [{ kind: "text", text: "Title", attrs: {}, raw: {} }], resource: null, attrs: {}, raw: {} },
+      p1: { id: "p1", type: "text", parentId: "docx_1", children: [], editable: true, text: [{ kind: "text", text: "Paragraph body", attrs: {}, raw: {} }], resource: null, attrs: {}, raw: {} },
       img: { id: "img", type: "image", parentId: "docx_1", children: [], editable: true, text: [], resource: { token: "img_token", kind: "image" }, attrs: { width: 640, height: 360 }, raw: {} },
     },
     assets: {
@@ -31,7 +32,15 @@ function ir(): FeishuDocIR {
 describe("feishu-doc-mdx-codec", () => {
   test("serializes IR to stable MDX", () => {
     expect(feishuDocIRToMdx(ir())).toContain("# Title");
+    expect(feishuDocIRToMdx(ir())).toContain("Paragraph body");
     expect(feishuDocIRToMdx(ir())).toContain('<FeishuImage token="img_token" width="640" height="360" />');
+  });
+
+  test("emits editable block anchors for text blocks", () => {
+    const markdown = feishuDocIRToMdx(ir());
+
+    expect(markdown).toContain("<!--feishu:block:h1-->\n# Title\n<!--/feishu:block:h1-->");
+    expect(markdown).toContain("<!--feishu:block:p1-->\nParagraph body\n<!--/feishu:block:p1-->");
   });
 
   test("serializes cached image assets to local file preview urls", () => {
@@ -94,6 +103,11 @@ describe("feishu-doc-mdx-codec", () => {
 
   test("parses simple heading text change as IR patch", () => {
     const patch = feishuDocMdxToIRPatch(ir(), "# New Title\n");
+    expect(patch.blockUpdates).toEqual([{ blockId: "h1", text: "New Title" }]);
+  });
+
+  test("parses anchored heading text changes as IR patch", () => {
+    const patch = feishuDocMdxToIRPatch(ir(), "<!--feishu:block:h1-->\n# New Title\n<!--/feishu:block:h1-->\n");
     expect(patch.blockUpdates).toEqual([{ blockId: "h1", text: "New Title" }]);
   });
 });

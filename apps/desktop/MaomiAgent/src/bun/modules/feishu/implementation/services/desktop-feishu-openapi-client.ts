@@ -1,7 +1,13 @@
 const FEISHU_OAUTH_TOKEN_URL = "https://open.feishu.cn/open-apis/authen/v2/oauth/token";
+const FEISHU_TENANT_ACCESS_TOKEN_URL =
+  "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal";
 
 const FEISHU_EXPIRED_ACCESS_TOKEN_CODES = new Set<number>([
   20006,
+]);
+
+const FEISHU_EXPIRED_REFRESH_TOKEN_CODES = new Set<number>([
+  20064,
 ]);
 
 const FEISHU_EXPIRED_ACCESS_TOKEN_MESSAGE_PATTERNS = [
@@ -18,11 +24,27 @@ const FEISHU_EXPIRED_ACCESS_TOKEN_MESSAGE_PATTERNS = [
   "auth failed",
 ];
 
+const FEISHU_EXPIRED_REFRESH_TOKEN_MESSAGE_PATTERNS = [
+  "refresh token has been revoked",
+  "refresh_token has been revoked",
+  "refresh token revoked",
+  "refresh_token revoked",
+  "refresh token expired",
+  "refresh_token expired",
+  "refresh token can only be used once",
+  "a refresh token can only be used once",
+];
+
 export type DesktopFeishuOpenApiTokens = {
   accessToken: string;
   refreshToken: string;
   accessTokenExpiresAt: string;
   refreshTokenExpiresAt: string;
+};
+
+export type DesktopFeishuTenantAccessToken = {
+  tenantAccessToken: string;
+  expiresAt: string;
 };
 
 type DesktopFeishuOpenApiClientOptions = {
@@ -41,6 +63,11 @@ type FeishuOAuthTokenData = {
   refresh_token?: string;
   expires_in?: number;
   refresh_expires_in?: number;
+};
+
+type FeishuTenantAccessTokenData = {
+  tenant_access_token?: string;
+  expire?: number;
 };
 
 type FeishuErrorEnvelope = {
@@ -92,6 +119,19 @@ export function isDesktopFeishuAccessTokenExpiredError(error: unknown): boolean 
   }
 
   return FEISHU_EXPIRED_ACCESS_TOKEN_MESSAGE_PATTERNS.some((pattern) => normalizedMessage.includes(pattern));
+}
+
+export function isDesktopFeishuRefreshTokenExpiredError(error: unknown): boolean {
+  if (error instanceof DesktopFeishuOpenApiError && error.code != null && FEISHU_EXPIRED_REFRESH_TOKEN_CODES.has(error.code)) {
+    return true;
+  }
+
+  const normalizedMessage = normalizeFeishuErrorMessage(error).toLowerCase();
+  if (normalizedMessage.includes("20064")) {
+    return true;
+  }
+
+  return FEISHU_EXPIRED_REFRESH_TOKEN_MESSAGE_PATTERNS.some((pattern) => normalizedMessage.includes(pattern));
 }
 
 function parseFeishuErrorEnvelope(text: string): FeishuErrorEnvelope | null {
@@ -148,12 +188,51 @@ export class DesktopFeishuOpenApiClient {
     return this.toTokens(data, { requireRefreshToken: true });
   }
 
+  async getTenantAccessToken(input: {
+    appId: string;
+    appSecret: string;
+  }): Promise<DesktopFeishuTenantAccessToken> {
+    const envelope = await this.readJsonEnvelope<FeishuTenantAccessTokenData>(await this.fetchImpl(
+      FEISHU_TENANT_ACCESS_TOKEN_URL,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+        },
+        body: JSON.stringify({
+          app_id: input.appId,
+          app_secret: input.appSecret,
+        }),
+      },
+    ));
+    const data = envelope.data ?? (envelope as FeishuTenantAccessTokenData);
+    if (!data.tenant_access_token || data.expire == null) {
+      throw new Error("Feishu API response missing tenant access token data");
+    }
+
+    return {
+      tenantAccessToken: data.tenant_access_token,
+      expiresAt: new Date(this.now().getTime() + data.expire * 1000).toISOString(),
+    };
+  }
+
   async getJson<T>(url: string, accessToken: string): Promise<T> {
     return this.readEnvelope<T>(await this.fetchImpl(url, {
       method: "GET",
       headers: {
         authorization: `Bearer ${accessToken}`,
       },
+    }));
+  }
+
+  async postAuthorizedJson<T>(url: string, accessToken: string, body: Record<string, unknown>): Promise<T> {
+    return this.readEnvelope<T>(await this.fetchImpl(url, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        "content-type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify(body),
     }));
   }
 

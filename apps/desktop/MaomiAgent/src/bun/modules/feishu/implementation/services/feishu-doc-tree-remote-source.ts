@@ -4,7 +4,8 @@ import type {
   FeishuDocTreeObjectType,
 } from "../../../../../shared/desktop-feishu";
 import type { FeishuDocIR } from "../../../../../shared/desktop-feishu-doc-ir";
-import { feishuDocIRToMdx } from "./feishu-doc-mdx-codec";
+import { feishuDocIRToSourceMarkdown } from "./feishu-doc-source-markdown-codec";
+import type { FeishuDocSourceSnapshot } from "./feishu-doc-source-workspace-cache";
 import {
   normalizeFeishuDocBlocksToIR,
   type FeishuRawDocBlock,
@@ -64,6 +65,7 @@ type FeishuDocumentBlocksResponse = {
 type ResolvedFeishuDocxDocument = {
   content: FeishuDocContentView;
   ir: FeishuDocIR;
+  source: FeishuDocSourceSnapshot;
 };
 
 const FEISHU_OPEN_API_BASE_URL = "https://open.feishu.cn/open-apis";
@@ -165,28 +167,24 @@ function ensureDocumentRootBlock(blocks: FeishuRawDocBlock[], documentId: string
 export class FeishuDocTreeRemoteSource {
   constructor(private readonly reader: FeishuOpenApiReader) {}
 
-  async readDocumentContent(accessToken: string, docId: string): Promise<FeishuDocContentView> {
+  async readDocumentBundle(accessToken: string, docId: string): Promise<ResolvedFeishuDocxDocument> {
     try {
-      return (await this.readDocxDocument(accessToken, docId, "document_id")).content;
+      return await this.readDocxDocument(accessToken, docId, "document_id");
     } catch (error) {
       if (!shouldFallbackToDocument(error)) {
         throw error;
       }
 
-      return (await this.readDocxDocument(accessToken, docId, "wiki_node_token")).content;
+      return await this.readDocxDocument(accessToken, docId, "wiki_node_token");
     }
   }
 
-  async readDocumentIR(accessToken: string, docId: string): Promise<FeishuDocIR> {
-    try {
-      return (await this.readDocxDocument(accessToken, docId, "document_id")).ir;
-    } catch (error) {
-      if (!shouldFallbackToDocument(error)) {
-        throw error;
-      }
+  async readDocumentContent(accessToken: string, docId: string): Promise<FeishuDocContentView> {
+    return (await this.readDocumentBundle(accessToken, docId)).content;
+  }
 
-      return (await this.readDocxDocument(accessToken, docId, "wiki_node_token")).ir;
-    }
+  async readDocumentIR(accessToken: string, docId: string): Promise<FeishuDocIR> {
+    return (await this.readDocumentBundle(accessToken, docId)).ir;
   }
 
   private async readDocxDocument(
@@ -215,7 +213,8 @@ export class FeishuDocTreeRemoteSource {
     const resolvedDocId = valueOrFallback(document.document_id, docId);
     const title = valueOrFallback(document.title, resolvedDocId);
     const pulledAt = new Date().toISOString();
-    const blocks = ensureDocumentRootBlock(blocksResponse.items ?? [], resolvedDocId);
+    const rawBlocks = blocksResponse.items ?? [];
+    const blocks = ensureDocumentRootBlock(rawBlocks, resolvedDocId);
     const ir = normalizeFeishuDocBlocksToIR({
       documentId: resolvedDocId,
       title,
@@ -225,13 +224,22 @@ export class FeishuDocTreeRemoteSource {
       nodeToken: documentIdType === "wiki_node_token" ? docId : undefined,
       blocks,
     });
-    const markdown = feishuDocIRToMdx(ir).trimEnd();
+    const markdown = feishuDocIRToSourceMarkdown(ir).trimEnd();
     const riskyBlocks = Object.values(ir.blocks)
       .filter((block) => block.type === "undefined")
       .map((block) => block.id);
 
     return {
       ir,
+      source: {
+        requestedDocId: docId,
+        resolvedDocId,
+        documentIdType,
+        fetchedAt: pulledAt,
+        sourceKind: "docx_remote_raw",
+        document,
+        blocks: rawBlocks,
+      },
       content: {
         docId: resolvedDocId,
         title,

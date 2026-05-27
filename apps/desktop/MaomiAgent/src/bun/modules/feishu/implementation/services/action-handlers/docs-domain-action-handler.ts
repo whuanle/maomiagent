@@ -38,6 +38,26 @@ type SearchableDocMatch = {
   excerpt: string;
 };
 
+function resolvePushHeadline(pushStatus: string): string {
+  return pushStatus === "blocked"
+    ? "文档未推送"
+    : pushStatus === "published_new"
+      ? "已发布为新文档"
+      : pushStatus === "noop"
+        ? "文档无需推送"
+        : "文档已推送";
+}
+
+function resolvePushRecommendationDetail(recommendation: unknown): string | null {
+  return recommendation === "publish_new"
+    ? "推荐发布方式：发布新文档"
+    : recommendation === "pull_required"
+      ? "推荐发布方式：先重新拉取远端基线"
+      : recommendation === "update_existing"
+        ? "推荐发布方式：覆盖原文"
+        : null;
+}
+
 function normalizeDocNodes(tree: unknown): SearchableDocNode[] {
   if (!tree || typeof tree !== "object") {
     return [];
@@ -477,6 +497,26 @@ export class DocsDomainActionHandler implements DesktopFeishuDomainActionHandler
         markdown: context.input.markdown,
         force: context.input.confirm,
       });
+      const details = [`docId: ${context.input.docId}`];
+      const recommendation = resolvePushRecommendationDetail(pushResult.item.cache?.publishModeRecommendation);
+      if (recommendation) {
+        details.push(recommendation);
+      }
+      if (pushResult.item.cache?.hasRevisionConflict) {
+        details.push("远端基线已变化，请先重新拉取。");
+      }
+      if (pushResult.item.cache?.hasBlockedChanges) {
+        details.push("当前改动不适合直接覆盖原文。");
+      }
+      if (pushResult.item.cache?.unknownBlockCount) {
+        details.push(`未知块保留：${pushResult.item.cache.unknownBlockCount}`);
+      }
+      if (pushResult.message?.trim()) {
+        details.push(pushResult.message.trim());
+      }
+      if (pushResult.warnings.length > 0) {
+        details.push(`warnings: ${pushResult.warnings.join("；")}`);
+      }
       return {
         workspaceId: context.input.workspaceId,
         actionId,
@@ -485,13 +525,15 @@ export class DocsDomainActionHandler implements DesktopFeishuDomainActionHandler
         executed: true,
         confirmationRequired: false,
         summary: {
-          headline: "文档已推送",
-          details: [`docId: ${context.input.docId}`],
-          nextSuggestedActionIds: [],
+          headline: resolvePushHeadline(pushResult.pushStatus),
+          details,
+          nextSuggestedActionIds: pushResult.pushStatus === "blocked" && pushResult.item.cache?.publishModeRecommendation === "pull_required"
+            ? ["docs.pull"]
+            : [],
         },
         result: {
-          ok: true,
-          stage: "completed",
+          ok: pushResult.pushStatus !== "blocked",
+          stage: pushResult.pushStatus === "blocked" ? "blocked" : "completed",
           domain: context.domain,
           actionId,
           pushResult,

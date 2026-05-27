@@ -166,6 +166,9 @@ export type FeishuSmartAssistantCredentialKind =
   (typeof FEISHU_SMART_ASSISTANT_CREDENTIAL_KIND_VALUES)[number]
 export type FeishuSmartAssistantActionRiskLevel =
   (typeof FEISHU_SMART_ASSISTANT_ACTION_RISK_LEVEL_VALUES)[number]
+export type FeishuSmartAssistantExecutionProfile =
+  | "smart_assistant_personal"
+  | "feishu_bot_tenant"
 export type FeishuConnectionProfileKind =
   (typeof FEISHU_CONNECTION_PROFILE_KIND_VALUES)[number]
 export type FeishuDocsAccessKind = (typeof FEISHU_DOCS_ACCESS_KIND_VALUES)[number]
@@ -200,6 +203,37 @@ export type FeishuBotCapabilityDescriptorView = {
 export type FeishuBotCapabilityCatalogView = {
   transportMode: "websocket"
   descriptors: FeishuBotCapabilityDescriptorView[]
+}
+
+export type FeishuBotTenantCapabilityDomainStatus = "ready" | "planned"
+
+export type FeishuBotTenantCapabilityDomainView = {
+  key: Extract<FeishuSmartAssistantDomainKey, "calendar" | "tasks" | "docs" | "meetings">
+  title: string
+  status: FeishuBotTenantCapabilityDomainStatus
+  credentialKind: "tenant_access_token"
+  requiredScopes: string[]
+  notes?: string[]
+}
+
+export type FeishuBotTenantCapabilityActionView = {
+  actionId: string
+  domain: FeishuSmartAssistantDomainKey
+  title: string
+  status: "ready" | "blocked"
+  requiresConfirmation: boolean
+}
+
+export type FeishuBotTenantCapabilityCatalogView = {
+  profile: "feishu_bot_tenant"
+  credentialKind: "tenant_access_token"
+  allowUserAccessToken: false
+  identitySource: "bot_app"
+  allowedUserIdTypes: Array<Extract<FeishuUserIdType, "open_id" | "union_id">>
+  tenantScopes: string[]
+  domains: FeishuBotTenantCapabilityDomainView[]
+  actions: FeishuBotTenantCapabilityActionView[]
+  blockedActionIds: string[]
 }
 
 export type FeishuResolvedTool = {
@@ -390,6 +424,7 @@ export type FeishuSmartAssistantActionPlanView = {
 
 export type FeishuSmartAssistantExecuteActionInput = {
   actionId: string
+  executionProfile?: FeishuSmartAssistantExecutionProfile
   workspaceId?: string
   confirm?: boolean
   query?: string
@@ -415,6 +450,7 @@ export type FeishuSmartAssistantExecuteActionInput = {
   offset?: number
   title?: string
   markdown?: string
+  createMeeting?: boolean
   root?: FeishuDocTreeRoot
   pageToken?: string
   pageSize?: number
@@ -699,6 +735,7 @@ export type FeishuBotStateView = {
   hasEncryptKey: boolean
   transportMode: "websocket"
   catalog: FeishuBotCapabilityCatalogView
+  tenantCapabilities?: FeishuBotTenantCapabilityCatalogView
   connectionStatus: FeishuBotConnectionStatus
   connectionDetail?: string
   connectionUpdatedAt?: string
@@ -877,6 +914,7 @@ export type FeishuDocSummary = {
   token?: string
   kind?: FeishuDocTreeNodeKind
   docId?: string
+  resolvedDocId?: string
   title: string
   url?: string
   ownerName?: string
@@ -1006,10 +1044,29 @@ export type FeishuDocContentAnalysis = {
 
 export type FeishuDocCacheStateView = {
   workspaceId: string
-  cacheRelativePath: string
-  cacheAbsolutePath: string
+  requestedDocId?: string
+  resolvedDocId?: string
+  documentIdType?: "document_id" | "wiki_node_token"
+  hasRawSourceBaseline?: boolean
+  hasStructuredBaseline?: boolean
+  publishModeRecommendation?: "update_existing" | "publish_new" | "pull_required"
+  hasBlockedChanges?: boolean
+  hasRevisionConflict?: boolean
+  unknownBlockCount?: number
+  cacheRelativePath?: string
+  cacheAbsolutePath?: string
   baseRelativePath?: string
   baseAbsolutePath?: string
+  originalRelativePath?: string
+  originalAbsolutePath?: string
+  originalBaseRelativePath?: string
+  originalBaseAbsolutePath?: string
+  draftRelativePath?: string
+  draftAbsolutePath?: string
+  sourceRelativePath?: string
+  sourceAbsolutePath?: string
+  sourceBaseRelativePath?: string
+  sourceBaseAbsolutePath?: string
   hasBaseline: boolean
   hasLocalChanges: boolean
   localChecksum: string
@@ -1021,6 +1078,7 @@ export type FeishuDocCacheStateView = {
 
 export type FeishuDocContentView = {
   docId: string
+  resolvedDocId?: string
   title: string
   markdown: string
   length: number
@@ -1054,7 +1112,7 @@ export type FeishuDocWorkspacePullResult = {
 
 export type FeishuDocWorkspacePushResult = {
   item: FeishuDocContentView
-  pushStatus: "succeeded" | "accepted" | "noop"
+  pushStatus: "succeeded" | "accepted" | "noop" | "blocked" | "published_new"
   message?: string
   taskId?: string
   warnings: string[]
