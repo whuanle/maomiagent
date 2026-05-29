@@ -172,7 +172,7 @@ async function prepareBundleAt(input: {
   mkdirSync(layout.bundleBunDir, { recursive: true });
 
   copyPlatformRuntimeFiles(layout, input.targetPlatform);
-  await buildBundleEntrypoint(layout, input.targetPlatform);
+  await buildBundleEntrypoint(layout);
   copyBundledRenderer(layout.bundleAppDir);
 
   if (input.targetPlatform.os === "linux") {
@@ -265,16 +265,10 @@ function copyPlatformRuntimeFiles(
 
 async function buildBundleEntrypoint(
   layout: BundleLayout,
-  targetPlatform: DesktopTargetPlatform,
 ): Promise<void> {
-  const bunBinaryPath = join(
-    layout.bundleBinDir,
-    resolveExecutableName("bun", targetPlatform.os),
-  );
-
   await runCommand(
     [
-      bunBinaryPath,
+      "bun",
       "build",
       "./src/bun/index.ts",
       "--target",
