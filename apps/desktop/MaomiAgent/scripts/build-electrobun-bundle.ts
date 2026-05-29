@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -35,6 +35,7 @@ const WINDOWS_APP_NAME = `${APP_NAME}-dev`;
 const BUNDLED_RENDERER_DIST = join(projectRoot, "dist");
 const GENERATED_FOLDER = join(projectRoot, ".generated");
 const GENERATED_UPDATE_CONFIG_PATH = join(GENERATED_FOLDER, "update-config.json");
+const ELECTROBUN_STABLE_ENV = "stable";
 
 await main().catch((error) => {
   console.error(error);
@@ -43,8 +44,9 @@ await main().catch((error) => {
 
 async function main(): Promise<void> {
   if (buildMode === "release") {
-    writeGeneratedUpdateConfig(resolveReleaseChannel());
-    await runCommand(["bun", "x", "electrobun", "build", "--env=stable"], undefined, projectRoot);
+    const releaseChannel = resolveReleaseChannel();
+    writeGeneratedUpdateConfig(releaseChannel);
+    await prepareReleaseArtifacts(releaseChannel);
     console.log(`Prepared desktop release artifacts at ${join(projectRoot, artifactFolder)}`);
     return;
   }
@@ -59,6 +61,27 @@ async function main(): Promise<void> {
   console.log(`Prepared Windows desktop bundle at ${bundleRoot}`);
 }
 
+async function prepareReleaseArtifacts(channel: string): Promise<void> {
+  if (process.platform !== "linux") {
+    await runCommand(["bun", "x", "electrobun", "build", `--env=${ELECTROBUN_STABLE_ENV}`], undefined, projectRoot);
+    return;
+  }
+
+  try {
+    await runCommand(["bun", "x", "electrobun", "build", `--env=${ELECTROBUN_STABLE_ENV}`], undefined, projectRoot);
+    return;
+  } catch (error) {
+    // The first Linux rollout only needs the bundle tarball. If Electrobun's
+    // release installer packaging fails, fall back to exporting the bundle
+    // directly so tag-driven GitHub Releases stay publishable.
+    console.warn(
+      `[release] Linux stable packaging failed, retrying with bundle-only export: ${normalizeError(error)}`,
+    );
+  }
+
+  await prepareLinuxBundleOnlyReleaseArtifacts(channel);
+}
+
 async function prepareWindowsBundle(): Promise<string> {
   const bundleRoot = join(projectRoot, buildFolder, WINDOWS_BUILD_ENVIRONMENT, WINDOWS_APP_NAME);
   await prepareWindowsBundleAt({
@@ -68,6 +91,54 @@ async function prepareWindowsBundle(): Promise<string> {
   });
 
   return bundleRoot;
+}
+
+async function prepareLinuxBundleOnlyReleaseArtifacts(channel: string): Promise<void> {
+  const targetPlatform = resolveDesktopAppUpdatePlatform();
+  if (targetPlatform.os !== "linux") {
+    throw new Error(`Linux bundle-only fallback can only run on Linux, received ${targetPlatform.os}`);
+  }
+
+  await runCommand(["bun", "x", "electrobun", "build"], undefined, projectRoot);
+
+  const devPlatformPrefix = formatPlatformPrefix("dev", targetPlatform.os, targetPlatform.arch);
+  const releasePlatformPrefix = formatPlatformPrefix(channel, targetPlatform.os, targetPlatform.arch);
+  const devBundleRoot = join(projectRoot, buildFolder, devPlatformPrefix, `${APP_NAME}-dev`);
+  const releaseBuildRoot = join(projectRoot, buildFolder, releasePlatformPrefix);
+  const releaseBundleRoot = join(releaseBuildRoot, APP_NAME);
+  const tarPath = join(releaseBuildRoot, `${APP_NAME}.tar`);
+  const compressedTarPath = `${tarPath}.zst`;
+  const artifactRoot = join(projectRoot, artifactFolder);
+  const artifactBundlePath = join(
+    artifactRoot,
+    `${releasePlatformPrefix}-${APP_NAME}.tar.zst`,
+  );
+  const zstdPath = join(resolveElectrobunPlatformDist(targetPlatform.os, targetPlatform.arch), "zig-zstd");
+
+  if (!existsSync(devBundleRoot)) {
+    throw new Error(`Linux fallback could not find the dev bundle at ${devBundleRoot}`);
+  }
+  if (!existsSync(zstdPath)) {
+    throw new Error(`Linux fallback could not find zig-zstd at ${zstdPath}`);
+  }
+
+  rmSync(releaseBuildRoot, { recursive: true, force: true });
+  mkdirSync(releaseBuildRoot, { recursive: true });
+  cpSync(devBundleRoot, releaseBundleRoot, { recursive: true, force: true });
+  rewriteReleaseBundleVersionFile(releaseBundleRoot, channel);
+
+  await runCommand(["tar", "-cf", tarPath, APP_NAME], undefined, releaseBuildRoot);
+  await runCommand(
+    [zstdPath, "compress", "-i", tarPath, "-o", compressedTarPath, "--threads", "max"],
+    undefined,
+    projectRoot,
+  );
+
+  rmSync(artifactRoot, { recursive: true, force: true });
+  mkdirSync(artifactRoot, { recursive: true });
+  cpSync(compressedTarPath, artifactBundlePath, { force: true });
+
+  console.log(`[release] exported Linux bundle-only artifact ${artifactBundlePath}`);
 }
 
 async function prepareWindowsBundleAt(input: {
@@ -175,6 +246,34 @@ function resolveReleaseChannel(): string {
   return normalized === "preview" ? "preview" : "stable";
 }
 
+function rewriteReleaseBundleVersionFile(bundleRoot: string, channel: string): void {
+  const versionFilePath = join(bundleRoot, "Resources", "version.json");
+  const payload = existsSync(versionFilePath)
+    ? JSON.parse(readFileSync(versionFilePath, "utf8")) as Record<string, unknown>
+    : {};
+
+  writeFileSync(
+    versionFilePath,
+    `${JSON.stringify({
+      ...payload,
+      version: APP_VERSION,
+      hash: "",
+      channel,
+      baseUrl: "",
+      name: APP_NAME,
+      identifier: APP_IDENTIFIER,
+    })}\n`,
+  );
+}
+
+function resolveElectrobunPlatformDist(os: string, arch: string): string {
+  return join(ELECTROBUN_PACKAGE_ROOT, `dist-${os}-${arch}`);
+}
+
+function formatPlatformPrefix(channel: string, os: string, arch: string): string {
+  return `${channel}-${os}-${arch}`;
+}
+
 function resolveElectrobunPackageRoot(): string {
   let currentDirectory = projectRoot;
 
@@ -273,4 +372,12 @@ async function runCommand(
   }
 
   throw new Error(`Command failed with exit code ${exitCode}: ${command.join(" ")}`);
+}
+
+function normalizeError(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+
+  return String(error);
 }

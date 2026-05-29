@@ -143,6 +143,56 @@ describe("desktop app updater runtime", () => {
     });
   });
 
+  test("treats a linux bundle-only release as a valid downloadable update", async () => {
+    await createPackagedRuntimeFixture({
+      channel: "stable",
+      os: "linux",
+      arch: "x64",
+    });
+
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      id: 17,
+      tag_name: "v1.2.4",
+      assets: [
+        {
+          id: 170,
+          name: "stable-linux-x64-MaomiAgent.tar.zst",
+          size: 12,
+          browser_download_url: "https://example.test/linux.tar.zst",
+        },
+      ],
+    }), {
+      headers: {
+        "content-type": "application/json",
+      },
+    })) as unknown as typeof fetch;
+
+    const result = await checkDesktopAppUpdate();
+
+    expect(result).toMatchObject({
+      configured: true,
+      supported: true,
+      installSupported: false,
+      hasUpdate: true,
+      currentChannel: "stable",
+      releaseId: 17,
+      releaseVersion: "1.2.4.0",
+      message: "A newer desktop version is available for download.",
+      bundleAsset: {
+        assetId: 170,
+        fileName: "stable-linux-x64-MaomiAgent.tar.zst",
+        downloadUrl: "https://example.test/linux.tar.zst",
+      },
+      downloadAsset: {
+        assetId: 170,
+        fileName: "stable-linux-x64-MaomiAgent.tar.zst",
+        downloadUrl: "https://example.test/linux.tar.zst",
+      },
+    });
+    expect(result.installerAsset).toBeUndefined();
+    expect(result.updateInfoAsset).toBeUndefined();
+  });
+
   test("uses the prerelease listing path and reports missing platform assets honestly", async () => {
     await createPackagedRuntimeFixture({
       channel: "preview",
