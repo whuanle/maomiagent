@@ -23,6 +23,7 @@ import type { DesktopWorkspaceQueryPort } from "../../../workspace/abstraction/p
 import { DesktopFeishuDocRuntime } from "./desktop-feishu-doc-runtime";
 import { feishuDocIRToMdx } from "./feishu-doc-mdx-codec";
 import type { FeishuDocSourceSnapshot } from "./feishu-doc-source-workspace-cache";
+import { computeReversibleSourceChecksum } from "./feishu-doc-whiteboard-reversible";
 
 type FetchLike = (input: URL | RequestInfo, init?: RequestInit) => Promise<Response>;
 
@@ -189,6 +190,14 @@ function createRuntimeWithContentSource(
       createDocument(input: { accessToken: string; title: string }): Promise<{ documentId: string; title: string }>;
     };
     accessToken?: (input?: { forceRefresh?: boolean }) => Promise<string>;
+    whiteboardApi?: {
+      updateWhiteboard(input: {
+        whiteboardToken: string;
+        inputFormat: "mermaid";
+        source: string;
+        overwrite: boolean;
+      }): Promise<{ result: string }>;
+    };
   },
 ) {
   return new DesktopFeishuDocRuntime({
@@ -202,6 +211,7 @@ function createRuntimeWithContentSource(
     workspaceQuery,
     ...(extraDeps?.docWorkspaceRuntime ? { docWorkspaceRuntime: extraDeps.docWorkspaceRuntime } : {}),
     ...(extraDeps?.remoteWriter ? { remoteWriter: extraDeps.remoteWriter } : {}),
+    ...(extraDeps?.whiteboardApi ? { whiteboardApi: extraDeps.whiteboardApi } : {}),
     ...(fetchImpl ? { fetchImpl: fetchImpl as typeof fetch } : {}),
   });
 }
@@ -321,6 +331,126 @@ function createDocumentIRWithImage(docId: string, title: string): FeishuDocIR {
     integrity: {
       contentHash: "sha256:content",
       rawHash: "sha256:raw",
+    },
+  };
+}
+
+function createDocumentIRWithReversibleMermaid(input: {
+  resolvedDocId: string;
+  whiteboardToken: string;
+  source: string;
+}): FeishuDocIR {
+  return {
+    schemaVersion: 1,
+    document: {
+      id: input.resolvedDocId,
+      title: "Mermaid Doc",
+      revisionId: "7",
+      rootBlockId: input.resolvedDocId,
+      pulledAt: "2026-05-29T00:00:00.000Z",
+      source: {
+        documentIdType: "wiki_node_token",
+        nodeToken: "wiki_node_1",
+      },
+    },
+    blocks: {
+      [input.resolvedDocId]: {
+        id: input.resolvedDocId,
+        type: "page",
+        parentId: null,
+        children: ["whiteboard_1"],
+        editable: false,
+        text: [],
+        resource: null,
+        attrs: {},
+        raw: {},
+      },
+      whiteboard_1: {
+        id: "whiteboard_1",
+        type: "whiteboard",
+        parentId: input.resolvedDocId,
+        children: [],
+        editable: true,
+        text: [],
+        resource: { token: input.whiteboardToken, kind: "whiteboard" },
+        attrs: {},
+        raw: {},
+      },
+    },
+    assets: {
+      [input.whiteboardToken]: {
+        token: input.whiteboardToken,
+        kind: "whiteboard",
+        mime: "",
+        cacheKey: "",
+        status: "missing",
+        localPath: "",
+        checksum: "",
+        reversible: {
+          format: "mermaid",
+          source: input.source,
+          sourceChecksum: computeReversibleSourceChecksum(input.source),
+          ordinal: 0,
+          origin: "whiteboard_code_export",
+          state: "mermaid",
+          lastResolvedAt: "2026-05-29T00:00:00.000Z",
+        },
+      },
+    },
+    integrity: {
+      contentHash: "sha256:content",
+      rawHash: "sha256:raw",
+    },
+  };
+}
+
+function createDocumentIRWithTwoReversibleMermaidBoards(): FeishuDocIR {
+  const first = createDocumentIRWithReversibleMermaid({
+    resolvedDocId: "doc_1",
+    whiteboardToken: "wb_1",
+    source: "flowchart TD\nA-->B",
+  });
+
+  return {
+    ...first,
+    blocks: {
+      ...first.blocks,
+      doc_1: {
+        ...first.blocks.doc_1!,
+        children: ["whiteboard_1", "whiteboard_2"],
+      },
+      whiteboard_2: {
+        id: "whiteboard_2",
+        type: "whiteboard",
+        parentId: "doc_1",
+        children: [],
+        editable: true,
+        text: [],
+        resource: { token: "wb_2", kind: "whiteboard" },
+        attrs: {},
+        raw: {},
+      },
+    },
+    assets: {
+      ...first.assets,
+      wb_2: {
+        token: "wb_2",
+        kind: "whiteboard",
+        mime: "",
+        cacheKey: "",
+        status: "missing",
+        localPath: "",
+        checksum: "",
+        reversible: {
+          format: "mermaid",
+          source: "flowchart TD\nC-->D",
+          sourceChecksum: computeReversibleSourceChecksum("flowchart TD\nC-->D"),
+          ordinal: 1,
+          origin: "whiteboard_code_export",
+          state: "mermaid",
+          lastResolvedAt: "2026-05-29T00:00:00.000Z",
+        },
+      },
     },
   };
 }
@@ -1582,6 +1712,152 @@ describe("DesktopFeishuDocRuntime", () => {
       const cached = await runtime.getWorkspaceDocLocalDraft({ workspaceId: "ws_1", docId: nodeToken });
       expect(cached.markdown).toBe("# Second Push");
       expect(cached.cache?.hasLocalChanges).toBe(false);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("pushWorkspaceDoc updates a pulled reversible Mermaid whiteboard through its original token", async () => {
+    const snapshot = createSnapshot();
+    const nodeToken = "wiki_node_1";
+    const resolvedDocId = "doc_1";
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-reversible-mermaid-push-"));
+    let docsAiWrites = 0;
+    const whiteboardUpdates: Array<{
+      whiteboardToken: string;
+      inputFormat: "mermaid";
+      source: string;
+      overwrite: boolean;
+    }> = [];
+
+    try {
+      const runtime = createRuntimeWithContentSource(
+        snapshot,
+        {
+          readDocumentContent: async () => createContentView(nodeToken, "Mermaid Doc", "```mermaid\nflowchart TD\nA-->B\n```"),
+          readDocumentBundle: async () => ({
+            content: createContentView(nodeToken, "Mermaid Doc", "```mermaid\nflowchart TD\nA-->B\n```"),
+            ir: createDocumentIRWithReversibleMermaid({
+              resolvedDocId,
+              whiteboardToken: "wb_1",
+              source: "flowchart TD\nA-->B",
+            }),
+            source: createSourceSnapshot(nodeToken, "Mermaid Doc", resolvedDocId),
+          }),
+        },
+        createWorkspaceQuery("ws_1", workspaceRoot),
+        async (url, init) => {
+          const target = new URL(String(url));
+          if (target.pathname === `/open-apis/docs_ai/v1/documents/${nodeToken}`) {
+            docsAiWrites += 1;
+            expect(init?.method).toBe("PUT");
+            expect(JSON.parse(String(init?.body))).toEqual({
+              command: "overwrite",
+              content: '<whiteboard token="wb_1" />\n',
+              format: "markdown",
+              revision_id: -1,
+            });
+
+            return new Response(JSON.stringify({
+              code: 0,
+              data: {
+                document: {
+                  revision_id: 9,
+                },
+                result: "success",
+                warnings: [],
+              },
+            }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+
+          throw new Error(`unexpected fetch url: ${String(url)}`);
+        },
+        {
+          whiteboardApi: {
+            updateWhiteboard: async (input) => {
+              whiteboardUpdates.push(input);
+              return { result: "success" };
+            },
+          },
+        },
+      );
+
+      await runtime.openWorkspaceDoc({ workspaceId: "ws_1", docId: nodeToken });
+
+      const pushed = await runtime.pushWorkspaceDoc({
+        workspaceId: "ws_1",
+        docId: nodeToken,
+        markdown: "```mermaid\nflowchart TD\nA-->C\n```\n",
+        force: true,
+      });
+
+      expect(docsAiWrites).toBe(1);
+      expect(whiteboardUpdates).toEqual([{
+        whiteboardToken: "wb_1",
+        inputFormat: "mermaid",
+        source: "flowchart TD\nA-->C",
+        overwrite: true,
+      }]);
+      expect(pushed.pushStatus).toBe("succeeded");
+      expect(pushed.item.markdown).toContain("```mermaid\nflowchart TD\nA-->C\n```");
+      expect(pushed.item.cache?.hasLocalChanges).toBe(false);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("pushWorkspaceDoc blocks when reversible Mermaid whiteboards are reordered", async () => {
+    const snapshot = createSnapshot();
+    const nodeToken = "wiki_node_1";
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-reversible-mermaid-blocked-"));
+    let remoteWrites = 0;
+
+    try {
+      const runtime = createRuntimeWithContentSource(
+        snapshot,
+        {
+          readDocumentContent: async () => createContentView(
+            nodeToken,
+            "Mermaid Doc",
+            "```mermaid\nflowchart TD\nA-->B\n```\n\n```mermaid\nflowchart TD\nC-->D\n```",
+          ),
+          readDocumentBundle: async () => ({
+            content: createContentView(
+              nodeToken,
+              "Mermaid Doc",
+              "```mermaid\nflowchart TD\nA-->B\n```\n\n```mermaid\nflowchart TD\nC-->D\n```",
+            ),
+            ir: createDocumentIRWithTwoReversibleMermaidBoards(),
+            source: createSourceSnapshot(nodeToken, "Mermaid Doc", "doc_1"),
+          }),
+        },
+        createWorkspaceQuery("ws_1", workspaceRoot),
+        async () => {
+          remoteWrites += 1;
+          throw new Error("remote write should not happen");
+        },
+        {
+          whiteboardApi: {
+            updateWhiteboard: async () => {
+              remoteWrites += 1;
+              return { result: "success" };
+            },
+          },
+        },
+      );
+
+      await runtime.openWorkspaceDoc({ workspaceId: "ws_1", docId: nodeToken });
+
+      const pushed = await runtime.pushWorkspaceDoc({
+        workspaceId: "ws_1",
+        docId: nodeToken,
+        markdown: "```mermaid\nflowchart TD\nC-->D\n```\n\n```mermaid\nflowchart TD\nA-->B\n```",
+        force: true,
+      });
+
+      expect(remoteWrites).toBe(0);
+      expect(pushed.pushStatus).toBe("blocked");
+      expect(pushed.message).toContain("Mermaid 白板顺序已变化");
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }

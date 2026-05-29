@@ -118,6 +118,32 @@ export function buildReversibleMermaidPushPlan(input: {
     };
   }
 
+  const originalOrdinalsByChecksum = new Map<string, number[]>();
+  for (const asset of assets) {
+    const current = originalOrdinalsByChecksum.get(asset.reversible.sourceChecksum);
+    if (current) {
+      current.push(asset.reversible.ordinal);
+      continue;
+    }
+    originalOrdinalsByChecksum.set(asset.reversible.sourceChecksum, [asset.reversible.ordinal]);
+  }
+
+  for (let index = 0; index < fences.length; index += 1) {
+    const fence = fences[index];
+    if (!fence) {
+      continue;
+    }
+
+    const originalMatches = originalOrdinalsByChecksum.get(computeReversibleSourceChecksum(fence.source));
+    const originalOrdinal = originalMatches?.shift();
+    if (originalOrdinal !== undefined && originalOrdinal !== index) {
+      return {
+        kind: "blocked",
+        message: REVERSIBLE_MERMAID_ORDER_CHANGED_MESSAGE,
+      };
+    }
+  }
+
   let documentMarkdown = input.draftMarkdown;
   const changedWhiteboards: ReversibleMermaidPushPlanUpdate["changedWhiteboards"] = [];
 
@@ -148,6 +174,47 @@ export function buildReversibleMermaidPushPlan(input: {
     kind: "update",
     documentMarkdown,
     changedWhiteboards,
+  };
+}
+
+export function applyReversibleMermaidPushResult(input: {
+  ir: FeishuDocIR;
+  changedWhiteboards: Array<{
+    whiteboardToken: string;
+    source: string;
+    sourceChecksum: string;
+  }>;
+  pushedAt: string;
+}): FeishuDocIR {
+  if (input.changedWhiteboards.length === 0) {
+    return input.ir;
+  }
+
+  const changedByToken = new Map(input.changedWhiteboards.map((entry) => [entry.whiteboardToken, entry]));
+  const nextAssets = Object.fromEntries(
+    Object.entries(input.ir.assets).map(([token, asset]) => {
+      const changed = changedByToken.get(token);
+      if (!changed || !isReversibleMermaidAsset(asset)) {
+        return [token, asset];
+      }
+
+      return [token, {
+        ...asset,
+        reversible: {
+          ...asset.reversible,
+          source: changed.source,
+          sourceChecksum: changed.sourceChecksum,
+          state: "mermaid" as const,
+          lastResolvedAt: input.pushedAt,
+          lastError: undefined,
+        },
+      }];
+    }),
+  ) as FeishuDocIR["assets"];
+
+  return {
+    ...input.ir,
+    assets: nextAssets,
   };
 }
 

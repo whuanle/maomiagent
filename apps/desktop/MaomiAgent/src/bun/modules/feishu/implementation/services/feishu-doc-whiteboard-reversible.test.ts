@@ -259,7 +259,7 @@ describe("feishu-doc-whiteboard-reversible", () => {
     });
   });
 
-  test("blocks reversible push when stored ordinals no longer match fence order", () => {
+  test("blocks reversible push when Mermaid fences are reordered", () => {
     const recovered = applyRecoveredMermaidWhiteboards({
       ir: createWhiteboardIR(),
       recovered: [
@@ -280,23 +280,16 @@ describe("feishu-doc-whiteboard-reversible", () => {
       ],
     });
 
-    if (!recovered.assets.wb_1?.reversible || !recovered.assets.wb_2?.reversible) {
-      throw new Error("expected reversible metadata");
-    }
-
-    recovered.assets.wb_1.reversible.ordinal = 1;
-    recovered.assets.wb_2.reversible.ordinal = 2;
-
     expect(buildReversibleMermaidPushPlan({
       draftMarkdown: [
         "```mermaid",
-        "flowchart TD",
-        "A-->B",
+        "sequenceDiagram",
+        "A->>B: hi",
         "```",
         "",
         "```mermaid",
-        "sequenceDiagram",
-        "A->>B: hi",
+        "flowchart TD",
+        "A-->B",
         "```",
         "",
       ].join("\n"),
@@ -305,5 +298,56 @@ describe("feishu-doc-whiteboard-reversible", () => {
       kind: "blocked",
       message: REVERSIBLE_MERMAID_BLOCK_MESSAGES.orderChanged,
     });
+  });
+
+  test("keeps stable duplicate Mermaid whiteboards in ordinal order", () => {
+    const recovered = applyRecoveredMermaidWhiteboards({
+      ir: createWhiteboardIR(),
+      recovered: [
+        {
+          whiteboardToken: "wb_1",
+          format: "mermaid",
+          source: "flowchart TD\nA-->B",
+          origin: "whiteboard_code_export",
+          resolvedAt: "2026-05-29T00:00:00.000Z",
+        },
+        {
+          whiteboardToken: "wb_2",
+          format: "mermaid",
+          source: "flowchart TD\nA-->B",
+          origin: "whiteboard_code_export",
+          resolvedAt: "2026-05-29T00:00:00.000Z",
+        },
+      ],
+    });
+
+    const plan = buildReversibleMermaidPushPlan({
+      draftMarkdown: [
+        "```mermaid",
+        "flowchart TD",
+        "A-->B",
+        "```",
+        "",
+        "```mermaid",
+        "flowchart TD",
+        "A-->B",
+        "```",
+        "",
+      ].join("\n"),
+      baseIr: recovered,
+    });
+
+    expect(plan.kind).toBe("update");
+    if (plan.kind !== "update") {
+      throw new Error("expected update plan");
+    }
+
+    expect(plan.documentMarkdown).toBe([
+      '<whiteboard token="wb_1" />',
+      "",
+      '<whiteboard token="wb_2" />',
+      "",
+    ].join("\n"));
+    expect(plan.changedWhiteboards).toEqual([]);
   });
 });

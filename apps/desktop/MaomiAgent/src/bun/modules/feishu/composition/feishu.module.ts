@@ -140,6 +140,7 @@ export class DesktopFeishuModule extends DependencyModuleBase {
           contentSource: remoteSource,
           accessToken,
           workspaceQuery: services.resolve(DESKTOP_WORKSPACE_QUERY_PORT),
+          whiteboardApi,
         });
       },
       source: context.module.moduleId,

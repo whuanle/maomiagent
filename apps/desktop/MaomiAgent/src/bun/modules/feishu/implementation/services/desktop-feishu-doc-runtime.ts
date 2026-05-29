@@ -56,6 +56,10 @@ import { assessFeishuDocPush } from "./feishu-doc-push-assessor";
 import { normalizeFeishuDocPermissionError } from "./feishu-doc-openapi-permissions";
 import { FeishuDocRemoteMarkdownApi } from "./feishu-doc-remote-markdown-api";
 import { FeishuDocRemotePatchApi } from "./feishu-doc-remote-patch-api";
+import {
+  applyReversibleMermaidPushResult,
+  buildReversibleMermaidPushPlan,
+} from "./feishu-doc-whiteboard-reversible";
 import { FeishuDocWorkspaceRuntime } from "./feishu-doc-workspace-runtime";
 import { buildFeishuDocCurrentIR } from "./feishu-doc-working-copy-compiler";
 import { runDesktopFeishuStoreMutation } from "./desktop-feishu-store-mutation";
@@ -85,6 +89,15 @@ type DesktopFeishuDocContentSourcePort = {
   readDocumentIR?(accessToken: string, docId: string): Promise<FeishuDocIR>;
 };
 
+type FeishuDocWhiteboardRemotePort = {
+  updateWhiteboard(input: {
+    whiteboardToken: string;
+    inputFormat: "mermaid";
+    source: string;
+    overwrite: boolean;
+  }): Promise<{ result: string }>;
+};
+
 type DesktopFeishuDocRuntimeDeps =
   | DesktopFeishuStorePort
   | DesktopFeishuDocTreeLoaderPort
@@ -97,6 +110,7 @@ type DesktopFeishuDocRuntimeDeps =
       docWorkspaceRuntime?: DesktopFeishuDocWorkspaceRuntimePort;
       remoteWriter?: FeishuDocRemoteWriterPort;
       workspaceQuery?: DesktopWorkspaceQueryPort;
+      whiteboardApi?: FeishuDocWhiteboardRemotePort;
     };
 
 type FeishuDocPreviewBinary = {
@@ -496,6 +510,7 @@ function isRuntimeBundle(
   docWorkspaceRuntime?: DesktopFeishuDocWorkspaceRuntimePort;
   remoteWriter?: FeishuDocRemoteWriterPort;
   workspaceQuery?: DesktopWorkspaceQueryPort;
+  whiteboardApi?: FeishuDocWhiteboardRemotePort;
 } {
   return "store" in value && "loader" in value;
 }
@@ -509,6 +524,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
   private readonly docWorkspaceRuntime: DesktopFeishuDocWorkspaceRuntimePort | null;
   private readonly remoteWriter: FeishuDocRemoteWriterPort | null;
   private readonly workspaceQuery: DesktopWorkspaceQueryPort | null;
+  private readonly whiteboardApi: FeishuDocWhiteboardRemotePort | null;
 
   constructor(deps: DesktopFeishuDocRuntimeDeps) {
     if (isRuntimeBundle(deps)) {
@@ -520,6 +536,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       this.workspaceQuery = deps.workspaceQuery ?? null;
       this.docWorkspaceRuntime = deps.docWorkspaceRuntime ?? this.createBuiltinDocWorkspaceRuntime();
       this.remoteWriter = deps.remoteWriter ?? null;
+      this.whiteboardApi = deps.whiteboardApi ?? null;
       return;
     }
 
@@ -532,6 +549,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       this.workspaceQuery = null;
       this.docWorkspaceRuntime = this.createBuiltinDocWorkspaceRuntime();
       this.remoteWriter = null;
+      this.whiteboardApi = null;
       return;
     }
 
@@ -543,6 +561,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
     this.workspaceQuery = null;
     this.docWorkspaceRuntime = this.createBuiltinDocWorkspaceRuntime();
     this.remoteWriter = null;
+    this.whiteboardApi = null;
   }
 
   private createBuiltinDocWorkspaceRuntime(): DesktopFeishuDocWorkspaceRuntimePort | null {
@@ -1531,6 +1550,100 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
     }
   }
 
+  private async pushWorkspaceDocWithReversibleMermaid(input: {
+    workspaceId: string;
+    docId: string;
+    pushTitle: string;
+    fallbackItem: FeishuDocContentView;
+    sourceState: {
+      document: FeishuDocSourceWorkspaceEntry | null;
+      base: FeishuDocSourceWorkspaceEntry | null;
+    } | null;
+    baseIr: FeishuDocIR;
+    plan: Extract<ReturnType<typeof buildReversibleMermaidPushPlan>, { kind: "update" }>;
+  }): Promise<{ item: FeishuDocContentView; pushStatus: "succeeded" | "blocked"; message?: string }> {
+    if (!this.accessToken || !this.whiteboardApi) {
+      return {
+        item: input.fallbackItem,
+        pushStatus: "blocked",
+        message: "当前白板回写不可用，已保留本地草稿。",
+      };
+    }
+
+    const documentIdType = input.sourceState?.document?.snapshot.documentIdType
+      ?? input.sourceState?.base?.snapshot.documentIdType
+      ?? input.baseIr.document.source.documentIdType
+      ?? "document_id";
+    const resolvedDocumentId = trimText(input.sourceState?.document?.snapshot.resolvedDocId)
+      ?? trimText(input.sourceState?.base?.snapshot.resolvedDocId)
+      ?? trimText(input.sourceState?.document?.snapshot.document.document_id)
+      ?? trimText(input.sourceState?.base?.snapshot.document.document_id)
+      ?? trimText(input.fallbackItem.resolvedDocId)
+      ?? input.docId;
+    const documentToken = documentIdType === "wiki_node_token"
+      ? input.docId
+      : resolvedDocumentId;
+
+    const markdownApi = new FeishuDocRemoteMarkdownApi({
+      client: new DesktopFeishuOpenApiClient({ fetch: this.fetchImpl }),
+      baseUrl: FEISHU_OPEN_API_BASE_URL,
+      accessToken: this.accessToken,
+    });
+
+    try {
+      const overwritten = await markdownApi.overwriteDocumentV2({
+        documentToken,
+        content: input.plan.documentMarkdown,
+        format: "markdown",
+        revisionId: -1,
+      });
+      if (overwritten.result?.trim().toLowerCase() === "failed") {
+        return {
+          item: input.fallbackItem,
+          pushStatus: "blocked",
+          message: overwritten.warnings[0] ?? "当前内容回写失败，已保留本地草稿。",
+        };
+      }
+
+      for (const update of input.plan.changedWhiteboards) {
+        await this.whiteboardApi.updateWhiteboard({
+          whiteboardToken: update.whiteboardToken,
+          inputFormat: "mermaid",
+          source: update.source,
+          overwrite: true,
+        });
+      }
+
+      const pushedAt = new Date().toISOString();
+      const settledIr = applyReversibleMermaidPushResult({
+        ir: input.baseIr,
+        changedWhiteboards: input.plan.changedWhiteboards,
+        pushedAt,
+      });
+      const settled = await this.settleWorkspaceDocAfterSuccessfulPush({
+        workspaceId: input.workspaceId,
+        docId: input.docId,
+        title: input.pushTitle,
+        markdown: input.fallbackItem.markdown,
+        existing: input.fallbackItem,
+        ir: settledIr,
+        source: input.sourceState?.document?.snapshot ?? input.sourceState?.base?.snapshot ?? null,
+      });
+
+      return {
+        item: settled,
+        pushStatus: "succeeded",
+      };
+    } catch (error) {
+      const normalizedError = normalizeFeishuDocPermissionError(error);
+      return {
+        item: input.fallbackItem,
+        pushStatus: "blocked",
+        message: normalizedError.message,
+      };
+    }
+  }
+
   private async readWorkspaceOriginalMarkdownState(
     workspaceId: string,
     docId: string,
@@ -2181,6 +2294,43 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       existing: item,
       cache: decoratedCache,
     });
+
+    const reversibleMermaidPlan = irState?.base
+      ? buildReversibleMermaidPushPlan({
+          draftMarkdown: item.markdown,
+          baseIr: irState.base,
+        })
+      : { kind: "none" as const };
+    if (reversibleMermaidPlan.kind === "blocked") {
+      return {
+        item: decorated,
+        pushStatus: "blocked",
+        message: reversibleMermaidPlan.message,
+        warnings: assessment.blockedChanges.map((entry) => entry.reason),
+      };
+    }
+    if (reversibleMermaidPlan.kind === "update" && irState?.base) {
+      const mermaidPushed = await this.pushWorkspaceDocWithReversibleMermaid({
+        workspaceId: input.workspaceId,
+        docId: input.docId,
+        pushTitle,
+        fallbackItem: decorated,
+        sourceState: sourceState
+          ? {
+              document: sourceState.document,
+              base: sourceState.base,
+            }
+          : null,
+        baseIr: irState.base,
+        plan: reversibleMermaidPlan,
+      });
+      return {
+        item: mermaidPushed.item,
+        pushStatus: mermaidPushed.pushStatus,
+        ...(mermaidPushed.message ? { message: mermaidPushed.message } : {}),
+        warnings: assessment.blockedChanges.map((entry) => entry.reason),
+      };
+    }
 
     const docsAiMarkdownPushed = await this.tryPushWorkspaceDocAsDocsAiMarkdown({
       workspaceId: input.workspaceId,
