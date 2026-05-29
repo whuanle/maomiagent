@@ -10,6 +10,7 @@ import type {
   FeishuDocTreeBranchResult,
   FeishuDocTreeLoadInput,
   FeishuDocTreeLoadResult,
+  FeishuDocTreeSnapshotNode,
   FeishuDocTreeQuery,
   FeishuDocTreeView,
   FeishuDocWhiteboardPreviewResult,
@@ -42,12 +43,20 @@ import {
 } from "./feishu-doc-source-workspace-cache";
 import {
   DesktopFeishuOpenApiError,
+  DesktopFeishuOpenApiClient,
   isDesktopFeishuAccessTokenExpiredError,
 } from "./desktop-feishu-openapi-client";
 import { feishuDocIRToMdx } from "./feishu-doc-mdx-codec";
 import { feishuDocIRToSourceMarkdown } from "./feishu-doc-source-markdown-codec";
+import { normalizeFeishuDocBlocksToIR } from "./feishu-doc-ir-normalizer";
 import { FeishuDocIRWorkspaceCache } from "./feishu-doc-ir-workspace-cache";
+import { FeishuDocPatchExecutor } from "./feishu-doc-patch-executor";
+import { planFeishuDocPatch } from "./feishu-doc-patch-planner";
 import { assessFeishuDocPush } from "./feishu-doc-push-assessor";
+import { normalizeFeishuDocPermissionError } from "./feishu-doc-openapi-permissions";
+import { FeishuDocRemoteMarkdownApi } from "./feishu-doc-remote-markdown-api";
+import { FeishuDocRemotePatchApi } from "./feishu-doc-remote-patch-api";
+import { FeishuDocWorkspaceRuntime } from "./feishu-doc-workspace-runtime";
 import { buildFeishuDocCurrentIR } from "./feishu-doc-working-copy-compiler";
 import { runDesktopFeishuStoreMutation } from "./desktop-feishu-store-mutation";
 
@@ -95,10 +104,120 @@ type FeishuDocPreviewBinary = {
   bytes: Uint8Array;
 };
 
+type FeishuWorkspaceRemoteContent = {
+  ir: FeishuDocIR;
+  markdown: string;
+  title: string;
+  workspaceRoot: string;
+  requestedDocId?: string;
+  resolvedDocId?: string;
+  documentIdType?: "document_id" | "wiki_node_token";
+  source?: FeishuDocSourceSnapshot;
+};
+
 const FEISHU_OPEN_API_BASE_URL = "https://open.feishu.cn/open-apis";
+const FEISHU_PUSH_REFRESH_RETRY_DELAYS_MS = [100, 200];
+const FEISHU_MARKDOWN_DESCENDANT_LIMIT = 1000;
+const FEISHU_NATIVE_MARKDOWN_TAG_NAMES = [
+  "undefined",
+  "image",
+  "file",
+  "callout",
+  "grid",
+  "grid-column",
+  "divider",
+  "quote-container",
+  "table",
+  "table-cell",
+  "view",
+  "iframe",
+  "whiteboard",
+  "mindnote",
+  "diagram",
+  "sheet",
+  "bitable",
+  "board",
+  "chat-card",
+  "link-preview",
+  "jira-issue",
+  "add-ons",
+  "isv",
+  "okr",
+  "source-synced",
+  "reference-synced",
+  "ai-template",
+] as const;
+const FEISHU_NATIVE_MARKDOWN_TAG_PATTERN = new RegExp(
+  `<\\/?(?:feishu-)?(?:${FEISHU_NATIVE_MARKDOWN_TAG_NAMES.map((name) => escapeRegExp(name)).join("|")})\\b`,
+  "i",
+);
+const FEISHU_WORKING_COPY_MARKER_PATTERN = /<!--feishu:block:[^>]+-->/i;
+const MARKDOWN_IMAGE_PATTERN = /!\[[^\]]*]\(([^)\r\n]+)\)/;
 
 function openApiBinaryUrl(path: string): string {
   return `${FEISHU_OPEN_API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function containsFeishuNativeMarkdownTag(markdown: string): boolean {
+  return FEISHU_NATIVE_MARKDOWN_TAG_PATTERN.test(markdown);
+}
+
+function containsFeishuWorkingCopyMarker(markdown: string): boolean {
+  return FEISHU_WORKING_COPY_MARKER_PATTERN.test(markdown);
+}
+
+function containsMarkdownImage(markdown: string): boolean {
+  return MARKDOWN_IMAGE_PATTERN.test(markdown);
+}
+
+function stripMergeInfo(value: unknown): void {
+  if (!value || typeof value !== "object") {
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      stripMergeInfo(item);
+    }
+    return;
+  }
+
+  if ("merge_info" in value) {
+    delete (value as Record<string, unknown>).merge_info;
+  }
+
+  for (const nested of Object.values(value as Record<string, unknown>)) {
+    stripMergeInfo(nested);
+  }
+}
+
+function sanitizeConvertedRawBlock(block: Record<string, unknown>): Record<string, unknown> {
+  const next = structuredClone(block);
+  stripMergeInfo(next);
+  return next;
+}
+
+function findUnsupportedMarkdownReplaceBlockType(ir: FeishuDocIR): string | null {
+  for (const block of Object.values(ir.blocks)) {
+    if (block.type === "page") {
+      continue;
+    }
+    if (block.type === "image") {
+      return "当前内容包含图片，暂不支持直接回写。已保留本地草稿。";
+    }
+    if (block.type === "file") {
+      return "当前内容包含附件，暂不支持直接回写。已保留本地草稿。";
+    }
+    if (block.type === "undefined") {
+      return "当前内容包含未识别结构，暂不支持直接回写。已保留本地草稿。";
+    }
+  }
+
+  return null;
 }
 
 function trimText(value: unknown): string | undefined {
@@ -232,9 +351,9 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       this.contentSource = deps.contentSource ?? null;
       this.accessToken = deps.accessToken ?? null;
       this.fetchImpl = deps.fetchImpl ?? fetch;
-      this.docWorkspaceRuntime = deps.docWorkspaceRuntime ?? null;
-      this.remoteWriter = deps.remoteWriter ?? null;
       this.workspaceQuery = deps.workspaceQuery ?? null;
+      this.docWorkspaceRuntime = deps.docWorkspaceRuntime ?? this.createBuiltinDocWorkspaceRuntime();
+      this.remoteWriter = deps.remoteWriter ?? null;
       return;
     }
 
@@ -244,9 +363,9 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       this.contentSource = null;
       this.accessToken = null;
       this.fetchImpl = fetch;
-      this.docWorkspaceRuntime = null;
-      this.remoteWriter = null;
       this.workspaceQuery = null;
+      this.docWorkspaceRuntime = this.createBuiltinDocWorkspaceRuntime();
+      this.remoteWriter = null;
       return;
     }
 
@@ -255,9 +374,63 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
     this.contentSource = null;
     this.accessToken = null;
     this.fetchImpl = fetch;
-    this.docWorkspaceRuntime = null;
-    this.remoteWriter = null;
     this.workspaceQuery = null;
+    this.docWorkspaceRuntime = this.createBuiltinDocWorkspaceRuntime();
+    this.remoteWriter = null;
+  }
+
+  private createBuiltinDocWorkspaceRuntime(): DesktopFeishuDocWorkspaceRuntimePort | null {
+    if (
+      !this.accessToken
+      || !this.workspaceQuery
+      || (!this.contentSource?.readDocumentBundle && !this.contentSource?.readDocumentIR)
+    ) {
+      return null;
+    }
+
+    const patchApi = new FeishuDocRemotePatchApi({
+      client: new DesktopFeishuOpenApiClient({ fetch: this.fetchImpl }),
+      baseUrl: FEISHU_OPEN_API_BASE_URL,
+      accessToken: this.accessToken,
+    });
+    const patchExecutor = new FeishuDocPatchExecutor({
+      updateText: async (input) => patchApi.updateText(input),
+      uploadAsset: async () => {
+        throw new Error("Feishu document asset patch is not implemented");
+      },
+    });
+
+    const createWorkspaceRuntime = async (workspaceId: string) => {
+      const workspaceRoot = await this.resolveWorkspaceDirectoryPath(workspaceId);
+      if (!workspaceRoot) {
+        throw new Error("当前工作区未绑定本地目录，无法推送文档。");
+      }
+
+      return new FeishuDocWorkspaceRuntime({
+        cache: new FeishuDocIRWorkspaceCache(workspaceRoot),
+        remote: {
+          pull: async ({ docId, workspaceId }) => {
+            const remote = await this.readWorkspaceRemoteContentFromIR({ workspaceId, docId });
+            if (!remote) {
+              throw new Error("文档结构加载失败");
+            }
+            return remote.ir;
+          },
+        },
+        assets: {
+          hydrateAssets: async (ir) => ir,
+        },
+        push: {
+          execute: async ({ base, current }) => patchExecutor.execute(planFeishuDocPatch(base, current)),
+        },
+      });
+    };
+
+    return {
+      openDocument: async (input) => (await createWorkspaceRuntime(input.workspaceId)).openDocument(input),
+      pullLatest: async (input) => (await createWorkspaceRuntime(input.workspaceId)).pullLatest(input),
+      pushDocument: async (input) => (await createWorkspaceRuntime(input.workspaceId)).pushDocument(input),
+    };
   }
 
   async getDocsCapabilities(): Promise<FeishuDocsCapabilitiesView> {
@@ -296,7 +469,18 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
 
   async loadDocTreeRoot(input: FeishuDocTreeLoadInput): Promise<FeishuDocTreeLoadResult> {
     await this.rememberDocTreeRootToken(input.token);
-    return this.loader.loadRoot(input);
+    const result = await this.loader.loadRoot(input);
+    if (!input.preloadSubtree) {
+      return result;
+    }
+
+    const subtree = await this.readCachedDocTreeSubtree(input.token);
+    return subtree?.length
+      ? {
+          ...result,
+          subtree,
+        }
+      : result;
   }
 
   private async rememberDocTreeRootToken(token: string): Promise<void> {
@@ -647,16 +831,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
 
   private async readWorkspaceRemoteContentFromIR(
     input: FeishuWorkspaceDocInput,
-  ): Promise<{
-    ir: FeishuDocIR;
-    markdown: string;
-    title: string;
-    workspaceRoot: string;
-    requestedDocId?: string;
-    resolvedDocId?: string;
-    documentIdType?: "document_id" | "wiki_node_token";
-    source?: FeishuDocSourceSnapshot;
-  } | null> {
+  ): Promise<FeishuWorkspaceRemoteContent | null> {
     if (!this.accessToken || (!this.contentSource?.readDocumentBundle && !this.contentSource?.readDocumentIR)) {
       return null;
     }
@@ -695,6 +870,404 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       ...(bundle?.source?.documentIdType ? { documentIdType: bundle.source.documentIdType } : {}),
       ...(bundle?.source ? { source: bundle.source } : {}),
     };
+  }
+
+  private async readCachedDocTreeSubtree(rootToken: string): Promise<FeishuDocTreeSnapshotNode[] | null> {
+    if (!this.store) {
+      return null;
+    }
+
+    const snapshot = await this.store.read();
+    const normalizedRootToken = rootToken.trim();
+    if (!normalizedRootToken) {
+      return null;
+    }
+
+    const rootEntry = Object.values(snapshot.docTreeCache.roots).find((entry) => entry.token === normalizedRootToken);
+    if (!rootEntry) {
+      return null;
+    }
+
+    const relevantBranches = Object.values(snapshot.docTreeCache.branches)
+      .filter((entry) => entry.rootToken === normalizedRootToken);
+    if (relevantBranches.length === 0) {
+      return null;
+    }
+
+    const branchByParentToken = new Map(relevantBranches.map((entry) => [entry.parentToken, entry]));
+    const buildChildren = (parentToken: string, lineage: Set<string>): FeishuDocTreeSnapshotNode[] => {
+      const branch = branchByParentToken.get(parentToken);
+      if (!branch) {
+        return [];
+      }
+
+      return branch.nodes.map((node) => {
+        const normalizedNodeToken = node.token.trim();
+        const nextLineage = new Set(lineage);
+        if (normalizedNodeToken) {
+          nextLineage.add(normalizedNodeToken);
+        }
+        const children = node.hasChild && normalizedNodeToken && !lineage.has(normalizedNodeToken)
+          ? buildChildren(normalizedNodeToken, nextLineage)
+          : [];
+
+        return children.length > 0
+          ? {
+              ...node,
+              children,
+            }
+          : {
+              ...node,
+            };
+      });
+    };
+
+    return buildChildren(rootEntry.rootNodeId, new Set([rootEntry.rootNodeId]));
+  }
+
+  private async applyWorkspaceRemoteContent(input: {
+    workspaceId: string;
+    docId: string;
+    remote: FeishuWorkspaceRemoteContent;
+  }): Promise<FeishuDocWorkspacePullResult> {
+    let [currentOriginalState, currentDraftState, currentSourceState] = await Promise.all([
+      this.readWorkspaceOriginalMarkdownState(input.workspaceId, input.docId),
+      this.readWorkspaceDraftState(input.workspaceId, input.docId),
+      this.readWorkspaceSourceState(input.workspaceId, input.docId),
+    ]);
+
+    await this.migrateLegacyWorkspaceCache({
+      workspaceRoot: input.remote.workspaceRoot,
+      docId: input.docId,
+      legacyDocId: input.remote.resolvedDocId,
+    });
+
+    [currentOriginalState, currentDraftState, currentSourceState] = await Promise.all([
+      this.readWorkspaceOriginalMarkdownState(input.workspaceId, input.docId),
+      this.readWorkspaceDraftState(input.workspaceId, input.docId),
+      this.readWorkspaceSourceState(input.workspaceId, input.docId),
+    ]);
+
+    await this.persistWorkspaceIR({
+      workspaceRoot: input.remote.workspaceRoot,
+      docId: input.docId,
+      ir: input.remote.ir,
+    });
+    if (input.remote.source) {
+      await this.persistWorkspaceSource({
+        workspaceRoot: input.remote.workspaceRoot,
+        docId: input.docId,
+        source: input.remote.source,
+      });
+    }
+
+    await this.persistWorkspaceOriginalMarkdown({
+      workspaceRoot: input.remote.workspaceRoot,
+      docId: input.docId,
+      markdown: input.remote.markdown,
+    });
+
+    const [nextOriginalState, nextSourceState] = await Promise.all([
+      this.readWorkspaceOriginalMarkdownState(input.workspaceId, input.docId),
+      this.readWorkspaceSourceState(input.workspaceId, input.docId),
+    ]);
+    const nextItem = currentDraftState?.document
+      ? await this.writeWorkspaceDoc({
+          workspaceId: input.workspaceId,
+          docId: input.docId,
+          title: input.remote.title,
+          markdown: input.remote.markdown,
+          baselineMarkdown: input.remote.markdown,
+          lastPulledAt: new Date().toISOString(),
+        }) ?? this.createDocContentView({
+          docId: input.docId,
+          resolvedDocId: input.remote.resolvedDocId,
+          title: input.remote.title,
+          markdown: input.remote.markdown,
+        })
+      : this.createDocContentView({
+          docId: input.docId,
+          resolvedDocId: input.remote.resolvedDocId,
+          title: input.remote.title,
+          markdown: input.remote.markdown,
+          cache: this.buildWorkspaceCacheState({
+            workspaceId: input.workspaceId,
+            original: nextOriginalState?.document,
+            baseOriginal: nextOriginalState?.base,
+            source: nextSourceState?.document,
+            baseSource: nextSourceState?.base,
+            ir: input.remote.ir,
+            baseIr: input.remote.ir,
+            currentMarkdown: input.remote.markdown,
+            baselineMarkdown: input.remote.markdown,
+            lastPulledAt: new Date().toISOString(),
+          }),
+        });
+    const remoteSourceChecksum = nextOriginalState?.document?.checksum ?? nextSourceState?.document?.checksum ?? "";
+    const pullStatus = !currentDraftState?.document && !currentOriginalState?.document && !currentSourceState?.document
+      ? "created"
+      : remoteSourceChecksum
+          && remoteSourceChecksum === (currentOriginalState?.document?.checksum ?? currentSourceState?.document?.checksum)
+          && (!currentDraftState?.document || currentDraftState.document.markdown === input.remote.markdown)
+        ? "noop"
+        : "updated";
+
+    return {
+      item: nextItem,
+      pullStatus,
+    };
+  }
+
+  private async settleWorkspaceDocAfterSuccessfulPush(input: {
+    workspaceId: string;
+    docId: string;
+    title: string;
+    markdown: string;
+    existing: FeishuDocContentView;
+    ir?: FeishuDocIR | null;
+    source?: FeishuDocSourceSnapshot | null;
+  }): Promise<FeishuDocContentView> {
+    const workspaceRoot = await this.resolveWorkspaceDirectoryPath(input.workspaceId);
+    const pushedAt = new Date().toISOString();
+
+    if (workspaceRoot) {
+      await this.persistWorkspaceOriginalMarkdown({
+        workspaceRoot,
+        docId: input.docId,
+        markdown: input.markdown,
+      });
+
+      if (input.ir) {
+        await this.persistWorkspaceIR({
+          workspaceRoot,
+          docId: input.docId,
+          ir: input.ir,
+        });
+      }
+    }
+
+    return await this.writeWorkspaceDoc({
+      workspaceId: input.workspaceId,
+      docId: input.docId,
+      title: input.title,
+      markdown: input.markdown,
+      existing: input.existing,
+      baselineMarkdown: input.markdown,
+      lastPushedAt: pushedAt,
+    }) ?? this.createDocContentView({
+      docId: input.docId,
+      resolvedDocId: input.existing.resolvedDocId,
+      title: input.title,
+      markdown: input.markdown,
+      existing: input.existing,
+    });
+  }
+
+  private doesPushRefreshMatchExpected(input: {
+    expectedRemoteMarkdown: string;
+    remoteMarkdown: string;
+  }): boolean {
+    return input.expectedRemoteMarkdown.trim() === input.remoteMarkdown.trim();
+  }
+
+  private async refreshWorkspaceDocAfterPush(input: {
+    workspaceId: string;
+    docId: string;
+    expectedRemoteMarkdown: string;
+    fallbackItem: FeishuDocContentView;
+  }): Promise<{ item: FeishuDocContentView; pushStatus: "succeeded" | "blocked"; message?: string }> {
+    const candidateDocIds = [...new Set([
+      trimText(input.fallbackItem.resolvedDocId),
+      input.docId,
+    ].filter((value): value is string => Boolean(value)))];
+    const delays = [0, ...FEISHU_PUSH_REFRESH_RETRY_DELAYS_MS];
+
+    for (const [attempt, delayMs] of delays.entries()) {
+      if (delayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+
+      for (const remoteDocId of candidateDocIds) {
+        const remote = await this.readWorkspaceRemoteContentFromIR({
+          workspaceId: input.workspaceId,
+          docId: remoteDocId,
+        }).catch(() => null);
+        if (!remote) {
+          continue;
+        }
+
+        if (!this.doesPushRefreshMatchExpected({
+          expectedRemoteMarkdown: input.expectedRemoteMarkdown,
+          remoteMarkdown: remote.markdown,
+        })) {
+          continue;
+        }
+
+        const refreshed = await this.applyWorkspaceRemoteContent({
+          workspaceId: input.workspaceId,
+          docId: input.docId,
+          remote,
+        });
+        return {
+          item: refreshed.item,
+          pushStatus: "succeeded",
+        };
+      }
+
+      if (attempt === delays.length - 1) {
+        break;
+      }
+    }
+
+    return {
+      item: input.fallbackItem,
+      pushStatus: "blocked",
+      message: "未确认远端写入成功，已保留本地草稿。",
+    };
+  }
+
+  private async tryPushWorkspaceDocAsMarkdown(input: {
+    workspaceId: string;
+    docId: string;
+    pushTitle: string;
+    draftMarkdown: string;
+    fallbackItem: FeishuDocContentView;
+    originalState: {
+      document: FeishuDocMarkdownWorkspaceEntry | null;
+      base: FeishuDocMarkdownWorkspaceEntry | null;
+    } | null;
+    sourceState: {
+      document: FeishuDocSourceWorkspaceEntry | null;
+      base: FeishuDocSourceWorkspaceEntry | null;
+    } | null;
+    baseIr: FeishuDocIR;
+  }): Promise<{ item: FeishuDocContentView; pushStatus: "succeeded" | "blocked"; message?: string } | null> {
+    if (!this.accessToken || containsFeishuWorkingCopyMarker(input.draftMarkdown)) {
+      return null;
+    }
+
+    const baselineMarkdown = input.originalState?.base?.markdown
+      ?? input.originalState?.document?.markdown
+      ?? "";
+    if (containsFeishuNativeMarkdownTag(input.draftMarkdown) || containsFeishuNativeMarkdownTag(baselineMarkdown)) {
+      return {
+        item: input.fallbackItem,
+        pushStatus: "blocked",
+        message: "当前文档包含飞书原生块，暂不支持按纯 Markdown 直接回写。已保留本地草稿。",
+      };
+    }
+
+    if (containsMarkdownImage(input.draftMarkdown) || containsMarkdownImage(baselineMarkdown)) {
+      return {
+        item: input.fallbackItem,
+        pushStatus: "blocked",
+        message: "当前内容包含图片，暂不支持直接回写。已保留本地草稿。",
+      };
+    }
+
+    const documentId = trimText(input.sourceState?.document?.snapshot.resolvedDocId)
+      ?? trimText(input.sourceState?.base?.snapshot.resolvedDocId)
+      ?? trimText(input.sourceState?.document?.snapshot.document.document_id)
+      ?? trimText(input.sourceState?.base?.snapshot.document.document_id)
+      ?? trimText(input.fallbackItem.resolvedDocId)
+      ?? input.docId;
+    const documentIdType = input.sourceState?.document?.snapshot.documentIdType
+      ?? input.sourceState?.base?.snapshot.documentIdType
+      ?? input.baseIr.document.source.documentIdType;
+    const baseRevisionId = String(
+      input.sourceState?.document?.snapshot.document.revision_id
+      ?? input.sourceState?.base?.snapshot.document.revision_id
+      ?? input.baseIr.document.revisionId
+      ?? "-1",
+    ).trim() || "-1";
+    const rootBlockId = trimText(input.baseIr.document.rootBlockId) ?? documentId;
+    const currentRootChildCount = input.baseIr.blocks[rootBlockId]?.children.length ?? 0;
+
+    const api = new FeishuDocRemoteMarkdownApi({
+      client: new DesktopFeishuOpenApiClient({ fetch: this.fetchImpl }),
+      baseUrl: FEISHU_OPEN_API_BASE_URL,
+      accessToken: this.accessToken,
+    });
+
+    try {
+      const converted = await api.convertMarkdown({ markdown: input.draftMarkdown });
+      if (converted.blocks.length > FEISHU_MARKDOWN_DESCENDANT_LIMIT || converted.firstLevelBlockIds.length > FEISHU_MARKDOWN_DESCENDANT_LIMIT) {
+        return {
+          item: input.fallbackItem,
+          pushStatus: "blocked",
+          message: `当前文档块数量过多，单次纯 Markdown 回写暂不支持超过 ${FEISHU_MARKDOWN_DESCENDANT_LIMIT} 个块。已保留本地草稿。`,
+        };
+      }
+
+      const descendants = converted.blocks.map((block) => sanitizeConvertedRawBlock(block));
+      const expectedIr = normalizeFeishuDocBlocksToIR({
+        documentId,
+        title: input.pushTitle,
+        revisionId: baseRevisionId,
+        pulledAt: new Date().toISOString(),
+        documentIdType,
+        ...(documentIdType === "wiki_node_token" ? { nodeToken: input.docId } : {}),
+        blocks: [
+          { block_id: documentId, block_type: 1, children: converted.firstLevelBlockIds },
+          ...descendants,
+        ],
+      });
+      const unsupportedOutputReason = findUnsupportedMarkdownReplaceBlockType(expectedIr);
+      if (unsupportedOutputReason) {
+        return {
+          item: input.fallbackItem,
+          pushStatus: "blocked",
+          message: unsupportedOutputReason,
+        };
+      }
+
+      const expectedRemoteMarkdown = feishuDocIRToSourceMarkdown(expectedIr).trimEnd();
+      if (trimText(input.draftMarkdown) && !trimText(expectedRemoteMarkdown)) {
+        return {
+          item: input.fallbackItem,
+          pushStatus: "blocked",
+          message: "当前内容还不能稳定回写飞书，已保留本地草稿。",
+        };
+      }
+
+      let revisionId = baseRevisionId;
+      if (currentRootChildCount > 0) {
+        const deleted = await api.deleteChildren({
+          documentId,
+          blockId: documentId,
+          revisionId,
+          startIndex: 0,
+          endIndex: currentRootChildCount,
+        });
+        revisionId = deleted.revisionId?.trim() || revisionId;
+      }
+
+      if (descendants.length > 0) {
+        const created = await api.createDescendants({
+          documentId,
+          blockId: documentId,
+          revisionId,
+          childrenId: converted.firstLevelBlockIds,
+          descendants,
+        });
+        revisionId = created.revisionId?.trim() || revisionId;
+      }
+
+      const refreshed = await this.refreshWorkspaceDocAfterPush({
+        workspaceId: input.workspaceId,
+        docId: input.docId,
+        expectedRemoteMarkdown,
+        fallbackItem: input.fallbackItem,
+      });
+      return refreshed;
+    } catch (error) {
+      const normalizedError = normalizeFeishuDocPermissionError(error);
+      return {
+        item: input.fallbackItem,
+        pushStatus: "blocked",
+        message: normalizedError.message,
+      };
+    }
   }
 
   private async readWorkspaceOriginalMarkdownState(
@@ -1228,94 +1801,19 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
   }
 
   async pullWorkspaceDoc(input: FeishuWorkspaceDocInput): Promise<FeishuDocWorkspacePullResult> {
-    let [currentOriginalState, currentDraftState, currentSourceState] = await Promise.all([
-      this.readWorkspaceOriginalMarkdownState(input.workspaceId, input.docId),
+    const remoteFromIR = await this.readWorkspaceRemoteContentFromIR(input).catch(() => null);
+    if (remoteFromIR) {
+      return this.applyWorkspaceRemoteContent({
+        workspaceId: input.workspaceId,
+        docId: input.docId,
+        remote: remoteFromIR,
+      });
+    }
+
+    const [currentDraftState, currentSourceState] = await Promise.all([
       this.readWorkspaceDraftState(input.workspaceId, input.docId),
       this.readWorkspaceSourceState(input.workspaceId, input.docId),
     ]);
-
-    const remoteFromIR = await this.readWorkspaceRemoteContentFromIR(input).catch(() => null);
-    if (remoteFromIR) {
-      await this.migrateLegacyWorkspaceCache({
-        workspaceRoot: remoteFromIR.workspaceRoot,
-        docId: input.docId,
-        legacyDocId: remoteFromIR.resolvedDocId,
-      });
-      [currentOriginalState, currentDraftState, currentSourceState] = await Promise.all([
-        this.readWorkspaceOriginalMarkdownState(input.workspaceId, input.docId),
-        this.readWorkspaceDraftState(input.workspaceId, input.docId),
-        this.readWorkspaceSourceState(input.workspaceId, input.docId),
-      ]);
-      await this.persistWorkspaceIR({
-        workspaceRoot: remoteFromIR.workspaceRoot,
-        docId: input.docId,
-        ir: remoteFromIR.ir,
-      });
-      if (remoteFromIR.source) {
-        await this.persistWorkspaceSource({
-          workspaceRoot: remoteFromIR.workspaceRoot,
-          docId: input.docId,
-          source: remoteFromIR.source,
-        });
-      }
-
-      await this.persistWorkspaceOriginalMarkdown({
-        workspaceRoot: remoteFromIR.workspaceRoot,
-        docId: input.docId,
-        markdown: remoteFromIR.markdown,
-      });
-
-      const [nextOriginalState, nextSourceState] = await Promise.all([
-        this.readWorkspaceOriginalMarkdownState(input.workspaceId, input.docId),
-        this.readWorkspaceSourceState(input.workspaceId, input.docId),
-      ]);
-      const nextItem = currentDraftState?.document
-        ? await this.writeWorkspaceDoc({
-            workspaceId: input.workspaceId,
-            docId: input.docId,
-            title: remoteFromIR.title,
-            markdown: remoteFromIR.markdown,
-            baselineMarkdown: remoteFromIR.markdown,
-            lastPulledAt: new Date().toISOString(),
-          }) ?? this.createDocContentView({
-            docId: input.docId,
-            resolvedDocId: remoteFromIR.resolvedDocId,
-            title: remoteFromIR.title,
-            markdown: remoteFromIR.markdown,
-          })
-        : this.createDocContentView({
-            docId: input.docId,
-            resolvedDocId: remoteFromIR.resolvedDocId,
-            title: remoteFromIR.title,
-            markdown: remoteFromIR.markdown,
-            cache: this.buildWorkspaceCacheState({
-              workspaceId: input.workspaceId,
-              original: nextOriginalState?.document,
-              baseOriginal: nextOriginalState?.base,
-              source: nextSourceState?.document,
-              baseSource: nextSourceState?.base,
-              ir: remoteFromIR.ir,
-              baseIr: remoteFromIR.ir,
-              currentMarkdown: remoteFromIR.markdown,
-              baselineMarkdown: remoteFromIR.markdown,
-              lastPulledAt: new Date().toISOString(),
-            }),
-          });
-      const remoteSourceChecksum = nextOriginalState?.document?.checksum ?? nextSourceState?.document?.checksum ?? "";
-      const pullStatus = !currentDraftState?.document && !currentOriginalState?.document && !currentSourceState?.document
-        ? "created"
-        : remoteSourceChecksum
-            && remoteSourceChecksum === (currentOriginalState?.document?.checksum ?? currentSourceState?.document?.checksum)
-            && (!currentDraftState?.document || currentDraftState.document.markdown === remoteFromIR.markdown)
-          ? "noop"
-          : "updated";
-
-      return {
-        item: nextItem,
-        pullStatus,
-      };
-    }
-
     const remote = await this.readWorkspaceRemoteDoc(input);
     if (!remote) {
       throw new Error("文档内容加载失败");
@@ -1370,7 +1868,8 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       };
     }
 
-    const [sourceState, irState] = await Promise.all([
+    const [originalState, sourceState, irState] = await Promise.all([
+      this.readWorkspaceOriginalMarkdownState(input.workspaceId, input.docId),
       this.readWorkspaceSourceState(input.workspaceId, input.docId),
       this.readWorkspaceIRState(input.workspaceId, input.docId),
     ]);
@@ -1390,44 +1889,37 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       baseRevisionId: irState?.base?.document.revisionId,
     });
 
+    const decoratedCache: FeishuDocCacheStateView = item.cache
+      ? {
+          ...item.cache,
+          workspaceId: item.cache.workspaceId,
+          publishModeRecommendation: assessment.publishModeRecommendation,
+          hasBlockedChanges: assessment.hasBlockedChanges,
+          hasRevisionConflict: assessment.hasRevisionConflict,
+          unknownBlockCount: assessment.unknownBlockCount,
+        }
+      : {
+          workspaceId: input.workspaceId,
+          hasRawSourceBaseline: Boolean(sourceState?.base),
+          hasStructuredBaseline: Boolean(irState?.base),
+          publishModeRecommendation: assessment.publishModeRecommendation,
+          hasBlockedChanges: assessment.hasBlockedChanges,
+          hasRevisionConflict: assessment.hasRevisionConflict,
+          unknownBlockCount: assessment.unknownBlockCount,
+          hasBaseline: Boolean(sourceState?.base ?? irState?.base),
+          hasLocalChanges: true,
+          localChecksum: createMarkdownChecksum(item.markdown),
+          status: "local_only",
+        };
+
     const decorated = this.createDocContentView({
       docId: item.docId,
       resolvedDocId: item.resolvedDocId,
       title: item.title,
       markdown: item.markdown,
       existing: item,
-      cache: {
-        ...item.cache,
-        publishModeRecommendation: assessment.publishModeRecommendation,
-        hasBlockedChanges: assessment.hasBlockedChanges,
-        hasRevisionConflict: assessment.hasRevisionConflict,
-        unknownBlockCount: assessment.unknownBlockCount,
-      },
+      cache: decoratedCache,
     });
-
-    if (
-      assessment.publishModeRecommendation === "publish_new"
-      && input.force
-      && this.accessToken
-      && this.remoteWriter
-    ) {
-      const accessToken = await this.accessToken();
-      const created = await this.remoteWriter.createDocument({ accessToken, title: pushTitle });
-      await this.saveWorkspaceDocLocalDraft({
-        workspaceId: input.workspaceId,
-        docId: created.documentId,
-        title: created.title,
-        markdown: item.markdown,
-        force: true,
-      });
-      const refreshed = await this.pullWorkspaceDoc({ workspaceId: input.workspaceId, docId: created.documentId });
-      return {
-        item: refreshed.item,
-        pushStatus: "published_new",
-        message: `已发布为新文档：${created.documentId}`,
-        warnings: assessment.blockedChanges.map((entry) => entry.reason),
-      };
-    }
 
     if (assessment.status !== "ready" || !compile.current || !irState?.cache) {
       return {
@@ -1435,7 +1927,47 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
         pushStatus: "blocked",
         message: assessment.status === "pull_required"
           ? "请先重新拉取远端文档基线。"
-          : "当前改动不适合覆盖原文，建议发布新文档。",
+          : assessment.blockedChanges[0]?.reason
+            ? `当前改动暂不支持直接推送：${assessment.blockedChanges[0].reason}`
+            : "当前改动暂不支持直接推送。",
+        warnings: assessment.blockedChanges.map((entry) => entry.reason),
+      };
+    }
+
+    if ((item.cache?.hasLocalChanges ?? true) && (assessment.plan?.operations.length ?? 0) === 0) {
+      const markdownPushed = await this.tryPushWorkspaceDocAsMarkdown({
+        workspaceId: input.workspaceId,
+        docId: input.docId,
+        pushTitle,
+        draftMarkdown: item.markdown,
+        fallbackItem: decorated,
+        originalState: originalState
+          ? {
+              document: originalState.document,
+              base: originalState.base,
+            }
+          : null,
+        sourceState: sourceState
+          ? {
+              document: sourceState.document,
+              base: sourceState.base,
+            }
+          : null,
+        baseIr: irState.base!,
+      });
+      if (markdownPushed) {
+        return {
+          item: markdownPushed.item,
+          pushStatus: markdownPushed.pushStatus,
+          ...(markdownPushed.message ? { message: markdownPushed.message } : {}),
+          warnings: assessment.blockedChanges.map((entry) => entry.reason),
+        };
+      }
+
+      return {
+        item: decorated,
+        pushStatus: "blocked",
+        message: "当前本地内容还不能直接回写飞书，未生成可执行的远端改动。已保留本地草稿。",
         warnings: assessment.blockedChanges.map((entry) => entry.reason),
       };
     }
@@ -1451,9 +1983,16 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       };
     }
 
-    const refreshed = await this.pullWorkspaceDoc({ workspaceId: input.workspaceId, docId: input.docId });
+    const settled = await this.settleWorkspaceDocAfterSuccessfulPush({
+      workspaceId: input.workspaceId,
+      docId: input.docId,
+      title: pushTitle,
+      markdown: item.markdown,
+      existing: decorated,
+      ir: compile.current,
+    });
     return {
-      item: refreshed.item,
+      item: settled,
       pushStatus: "succeeded",
       warnings: assessment.blockedChanges.map((entry) => entry.reason),
     };
@@ -1468,7 +2007,14 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
   }
 
   async pushDocIR(input: { workspaceId: string; docId: string }): Promise<{ status: "succeeded" | "blocked" | "failed"; message?: string }> {
-    return this.requireDocWorkspaceRuntime().pushDocument(input);
+    if (!this.docWorkspaceRuntime) {
+      return {
+        status: "failed",
+        message: "文档推送运行时未配置",
+      };
+    }
+
+    return this.docWorkspaceRuntime.pushDocument(input);
   }
 
   private requireDocWorkspaceRuntime(): DesktopFeishuDocWorkspaceRuntimePort {

@@ -22,6 +22,9 @@ import type { DesktopFeishuStoreSnapshot } from "../../abstraction/ports/desktop
 import type { DesktopWorkspaceQueryPort } from "../../../workspace/abstraction/ports/desktop-workspace.ports";
 import { DesktopFeishuDocRuntime } from "./desktop-feishu-doc-runtime";
 import { feishuDocIRToMdx } from "./feishu-doc-mdx-codec";
+import type { FeishuDocSourceSnapshot } from "./feishu-doc-source-workspace-cache";
+
+type FetchLike = (input: URL | RequestInfo, init?: RequestInit) => Promise<Response>;
 
 function createState(): FeishuStateView {
   return {
@@ -118,6 +121,7 @@ function createSnapshot(docs: Record<string, FeishuDocContentView> = {}): Deskto
       version: "1.0",
       bindings: [],
       processedMessages: [],
+      pendingActions: [],
     },
     docs,
     developerCredential: { appSecret: "" },
@@ -146,7 +150,7 @@ function createContentView(docId: string, title: string, markdown: string): Feis
 function createStore(snapshot: DesktopFeishuStoreSnapshot) {
   return {
     read: async () => snapshot,
-    write: async (next) => {
+    write: async (next: DesktopFeishuStoreSnapshot) => {
       snapshot.state = next.state;
       snapshot.bot = next.bot;
       snapshot.botRuntime = next.botRuntime;
@@ -169,22 +173,12 @@ function createRuntimeWithContentSource(
     readDocumentBundle?(accessToken: string, docId: string): Promise<{
       content: FeishuDocContentView;
       ir: FeishuDocIR;
-      source: {
-        requestedDocId: string;
-        documentIdType: "document_id" | "wiki_node_token";
-        fetchedAt: string;
-        document: {
-          document_id?: string;
-          title?: string;
-          revision_id?: string | number;
-        };
-        blocks: Array<Record<string, unknown>>;
-      };
+      source: FeishuDocSourceSnapshot;
     }>;
     readDocumentIR?(accessToken: string, docId: string): Promise<FeishuDocIR>;
   },
   workspaceQuery?: DesktopWorkspaceQueryPort,
-  fetchImpl?: typeof fetch,
+  fetchImpl?: FetchLike,
   extraDeps?: {
     docWorkspaceRuntime?: {
       openDocument(input: { workspaceId: string; docId: string }): Promise<{ source: "cache" | "remote"; ir: FeishuDocIR }>;
@@ -208,17 +202,17 @@ function createRuntimeWithContentSource(
     workspaceQuery,
     ...(extraDeps?.docWorkspaceRuntime ? { docWorkspaceRuntime: extraDeps.docWorkspaceRuntime } : {}),
     ...(extraDeps?.remoteWriter ? { remoteWriter: extraDeps.remoteWriter } : {}),
-    ...(fetchImpl ? { fetchImpl } : {}),
+    ...(fetchImpl ? { fetchImpl: fetchImpl as typeof fetch } : {}),
   });
 }
 
-function createDocumentIRWithText(docId: string, title: string, markdown: string): FeishuDocIR {
+function createDocumentIRWithText(docId: string, title: string, markdown: string, revisionId = "1"): FeishuDocIR {
   return {
     schemaVersion: 1,
     document: {
       id: docId,
       title,
-      revisionId: "1",
+      revisionId,
       rootBlockId: docId,
       pulledAt: "2026-05-25T00:00:00.000Z",
       source: { documentIdType: "document_id" },
@@ -241,7 +235,7 @@ function createDocumentIRWithText(docId: string, title: string, markdown: string
         parentId: docId,
         children: [],
         editable: true,
-        text: [{ text: markdown }],
+        text: [{ kind: "text", text: markdown, attrs: {}, raw: {} }],
         resource: null,
         attrs: {},
         raw: {},
@@ -251,6 +245,38 @@ function createDocumentIRWithText(docId: string, title: string, markdown: string
     integrity: {
       contentHash: "sha256:content",
       rawHash: "sha256:raw",
+    },
+  };
+}
+
+function createEmptyDocumentIR(docId: string, title: string, revisionId = "1"): FeishuDocIR {
+  return {
+    schemaVersion: 1,
+    document: {
+      id: docId,
+      title,
+      revisionId,
+      rootBlockId: docId,
+      pulledAt: "2026-05-25T00:00:00.000Z",
+      source: { documentIdType: "document_id" },
+    },
+    blocks: {
+      [docId]: {
+        id: docId,
+        type: "page",
+        parentId: null,
+        children: [],
+        editable: false,
+        text: [],
+        resource: null,
+        attrs: {},
+        raw: {},
+      },
+    },
+    assets: {},
+    integrity: {
+      contentHash: "sha256:empty-content",
+      rawHash: "sha256:empty-raw",
     },
   };
 }
@@ -430,7 +456,7 @@ describe("DesktopFeishuDocRuntime", () => {
     });
   });
 
-    test("persists the requested tree root token before remote loading", async () => {
+  test("persists the requested tree root token before remote loading", async () => {
       const snapshot = createSnapshot();
       const runtime = createRuntimeWithLoader(snapshot, {
         loadRoot: async () => {
@@ -453,13 +479,78 @@ describe("DesktopFeishuDocRuntime", () => {
 
       expect(snapshot.docTreeCache.lastRootToken).toBe("GkfewPcB0ibJMMkXGZucdgR8nhh");
       expect(snapshot.docTreeCache.lastRootUpdatedAt).not.toBe("");
+  });
+
+  test("loadDocTreeRoot attaches the cached subtree when preloadSubtree is requested", async () => {
+    const snapshot = createSnapshot();
+    snapshot.docTreeCache.roots = {
+      root: {
+        token: "root",
+        kind: "wiki_node",
+        rootNodeId: "root",
+        title: "Root",
+        loadedAt: "2026-05-21T00:00:00.000Z",
+      },
+    };
+    snapshot.docTreeCache.branches = {
+      root: {
+        rootToken: "root",
+        parentToken: "root",
+        nodes: [{ id: "child", token: "child", kind: "wiki_node", title: "Child", hasChild: true }],
+        loadedAt: "2026-05-21T00:00:00.000Z",
+        complete: true,
+      },
+      child: {
+        rootToken: "root",
+        parentToken: "child",
+        nodes: [{ id: "grandchild", token: "grandchild", kind: "document", title: "Grandchild", hasChild: false }],
+        loadedAt: "2026-05-21T00:00:01.000Z",
+        complete: true,
+      },
+    } as typeof snapshot.docTreeCache.branches;
+
+    const runtime = new DesktopFeishuDocRuntime({
+      store: createStore(snapshot),
+      loader: {
+        loadRoot: async () => ({
+          rootToken: "root",
+          rootKind: "wiki_node",
+          nodes: [{ id: "child", token: "child", kind: "wiki_node", title: "Child", hasChild: true }],
+          hasMore: false,
+          source: "remote",
+          refreshing: false,
+          stale: false,
+          loadedAt: "2026-05-21T00:00:00.000Z",
+        }),
+        loadBranch: async () => {
+          throw new Error("not used");
+        },
+      },
     });
+
+    const result = await runtime.loadDocTreeRoot({ token: "root", preloadSubtree: true });
+
+    expect(result.subtree).toEqual([{
+      id: "child",
+      token: "child",
+      kind: "wiki_node",
+      title: "Child",
+      hasChild: true,
+      children: [{
+        id: "grandchild",
+        token: "grandchild",
+        kind: "document",
+        title: "Grandchild",
+        hasChild: false,
+      }],
+    }]);
+  });
 
   test("loadDocTreeBranch delegates to the cache-aware loader", async () => {
     const runtime = new DesktopFeishuDocRuntime({
       getDocsCapabilities: async () => { throw new Error("not used"); },
       loadRoot: async () => { throw new Error("not used"); },
-      loadBranch: async (input) => ({
+      loadBranch: async (input: FeishuDocTreeBranchInput) => ({
         rootToken: input.rootToken,
         parentToken: input.parentToken,
         nodes: [{ id: "grandchild", token: "grandchild", kind: "document", title: "Grandchild", hasChild: false }],
@@ -518,7 +609,7 @@ describe("DesktopFeishuDocRuntime", () => {
         loadBranch: async () => { throw new Error("not used"); },
       },
       accessToken: async () => "access_token_1",
-      fetchImpl: async (input, init) => {
+      fetchImpl: (async (input, init) => {
         const headers = init?.headers as Record<string, string> | undefined;
         requests.push({
           url: String(input),
@@ -530,7 +621,7 @@ describe("DesktopFeishuDocRuntime", () => {
             "content-type": "image/png",
           },
         });
-      },
+      }) as typeof fetch,
     });
 
     const preview = await runtime.readDocMediaPreview("img_token");
@@ -552,7 +643,7 @@ describe("DesktopFeishuDocRuntime", () => {
         loadBranch: async () => { throw new Error("not used"); },
       },
       accessToken: async () => "access_token_1",
-      fetchImpl: async (input, init) => {
+      fetchImpl: (async (input, init) => {
         const headers = init?.headers as Record<string, string> | undefined;
         requests.push({
           url: String(input),
@@ -564,7 +655,7 @@ describe("DesktopFeishuDocRuntime", () => {
             "content-type": "image/png",
           },
         });
-      },
+      }) as typeof fetch,
     });
 
     const preview = await runtime.readDocWhiteboardPreview("board_token");
@@ -592,7 +683,7 @@ describe("DesktopFeishuDocRuntime", () => {
         }
         return currentToken;
       },
-      fetchImpl: async (input, init) => {
+      fetchImpl: (async (input, init) => {
         const headers = init?.headers as Record<string, string> | undefined;
         requests.push({
           url: String(input),
@@ -612,7 +703,7 @@ describe("DesktopFeishuDocRuntime", () => {
             "content-type": "image/png",
           },
         });
-      },
+      }) as typeof fetch,
     });
 
     const preview = await runtime.readDocMediaPreview("img_token");
@@ -1062,6 +1153,7 @@ describe("DesktopFeishuDocRuntime", () => {
     const resolvedDocId = "doc_1";
     const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-push-safe-"));
     let pushCalls = 0;
+    let remoteMarkdown = "# Remote Doc";
 
     try {
       const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
@@ -1069,10 +1161,10 @@ describe("DesktopFeishuDocRuntime", () => {
       const runtime = createRuntimeWithContentSource(
         snapshot,
         {
-          readDocumentContent: async (_accessToken, docId) => createContentView(docId, "Remote Doc", "# Edited Remote Doc"),
+          readDocumentContent: async (_accessToken, docId) => createContentView(docId, "Remote Doc", remoteMarkdown),
           readDocumentBundle: async (_accessToken, docId) => ({
-            content: createContentView(docId, "Remote Doc", "# Edited Remote Doc"),
-            ir: createDocumentIRWithText(resolvedDocId, "Remote Doc", "# Edited Remote Doc"),
+            content: createContentView(docId, "Remote Doc", remoteMarkdown),
+            ir: createDocumentIRWithText(resolvedDocId, "Remote Doc", remoteMarkdown),
             source: createSourceSnapshot(nodeToken, "Remote Doc", resolvedDocId),
           }),
         },
@@ -1084,6 +1176,7 @@ describe("DesktopFeishuDocRuntime", () => {
             pullLatest: async () => ({ ir: baseIR }),
             pushDocument: async () => {
               pushCalls += 1;
+              remoteMarkdown = "# Edited Remote Doc";
               return { status: "succeeded" };
             },
           },
@@ -1108,14 +1201,844 @@ describe("DesktopFeishuDocRuntime", () => {
     }
   });
 
-  test("pushWorkspaceDoc publishes a new document when blocked changes recommend publish_new", async () => {
+  test("pushWorkspaceDoc pushes plain markdown drafts through the official convert/delete/descendant flow", async () => {
     const snapshot = createSnapshot();
     const nodeToken = "node_1";
     const resolvedDocId = "doc_1";
-    const newDocId = "doc_new_1";
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-push-no-patch-"));
+    let remoteMarkdown = "# Remote Doc";
+    let remoteRevisionId = "1";
+    let convertCalls = 0;
+    let deleteCalls = 0;
+    let createCalls = 0;
+
+    try {
+      const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
+      const runtime = createRuntimeWithContentSource(
+        snapshot,
+        {
+          readDocumentContent: async (_accessToken, docId) => createContentView(docId, "Remote Doc", remoteMarkdown),
+          readDocumentBundle: async (_accessToken, docId) => ({
+            content: createContentView(resolvedDocId, "Remote Doc", remoteMarkdown),
+            ir: createDocumentIRWithText(resolvedDocId, "Remote Doc", remoteMarkdown, remoteRevisionId),
+            source: {
+              ...createSourceSnapshot(nodeToken, "Remote Doc", resolvedDocId),
+              document: {
+                document_id: resolvedDocId,
+                title: "Remote Doc",
+                revision_id: remoteRevisionId,
+              },
+            },
+          }),
+        },
+        workspaceQuery,
+        async (url, init) => {
+          const target = new URL(String(url));
+          if (target.pathname === "/open-apis/docx/v1/documents/blocks/convert") {
+            convertCalls += 1;
+            expect(init?.method).toBe("POST");
+            expect(JSON.parse(String(init?.body))).toEqual({
+              content_type: "markdown",
+              content: "# Edited Remote Doc\n\n- item",
+            });
+
+            return new Response(JSON.stringify({
+              code: 0,
+              data: {
+                first_level_block_ids: ["tmp_h1", "tmp_b1"],
+                blocks: [
+                  {
+                    block_id: "tmp_h1",
+                    block_type: 3,
+                    heading1: {
+                      elements: [{
+                        text_run: {
+                          content: "Edited Remote Doc",
+                        },
+                      }],
+                    },
+                  },
+                  {
+                    block_id: "tmp_b1",
+                    block_type: 12,
+                    bullet: {
+                      elements: [{
+                        text_run: {
+                          content: "item",
+                        },
+                      }],
+                    },
+                  },
+                ],
+              },
+            }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+
+          if (target.pathname === `/open-apis/docx/v1/documents/${resolvedDocId}/blocks/${resolvedDocId}/children/batch_delete`) {
+            deleteCalls += 1;
+            expect(init?.method).toBe("DELETE");
+            expect(target.searchParams.get("document_revision_id")).toBe("1");
+            expect(JSON.parse(String(init?.body))).toEqual({
+              start_index: 0,
+              end_index: 1,
+            });
+
+            return new Response(JSON.stringify({
+              code: 0,
+              data: {
+                document_revision_id: 2,
+              },
+            }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+
+          if (target.pathname === `/open-apis/docx/v1/documents/${resolvedDocId}/blocks/${resolvedDocId}/descendant`) {
+            createCalls += 1;
+            expect(init?.method).toBe("POST");
+            expect(target.searchParams.get("document_revision_id")).toBe("2");
+            expect(JSON.parse(String(init?.body))).toEqual({
+              children_id: ["tmp_h1", "tmp_b1"],
+              descendants: [
+                {
+                  block_id: "tmp_h1",
+                  block_type: 3,
+                  heading1: {
+                    elements: [{
+                      text_run: {
+                        content: "Edited Remote Doc",
+                      },
+                    }],
+                  },
+                },
+                {
+                  block_id: "tmp_b1",
+                  block_type: 12,
+                  bullet: {
+                    elements: [{
+                      text_run: {
+                        content: "item",
+                      },
+                    }],
+                  },
+                },
+              ],
+            });
+            remoteMarkdown = "# Edited Remote Doc\n\n- item";
+            remoteRevisionId = "3";
+
+            return new Response(JSON.stringify({
+              code: 0,
+              data: {
+                document_revision_id: 3,
+              },
+            }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+
+          throw new Error(`unexpected fetch url: ${String(url)}`);
+        },
+      );
+
+      await runtime.openWorkspaceDoc({ workspaceId: "ws_1", docId: nodeToken });
+
+      const pushed = await runtime.pushWorkspaceDoc({
+        workspaceId: "ws_1",
+        docId: nodeToken,
+        title: "Remote Doc",
+        markdown: "# Edited Remote Doc\n\n- item",
+        force: true,
+      });
+
+      expect(convertCalls).toBe(1);
+      expect(deleteCalls).toBe(1);
+      expect(createCalls).toBe(1);
+      expect(pushed.pushStatus).toBe("succeeded");
+      expect(pushed.item.markdown).toBe("# Edited Remote Doc\n\n- item");
+      expect(pushed.item.cache?.hasLocalChanges).toBe(false);
+
+      const cached = await runtime.getWorkspaceDocLocalDraft({ workspaceId: "ws_1", docId: nodeToken });
+      expect(cached.markdown).toBe("# Edited Remote Doc\n\n- item");
+      expect(cached.cache?.hasLocalChanges).toBe(false);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("pushWorkspaceDoc still blocks pure-markdown replacement when the baseline contains Feishu native blocks", async () => {
+    const snapshot = createSnapshot();
+    const nodeToken = "node_1";
+    const resolvedDocId = "doc_1";
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-push-native-baseline-"));
+    let networkCalls = 0;
+
+    try {
+      const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
+      const runtime = createRuntimeWithContentSource(
+        snapshot,
+        {
+          readDocumentContent: async () => createContentView(resolvedDocId, "Remote Doc", '<image token="img_token" width="320" height="180" />'),
+          readDocumentBundle: async () => ({
+            content: createContentView(resolvedDocId, "Remote Doc", '<image token="img_token" width="320" height="180" />'),
+            ir: createDocumentIRWithImage(resolvedDocId, "Remote Doc"),
+            source: createSourceSnapshot(nodeToken, "Remote Doc", resolvedDocId),
+          }),
+        },
+        workspaceQuery,
+        async () => {
+          networkCalls += 1;
+          throw new Error("unexpected network call");
+        },
+      );
+
+      await runtime.openWorkspaceDoc({ workspaceId: "ws_1", docId: nodeToken });
+      networkCalls = 0;
+
+      const pushed = await runtime.pushWorkspaceDoc({
+        workspaceId: "ws_1",
+        docId: nodeToken,
+        markdown: "# Edited Remote Doc",
+        force: true,
+      });
+
+      expect(networkCalls).toBe(0);
+      expect(pushed.pushStatus).toBe("blocked");
+      expect(pushed.message).toContain("飞书原生块");
+      expect(pushed.item.markdown).toBe("# Edited Remote Doc");
+      expect(pushed.item.cache?.hasLocalChanges).toBe(true);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("pushWorkspaceDoc keeps anchored markdown after a successful patch push", async () => {
+    const snapshot = createSnapshot();
+    const nodeToken = "node_1";
+    const resolvedDocId = "doc_1";
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-push-direct-runtime-"));
+    let remoteMarkdown = "# Remote Doc";
+    let remoteRevisionId = "1";
+    let patchCalls = 0;
+    let bundleReads = 0;
+
+    try {
+      const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
+      const runtime = createRuntimeWithContentSource(
+        snapshot,
+        {
+          readDocumentContent: async (_accessToken, docId) => createContentView(docId, "Remote Doc", remoteMarkdown),
+          readDocumentBundle: async (_accessToken, docId) => {
+            bundleReads += 1;
+            if (bundleReads === 1) {
+              return {
+                content: createContentView(docId, "Remote Doc", remoteMarkdown),
+                ir: createDocumentIRWithText(resolvedDocId, "Remote Doc", remoteMarkdown, remoteRevisionId),
+                source: {
+                  ...createSourceSnapshot(nodeToken, "Remote Doc", resolvedDocId),
+                  document: {
+                    document_id: resolvedDocId,
+                    title: "Remote Doc",
+                    revision_id: remoteRevisionId,
+                  },
+                },
+              };
+            }
+
+            throw new Error("push should not re-read remote content after a successful patch write");
+          },
+        },
+        workspaceQuery,
+        async (url, init) => {
+          const target = new URL(String(url));
+          if (target.pathname === `/open-apis/docx/v1/documents/${resolvedDocId}/blocks/text_1`) {
+            patchCalls += 1;
+            expect(init?.method).toBe("PATCH");
+            remoteMarkdown = String(JSON.parse(String(init?.body)).update_text_elements.elements[0].text_run.content);
+            remoteRevisionId = "2";
+
+            return new Response(JSON.stringify({
+              code: 0,
+              data: {},
+            }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+
+          throw new Error(`unexpected fetch url: ${String(url)}`);
+        },
+      );
+
+      await runtime.openWorkspaceDoc({ workspaceId: "ws_1", docId: nodeToken });
+
+      const pushed = await runtime.pushWorkspaceDoc({
+        workspaceId: "ws_1",
+        docId: nodeToken,
+        markdown: "<!--feishu:block:text_1-->\n# Edited Remote Doc\n<!--/feishu:block:text_1-->\n",
+        force: true,
+      });
+
+      expect(patchCalls).toBe(1);
+      expect(bundleReads).toBe(1);
+      expect(pushed.pushStatus).toBe("succeeded");
+      expect(pushed.item.markdown).toBe("<!--feishu:block:text_1-->\n# Edited Remote Doc\n<!--/feishu:block:text_1-->\n");
+      expect(pushed.item.cache?.hasLocalChanges).toBe(false);
+
+      const cached = await runtime.getWorkspaceDocLocalDraft({ workspaceId: "ws_1", docId: nodeToken });
+      expect(cached.markdown).toBe("<!--feishu:block:text_1-->\n# Edited Remote Doc\n<!--/feishu:block:text_1-->\n");
+      expect(cached.cache?.hasLocalChanges).toBe(false);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("pushWorkspaceDoc retries suspicious empty refreshes for plain markdown pushes instead of blanking the local draft", async () => {
+    const snapshot = createSnapshot();
+    const nodeToken = "node_1";
+    const resolvedDocId = "doc_1";
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-push-refresh-retry-"));
+    let remoteMarkdown = "# Remote Doc";
+    let remoteRevisionId = "1";
+    let convertCalls = 0;
+    let deleteCalls = 0;
+    let createCalls = 0;
+    let refreshCalls = 0;
+
+    try {
+      const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
+      const runtime = createRuntimeWithContentSource(
+        snapshot,
+        {
+          readDocumentContent: async () => createContentView(resolvedDocId, "Remote Doc", remoteMarkdown),
+          readDocumentBundle: async (_accessToken, docId) => {
+            const document = {
+              document_id: resolvedDocId,
+              title: "Remote Doc",
+              revision_id: remoteRevisionId,
+            };
+
+            if (remoteRevisionId === "1") {
+              return {
+                content: createContentView(resolvedDocId, "Remote Doc", remoteMarkdown),
+                ir: createDocumentIRWithText(resolvedDocId, "Remote Doc", remoteMarkdown, remoteRevisionId),
+                source: {
+                  ...createSourceSnapshot(docId, "Remote Doc", resolvedDocId),
+                  document,
+                },
+              };
+            }
+
+            refreshCalls += 1;
+            if (refreshCalls <= 2) {
+              return {
+                content: createContentView(resolvedDocId, "Remote Doc", ""),
+                ir: createEmptyDocumentIR(resolvedDocId, "Remote Doc", remoteRevisionId),
+                source: {
+                  ...createSourceSnapshot(docId, "Remote Doc", resolvedDocId),
+                  document,
+                  blocks: [{ block_id: resolvedDocId, block_type: 1, children: [] }],
+                },
+              };
+            }
+
+            return {
+              content: createContentView(resolvedDocId, "Remote Doc", remoteMarkdown),
+              ir: createDocumentIRWithText(resolvedDocId, "Remote Doc", remoteMarkdown, remoteRevisionId),
+              source: {
+                ...createSourceSnapshot(docId, "Remote Doc", resolvedDocId),
+                document,
+              },
+            };
+          },
+        },
+        workspaceQuery,
+        async (url, init) => {
+          const target = new URL(String(url));
+          if (target.pathname === "/open-apis/docx/v1/documents/blocks/convert") {
+            convertCalls += 1;
+            expect(init?.method).toBe("POST");
+            expect(JSON.parse(String(init?.body))).toEqual({
+              content_type: "markdown",
+              content: "# Edited Remote Doc\n\n- item",
+            });
+
+            return new Response(JSON.stringify({
+              code: 0,
+              data: {
+                first_level_block_ids: ["tmp_h1", "tmp_b1"],
+                blocks: [
+                  {
+                    block_id: "tmp_h1",
+                    block_type: 3,
+                    heading1: {
+                      elements: [{
+                        text_run: {
+                          content: "Edited Remote Doc",
+                        },
+                      }],
+                    },
+                  },
+                  {
+                    block_id: "tmp_b1",
+                    block_type: 12,
+                    bullet: {
+                      elements: [{
+                        text_run: {
+                          content: "item",
+                        },
+                      }],
+                    },
+                  },
+                ],
+              },
+            }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+
+          if (target.pathname === `/open-apis/docx/v1/documents/${resolvedDocId}/blocks/${resolvedDocId}/children/batch_delete`) {
+            deleteCalls += 1;
+            expect(init?.method).toBe("DELETE");
+            expect(target.searchParams.get("document_revision_id")).toBe("1");
+            expect(JSON.parse(String(init?.body))).toEqual({
+              start_index: 0,
+              end_index: 1,
+            });
+
+            return new Response(JSON.stringify({
+              code: 0,
+              data: {
+                document_revision_id: 2,
+              },
+            }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+
+          if (target.pathname === `/open-apis/docx/v1/documents/${resolvedDocId}/blocks/${resolvedDocId}/descendant`) {
+            createCalls += 1;
+            expect(init?.method).toBe("POST");
+            expect(target.searchParams.get("document_revision_id")).toBe("2");
+            expect(JSON.parse(String(init?.body))).toEqual({
+              children_id: ["tmp_h1", "tmp_b1"],
+              descendants: [
+                {
+                  block_id: "tmp_h1",
+                  block_type: 3,
+                  heading1: {
+                    elements: [{
+                      text_run: {
+                        content: "Edited Remote Doc",
+                      },
+                    }],
+                  },
+                },
+                {
+                  block_id: "tmp_b1",
+                  block_type: 12,
+                  bullet: {
+                    elements: [{
+                      text_run: {
+                        content: "item",
+                      },
+                    }],
+                  },
+                },
+              ],
+            });
+            remoteMarkdown = "# Edited Remote Doc\n\n- item";
+            remoteRevisionId = "3";
+
+            return new Response(JSON.stringify({
+              code: 0,
+              data: {
+                document_revision_id: 3,
+              },
+            }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+
+          throw new Error(`unexpected fetch url: ${String(url)}`);
+        },
+      );
+
+      await runtime.openWorkspaceDoc({ workspaceId: "ws_1", docId: nodeToken });
+
+      const pushed = await runtime.pushWorkspaceDoc({
+        workspaceId: "ws_1",
+        docId: nodeToken,
+        title: "Remote Doc",
+        markdown: "# Edited Remote Doc\n\n- item",
+        force: true,
+      });
+
+      expect(convertCalls).toBe(1);
+      expect(deleteCalls).toBe(1);
+      expect(createCalls).toBe(1);
+      expect(refreshCalls).toBe(3);
+      expect(pushed.pushStatus).toBe("succeeded");
+      expect(pushed.item.markdown).toBe("# Edited Remote Doc\n\n- item");
+      expect(pushed.item.cache?.hasLocalChanges).toBe(false);
+
+      const cached = await runtime.getWorkspaceDocLocalDraft({ workspaceId: "ws_1", docId: nodeToken });
+      expect(cached.markdown).toBe("# Edited Remote Doc\n\n- item");
+      expect(cached.cache?.hasLocalChanges).toBe(false);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("pushWorkspaceDoc preserves the local draft when a plain markdown push refresh keeps projecting empty content", async () => {
+    const snapshot = createSnapshot();
+    const nodeToken = "node_1";
+    const resolvedDocId = "doc_1";
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-push-refresh-empty-"));
+    let remoteMarkdown = "# Remote Doc";
+    let remoteRevisionId = "1";
+    let convertCalls = 0;
+    let deleteCalls = 0;
+    let createCalls = 0;
+    let refreshCalls = 0;
+
+    try {
+      const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
+      const runtime = createRuntimeWithContentSource(
+        snapshot,
+        {
+          readDocumentContent: async () => createContentView(resolvedDocId, "Remote Doc", remoteMarkdown),
+          readDocumentBundle: async (_accessToken, docId) => {
+            const document = {
+              document_id: resolvedDocId,
+              title: "Remote Doc",
+              revision_id: remoteRevisionId,
+            };
+
+            if (remoteRevisionId === "1") {
+              return {
+                content: createContentView(resolvedDocId, "Remote Doc", remoteMarkdown),
+                ir: createDocumentIRWithText(resolvedDocId, "Remote Doc", remoteMarkdown, remoteRevisionId),
+                source: {
+                  ...createSourceSnapshot(docId, "Remote Doc", resolvedDocId),
+                  document,
+                },
+              };
+            }
+
+            refreshCalls += 1;
+            return {
+              content: createContentView(resolvedDocId, "Remote Doc", ""),
+              ir: createEmptyDocumentIR(resolvedDocId, "Remote Doc", remoteRevisionId),
+              source: {
+                ...createSourceSnapshot(docId, "Remote Doc", resolvedDocId),
+                document,
+                blocks: [{ block_id: resolvedDocId, block_type: 1, children: [] }],
+              },
+            };
+          },
+        },
+        workspaceQuery,
+        async (url, init) => {
+          const target = new URL(String(url));
+          if (target.pathname === "/open-apis/docx/v1/documents/blocks/convert") {
+            convertCalls += 1;
+            expect(init?.method).toBe("POST");
+            expect(JSON.parse(String(init?.body))).toEqual({
+              content_type: "markdown",
+              content: "# Edited Remote Doc\n\n- item",
+            });
+
+            return new Response(JSON.stringify({
+              code: 0,
+              data: {
+                first_level_block_ids: ["tmp_h1", "tmp_b1"],
+                blocks: [
+                  {
+                    block_id: "tmp_h1",
+                    block_type: 3,
+                    heading1: {
+                      elements: [{
+                        text_run: {
+                          content: "Edited Remote Doc",
+                        },
+                      }],
+                    },
+                  },
+                  {
+                    block_id: "tmp_b1",
+                    block_type: 12,
+                    bullet: {
+                      elements: [{
+                        text_run: {
+                          content: "item",
+                        },
+                      }],
+                    },
+                  },
+                ],
+              },
+            }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+
+          if (target.pathname === `/open-apis/docx/v1/documents/${resolvedDocId}/blocks/${resolvedDocId}/children/batch_delete`) {
+            deleteCalls += 1;
+            expect(init?.method).toBe("DELETE");
+            expect(target.searchParams.get("document_revision_id")).toBe("1");
+            expect(JSON.parse(String(init?.body))).toEqual({
+              start_index: 0,
+              end_index: 1,
+            });
+
+            return new Response(JSON.stringify({
+              code: 0,
+              data: {
+                document_revision_id: 2,
+              },
+            }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+
+          if (target.pathname === `/open-apis/docx/v1/documents/${resolvedDocId}/blocks/${resolvedDocId}/descendant`) {
+            createCalls += 1;
+            expect(init?.method).toBe("POST");
+            expect(target.searchParams.get("document_revision_id")).toBe("2");
+            expect(JSON.parse(String(init?.body))).toEqual({
+              children_id: ["tmp_h1", "tmp_b1"],
+              descendants: [
+                {
+                  block_id: "tmp_h1",
+                  block_type: 3,
+                  heading1: {
+                    elements: [{
+                      text_run: {
+                        content: "Edited Remote Doc",
+                      },
+                    }],
+                  },
+                },
+                {
+                  block_id: "tmp_b1",
+                  block_type: 12,
+                  bullet: {
+                    elements: [{
+                      text_run: {
+                        content: "item",
+                      },
+                    }],
+                  },
+                },
+              ],
+            });
+            remoteMarkdown = "# Edited Remote Doc\n\n- item";
+            remoteRevisionId = "3";
+
+            return new Response(JSON.stringify({
+              code: 0,
+              data: {
+                document_revision_id: 3,
+              },
+            }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+
+          throw new Error(`unexpected fetch url: ${String(url)}`);
+        },
+      );
+
+      await runtime.openWorkspaceDoc({ workspaceId: "ws_1", docId: nodeToken });
+
+      const pushed = await runtime.pushWorkspaceDoc({
+        workspaceId: "ws_1",
+        docId: nodeToken,
+        title: "Remote Doc",
+        markdown: "# Edited Remote Doc\n\n- item",
+        force: true,
+      });
+
+      expect(convertCalls).toBe(1);
+      expect(deleteCalls).toBe(1);
+      expect(createCalls).toBe(1);
+      expect(refreshCalls).toBe(6);
+      expect(pushed.pushStatus).toBe("blocked");
+      expect(pushed.item.markdown).toBe("# Edited Remote Doc\n\n- item");
+      expect(pushed.message).toContain("未确认远端写入成功");
+      expect(pushed.item.cache?.hasLocalChanges).toBe(true);
+
+      const cached = await runtime.getWorkspaceDocLocalDraft({ workspaceId: "ws_1", docId: nodeToken });
+      expect(cached.markdown).toBe("# Edited Remote Doc\n\n- item");
+      expect(cached.cache?.hasLocalChanges).toBe(true);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("pushWorkspaceDoc blocks a plain markdown push when remote refresh stays on the previous non-empty content", async () => {
+    const snapshot = createSnapshot();
+    const nodeToken = "node_1";
+    const resolvedDocId = "doc_1";
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-push-refresh-stale-"));
+    let remoteMarkdown = "# Remote Doc";
+    let remoteRevisionId = "1";
+    let convertCalls = 0;
+    let deleteCalls = 0;
+    let createCalls = 0;
+    let refreshCalls = 0;
+
+    try {
+      const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
+      const runtime = createRuntimeWithContentSource(
+        snapshot,
+        {
+          readDocumentContent: async () => createContentView(resolvedDocId, "Remote Doc", remoteMarkdown),
+          readDocumentBundle: async (_accessToken, docId) => {
+            const document = {
+              document_id: resolvedDocId,
+              title: "Remote Doc",
+              revision_id: remoteRevisionId,
+            };
+
+            if (remoteRevisionId === "1") {
+              return {
+                content: createContentView(resolvedDocId, "Remote Doc", remoteMarkdown),
+                ir: createDocumentIRWithText(resolvedDocId, "Remote Doc", remoteMarkdown, remoteRevisionId),
+                source: {
+                  ...createSourceSnapshot(docId, "Remote Doc", resolvedDocId),
+                  document,
+                },
+              };
+            }
+
+            refreshCalls += 1;
+            return {
+              content: createContentView(resolvedDocId, "Remote Doc", "# Remote Doc"),
+              ir: createDocumentIRWithText(resolvedDocId, "Remote Doc", "# Remote Doc", remoteRevisionId),
+              source: {
+                ...createSourceSnapshot(docId, "Remote Doc", resolvedDocId),
+                document,
+              },
+            };
+          },
+        },
+        workspaceQuery,
+        async (url, init) => {
+          const target = new URL(String(url));
+          if (target.pathname === "/open-apis/docx/v1/documents/blocks/convert") {
+            convertCalls += 1;
+            expect(init?.method).toBe("POST");
+            expect(JSON.parse(String(init?.body))).toEqual({
+              content_type: "markdown",
+              content: "# Edited Remote Doc\n\n- item",
+            });
+
+            return new Response(JSON.stringify({
+              code: 0,
+              data: {
+                first_level_block_ids: ["tmp_h1", "tmp_b1"],
+                blocks: [
+                  {
+                    block_id: "tmp_h1",
+                    block_type: 3,
+                    heading1: {
+                      elements: [{
+                        text_run: {
+                          content: "Edited Remote Doc",
+                        },
+                      }],
+                    },
+                  },
+                  {
+                    block_id: "tmp_b1",
+                    block_type: 12,
+                    bullet: {
+                      elements: [{
+                        text_run: {
+                          content: "item",
+                        },
+                      }],
+                    },
+                  },
+                ],
+              },
+            }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+
+          if (target.pathname === `/open-apis/docx/v1/documents/${resolvedDocId}/blocks/${resolvedDocId}/children/batch_delete`) {
+            deleteCalls += 1;
+            expect(init?.method).toBe("DELETE");
+            expect(target.searchParams.get("document_revision_id")).toBe("1");
+            expect(JSON.parse(String(init?.body))).toEqual({
+              start_index: 0,
+              end_index: 1,
+            });
+
+            return new Response(JSON.stringify({
+              code: 0,
+              data: {
+                document_revision_id: 2,
+              },
+            }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+
+          if (target.pathname === `/open-apis/docx/v1/documents/${resolvedDocId}/blocks/${resolvedDocId}/descendant`) {
+            createCalls += 1;
+            expect(init?.method).toBe("POST");
+            expect(target.searchParams.get("document_revision_id")).toBe("2");
+            expect(JSON.parse(String(init?.body))).toEqual({
+              children_id: ["tmp_h1", "tmp_b1"],
+              descendants: [
+                {
+                  block_id: "tmp_h1",
+                  block_type: 3,
+                  heading1: {
+                    elements: [{
+                      text_run: {
+                        content: "Edited Remote Doc",
+                      },
+                    }],
+                  },
+                },
+                {
+                  block_id: "tmp_b1",
+                  block_type: 12,
+                  bullet: {
+                    elements: [{
+                      text_run: {
+                        content: "item",
+                      },
+                    }],
+                  },
+                },
+              ],
+            });
+            remoteMarkdown = "# Edited Remote Doc\n\n- item";
+            remoteRevisionId = "3";
+
+            return new Response(JSON.stringify({
+              code: 0,
+              data: {
+                document_revision_id: 3,
+              },
+            }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+
+          throw new Error(`unexpected fetch url: ${String(url)}`);
+        },
+      );
+
+      await runtime.openWorkspaceDoc({ workspaceId: "ws_1", docId: nodeToken });
+
+      const pushed = await runtime.pushWorkspaceDoc({
+        workspaceId: "ws_1",
+        docId: nodeToken,
+        title: "Remote Doc",
+        markdown: "# Edited Remote Doc\n\n- item",
+        force: true,
+      });
+
+      expect(convertCalls).toBe(1);
+      expect(deleteCalls).toBe(1);
+      expect(createCalls).toBe(1);
+      expect(refreshCalls).toBe(6);
+      expect(pushed.pushStatus).toBe("blocked");
+      expect(pushed.message).toContain("未确认远端写入成功");
+      expect(pushed.item.markdown).toBe("# Edited Remote Doc\n\n- item");
+      expect(pushed.item.cache?.hasLocalChanges).toBe(true);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("pushWorkspaceDoc blocks unsupported draft mutations instead of publishing a new document", async () => {
+    const snapshot = createSnapshot();
+    const nodeToken = "node_1";
+    const resolvedDocId = "doc_1";
     const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-push-new-"));
-    let remoteWriterCalls = 0;
-    let remoteWriterTitle = "";
 
     try {
       const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
@@ -1136,31 +2059,14 @@ describe("DesktopFeishuDocRuntime", () => {
       const runtime = createRuntimeWithContentSource(
         snapshot,
         {
-          readDocumentContent: async (_accessToken, docId) => createContentView(docId, docId === newDocId ? "Generated" : "Remote Doc", "# Rewritten from scratch"),
+          readDocumentContent: async (_accessToken, docId) => createContentView(docId, "Remote Doc", "# Rewritten from scratch"),
           readDocumentBundle: async (_accessToken, docId) => ({
-            content: createContentView(docId, docId === newDocId ? "Generated" : "Remote Doc", "# Rewritten from scratch"),
-            ir: docId === newDocId
-              ? createDocumentIRWithText(newDocId, "Generated", "# Rewritten from scratch")
-              : baseIR,
-            source: createSourceSnapshot(docId === newDocId ? newDocId : nodeToken, docId === newDocId ? "Generated" : "Remote Doc", docId === newDocId ? newDocId : resolvedDocId),
+            content: createContentView(docId, "Remote Doc", "# Rewritten from scratch"),
+            ir: baseIR,
+            source: createSourceSnapshot(nodeToken, "Remote Doc", resolvedDocId),
           }),
         },
         workspaceQuery,
-        undefined,
-        {
-          docWorkspaceRuntime: {
-            openDocument: async () => ({ source: "cache", ir: baseIR }),
-            pullLatest: async () => ({ ir: baseIR }),
-            pushDocument: async () => ({ status: "succeeded" }),
-          },
-          remoteWriter: {
-            createDocument: async ({ title }) => {
-              remoteWriterCalls += 1;
-              remoteWriterTitle = title;
-              return { documentId: newDocId, title };
-            },
-          },
-        },
       );
 
       await runtime.openWorkspaceDoc({ workspaceId: "ws_1", docId: nodeToken });
@@ -1172,10 +2078,10 @@ describe("DesktopFeishuDocRuntime", () => {
         force: true,
       });
 
-      expect(remoteWriterCalls).toBe(1);
-      expect(remoteWriterTitle).toBe("Remote Doc");
-      expect(pushed.pushStatus).toBe("published_new");
-      expect(pushed.message).toContain(newDocId);
+      expect(pushed.pushStatus).toBe("blocked");
+      expect(pushed.message).toContain("unsupported or unknown block removed from draft");
+      expect(pushed.item.cache?.publishModeRecommendation).toBe("update_existing");
+      expect(pushed.item.cache?.hasBlockedChanges).toBe(true);
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }
