@@ -1,4 +1,5 @@
 import type { FeishuDocIR, FeishuDocIRBlock } from "../../../../../shared/desktop-feishu-doc-ir";
+import { isReversibleMermaidAsset } from "./feishu-doc-whiteboard-reversible";
 
 export function feishuDocIRToSourceMarkdown(ir: FeishuDocIR): string {
   const root = ir.blocks[ir.document.rootBlockId];
@@ -12,6 +13,13 @@ function blockToSourceMarkdown(ir: FeishuDocIR, blockId: string): string {
   const block = ir.blocks[blockId];
   if (!block) {
     return "";
+  }
+
+  const reversibleAsset = block.resource?.token
+    ? ir.assets[block.resource.token]
+    : undefined;
+  if (isReversibleMermaidAsset(reversibleAsset)) {
+    return `\`\`\`mermaid\n${reversibleAsset.reversible.source}\n\`\`\``;
   }
 
   const text = blockText(block);

@@ -13,6 +13,19 @@ export type FeishuDocIRTextRun = {
   raw: unknown;
 };
 
+export type FeishuDocIRReversibleState = "mermaid" | "unsupported" | "error";
+
+export type FeishuDocIRReversibleAsset = {
+  format: "mermaid";
+  source: string;
+  sourceChecksum: string;
+  ordinal: number;
+  origin: "whiteboard_code_export" | "docs_ai_markdown";
+  state: FeishuDocIRReversibleState;
+  lastResolvedAt: string;
+  lastError?: string;
+};
+
 export type FeishuDocIRAsset = {
   token: string;
   kind: "image" | "file" | "whiteboard" | "mindnote" | "diagram" | "unknown";
@@ -26,6 +39,7 @@ export type FeishuDocIRAsset = {
   height?: number;
   name?: string;
   error?: string;
+  reversible?: FeishuDocIRReversibleAsset;
 };
 
 export type FeishuDocIRBlock = {

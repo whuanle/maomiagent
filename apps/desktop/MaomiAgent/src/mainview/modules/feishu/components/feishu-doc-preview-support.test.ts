@@ -26,6 +26,10 @@ describe("feishu doc preview support", () => {
     expect(extractFeishuWhiteboardTokens(markdown)).toEqual(["wb_1", "board_1", "diagram_1", "mind_1"])
   })
 
+  test("does not extract whiteboard preview tokens from Mermaid fences", () => {
+    expect(extractFeishuWhiteboardTokens("```mermaid\nflowchart TD\nA-->B\n```")).toEqual([])
+  })
+
   test("creates a minimal readonly preview IR", () => {
     expect(createFeishuDocPreviewIR({
       docId: "doc-token",

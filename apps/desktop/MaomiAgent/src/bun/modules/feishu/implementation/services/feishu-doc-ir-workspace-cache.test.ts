@@ -89,4 +89,43 @@ describe("FeishuDocIRWorkspaceCache", () => {
       expect(await cache.readDocument("doc:2")).toEqual(nextIR);
     });
   });
+
+  test("round-trips reversible Mermaid asset metadata", async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const cache = new FeishuDocIRWorkspaceCache(workspaceRoot);
+      const ir = sampleIR("doc_3", "Reversible Doc");
+      ir.assets.wb_1 = {
+        token: "wb_1",
+        kind: "whiteboard",
+        mime: "",
+        cacheKey: "",
+        status: "missing",
+        localPath: "",
+        checksum: "",
+        reversible: {
+          format: "mermaid",
+          source: "flowchart TD\nA-->B",
+          sourceChecksum: "sha256:test",
+          ordinal: 0,
+          origin: "whiteboard_code_export",
+          state: "mermaid",
+          lastResolvedAt: "2026-05-29T00:00:00.000Z",
+        },
+      };
+
+      await cache.writeDocument("doc_3", ir);
+
+      await expect(cache.readDocument("doc_3")).resolves.toEqual(expect.objectContaining({
+        assets: {
+          wb_1: expect.objectContaining({
+            reversible: expect.objectContaining({
+              format: "mermaid",
+              ordinal: 0,
+              source: "flowchart TD\nA-->B",
+            }),
+          }),
+        },
+      }));
+    });
+  });
 });
