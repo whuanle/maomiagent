@@ -37,6 +37,7 @@ import {
 import { DESKTOP_FEISHU_STORE_PORT } from "../abstraction/tokens/desktop-feishu-store.tokens";
 import { DesktopFeishuDocRuntime } from "../implementation/services/desktop-feishu-doc-runtime";
 import { DesktopFeishuConversationCapabilityProvider } from "../implementation/services/desktop-feishu-conversation-capability-provider";
+import { FeishuDocRemoteWhiteboardApi } from "../implementation/services/feishu-doc-remote-whiteboard-api";
 import { FeishuDocTreeCache } from "../implementation/services/feishu-doc-tree-cache";
 import { FeishuDocTreeLoader } from "../implementation/services/feishu-doc-tree-loader";
 import { FeishuDocTreeRemoteSource } from "../implementation/services/feishu-doc-tree-remote-source";
@@ -111,6 +112,11 @@ export class DesktopFeishuModule extends DependencyModuleBase {
             forceRefresh: input?.forceRefresh,
           });
         };
+        const whiteboardApi = new FeishuDocRemoteWhiteboardApi({
+          client: openApiClient,
+          baseUrl: "https://open.feishu.cn/open-apis",
+          accessToken,
+        });
         const remoteSource = new FeishuDocTreeRemoteSource({
           getJson: async <T>(url: string, _accessToken: string) => withDesktopFeishuDeveloperAccessTokenRetry(
             {
@@ -119,7 +125,7 @@ export class DesktopFeishuModule extends DependencyModuleBase {
             },
             ({ accessToken }) => openApiClient.getJson<T>(url, accessToken),
           ),
-        });
+        }, whiteboardApi);
         const treeLoader = new FeishuDocTreeLoader({
           scopeId: () => "desktop.feishu.smart-assistant",
           accessToken: () => accessToken(),

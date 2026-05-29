@@ -6,6 +6,7 @@ import type {
 import type { FeishuDocIR } from "../../../../../shared/desktop-feishu-doc-ir";
 import { feishuDocIRToSourceMarkdown } from "./feishu-doc-source-markdown-codec";
 import type { FeishuDocSourceSnapshot } from "./feishu-doc-source-workspace-cache";
+import { applyRecoveredMermaidWhiteboards } from "./feishu-doc-whiteboard-reversible";
 import {
   normalizeFeishuDocBlocksToIR,
   type FeishuRawDocBlock,
@@ -13,6 +14,10 @@ import {
 
 export type FeishuOpenApiReader = {
   getJson<T>(url: string, accessToken: string): Promise<T>;
+};
+
+type FeishuWhiteboardCodeReader = {
+  queryWhiteboardCode(input: { whiteboardToken: string }): Promise<{ format: string; source: string } | null>;
 };
 
 export type FeishuDocTreeRecognizedRoot = {
@@ -78,6 +83,31 @@ const FEISHU_DOC_TREE_OBJECT_TYPES = new Set<FeishuDocTreeObjectType>([
   "file",
   "slides",
 ]);
+const FEISHU_MERMAID_SOURCE_MARKERS = [
+  "graph ",
+  "flowchart ",
+  "sequenceDiagram",
+  "classDiagram",
+  "stateDiagram",
+  "erDiagram",
+  "journey",
+  "mindmap",
+  "timeline",
+  "gitGraph",
+  "pie ",
+  "quadrantChart",
+  "requirement",
+  "xychart-beta",
+  "block-beta",
+  "sankey-beta",
+  "packet-beta",
+  "architecture-beta",
+  "C4Context",
+  "C4Container",
+  "C4Component",
+  "C4Dynamic",
+  "C4Deployment",
+] as const;
 
 function openApiUrl(path: string, params: Record<string, string | number | boolean | undefined | null> = {}): string {
   const search = new URLSearchParams();
@@ -165,7 +195,10 @@ function ensureDocumentRootBlock(blocks: FeishuRawDocBlock[], documentId: string
 }
 
 export class FeishuDocTreeRemoteSource {
-  constructor(private readonly reader: FeishuOpenApiReader) {}
+  constructor(
+    private readonly reader: FeishuOpenApiReader,
+    private readonly whiteboardApi?: FeishuWhiteboardCodeReader,
+  ) {}
 
   async readDocumentBundle(accessToken: string, docId: string): Promise<ResolvedFeishuDocxDocument> {
     try {
@@ -224,13 +257,17 @@ export class FeishuDocTreeRemoteSource {
       nodeToken: documentIdType === "wiki_node_token" ? docId : undefined,
       blocks,
     });
-    const markdown = feishuDocIRToSourceMarkdown(ir).trimEnd();
-    const riskyBlocks = Object.values(ir.blocks)
+    const recoveredIr = await this.reverseWhiteboardsInIR({
+      ir,
+      pulledAt,
+    });
+    const markdown = feishuDocIRToSourceMarkdown(recoveredIr).trimEnd();
+    const riskyBlocks = Object.values(recoveredIr.blocks)
       .filter((block) => block.type === "undefined")
       .map((block) => block.id);
 
     return {
-      ir,
+      ir: recoveredIr,
       source: {
         requestedDocId: docId,
         resolvedDocId,
@@ -257,6 +294,62 @@ export class FeishuDocTreeRemoteSource {
         },
       } as FeishuDocContentView,
     };
+  }
+
+  private async reverseWhiteboardsInIR(input: {
+    ir: FeishuDocIR;
+    pulledAt: string;
+  }): Promise<FeishuDocIR> {
+    if (!this.whiteboardApi) {
+      return input.ir;
+    }
+
+    const whiteboardTokens = [...new Set(
+      Object.values(input.ir.blocks)
+        .filter((block) => isWhiteboardLike(block.type) && block.resource?.token)
+        .map((block) => block.resource!.token),
+    )];
+    if (whiteboardTokens.length === 0) {
+      return input.ir;
+    }
+
+    const recovered = (await Promise.all(whiteboardTokens.map(async (whiteboardToken) => {
+      try {
+        const result = await this.whiteboardApi?.queryWhiteboardCode({ whiteboardToken });
+        if (!result) {
+          return null;
+        }
+
+        const format = result.format.trim().toLowerCase();
+        if (format && format !== "mermaid" && format !== "unknown") {
+          return null;
+        }
+
+        const source = result.source.trim();
+        if (!source || (format !== "mermaid" && !looksLikeMermaidSource(source))) {
+          return null;
+        }
+
+        return {
+          whiteboardToken,
+          format: "mermaid" as const,
+          source,
+          origin: "whiteboard_code_export" as const,
+          resolvedAt: input.pulledAt,
+        };
+      } catch {
+        return null;
+      }
+    }))).filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+
+    if (recovered.length === 0) {
+      return input.ir;
+    }
+
+    return applyRecoveredMermaidWhiteboards({
+      ir: input.ir,
+      recovered,
+    });
   }
 
   async recognizeRoot(accessToken: string, token: string): Promise<FeishuDocTreeRecognizedRoot> {
@@ -357,4 +450,17 @@ export class FeishuDocTreeRemoteSource {
 
     return node;
   }
+}
+
+function isWhiteboardLike(type: string): boolean {
+  return type === "whiteboard" || type === "board" || type === "diagram";
+}
+
+function looksLikeMermaidSource(source: string): boolean {
+  const normalized = source.trimStart();
+  if (!normalized) {
+    return false;
+  }
+
+  return FEISHU_MERMAID_SOURCE_MARKERS.some((marker) => normalized.startsWith(marker));
 }

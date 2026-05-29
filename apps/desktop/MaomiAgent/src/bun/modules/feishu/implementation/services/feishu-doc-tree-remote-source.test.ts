@@ -3,21 +3,39 @@ import { FeishuDocTreeRemoteSource } from "./feishu-doc-tree-remote-source";
 
 type RequestRecord = { url: string; token: string };
 
-function createSource(responses: Record<string, unknown>, requests: RequestRecord[] = []) {
-  return new FeishuDocTreeRemoteSource({
-    getJson: async (url: string, accessToken: string) => {
-      requests.push({ url, token: accessToken });
-      const match = Object.entries(responses).find(([key]) => url.includes(key));
-      if (!match) {
-        throw new Error(`No mock for ${url}`);
-      }
-      const value = match[1];
-      if (value instanceof Error) {
-        throw value;
-      }
-      return value;
+function createSource(
+  responses: Record<string, unknown>,
+  optionsOrRequests: { whiteboard?: Record<string, { format: string; source: string } | null | Error> } | RequestRecord[] = [],
+  requests: RequestRecord[] = [],
+) {
+  const options = Array.isArray(optionsOrRequests) ? {} : optionsOrRequests;
+  const requestLog = Array.isArray(optionsOrRequests) ? optionsOrRequests : requests;
+
+  return new FeishuDocTreeRemoteSource(
+    {
+      getJson: async (url: string, accessToken: string) => {
+        requestLog.push({ url, token: accessToken });
+        const match = Object.entries(responses).find(([key]) => url.includes(key));
+        if (!match) {
+          throw new Error(`No mock for ${url}`);
+        }
+        const value = match[1];
+        if (value instanceof Error) {
+          throw value;
+        }
+        return value;
+      },
     },
-  });
+    {
+      queryWhiteboardCode: async ({ whiteboardToken }) => {
+        const value = options.whiteboard?.[whiteboardToken];
+        if (value instanceof Error) {
+          throw value;
+        }
+        return value ?? null;
+      },
+    },
+  );
 }
 
 describe("FeishuDocTreeRemoteSource", () => {
@@ -242,7 +260,7 @@ describe("FeishuDocTreeRemoteSource", () => {
     const content = await source.readDocumentContent("access", "doc_1");
 
     expect(content.markdown).toContain("# 项目标题");
-    expect(content.markdown).toContain('<callout blockId="callout_1" emoji="bulb" background-color="yellow" border-color="orange">');
+    expect(content.markdown).toContain('<callout blockId="callout_1" emoji-id="bulb" background-color="yellow" border-color="orange">');
     expect(content.markdown).toContain("Callout body");
     expect(content.markdown).toContain('<image token="img_token" width="640" height="360" name="封面" />');
     expect(content.length).toBe(content.markdown.length);
@@ -305,5 +323,62 @@ describe("FeishuDocTreeRemoteSource", () => {
       expect.stringContaining("/docx/v1/documents/wiki_node_1?document_id_type=wiki_node_token"),
       expect.stringContaining("/docx/v1/documents/wiki_node_1/blocks?page_size=500&document_id_type=wiki_node_token"),
     ]);
+  });
+
+  test("readDocumentBundle recovers Mermaid whiteboards into source markdown", async () => {
+    const source = createSource({
+      "/docx/v1/documents/doc_1/blocks": {
+        items: [
+          { block_id: "doc_1", block_type: 1, children: ["wb_1"] },
+          { block_id: "wb_1", parent_id: "doc_1", block_type: 37, whiteboard: { token: "whiteboard_token_1" } },
+        ],
+      },
+      "/docx/v1/documents/doc_1": {
+        document: { document_id: "doc_1", title: "Mermaid Doc", revision_id: 7 },
+      },
+    }, {
+      whiteboard: {
+        whiteboard_token_1: {
+          format: "mermaid",
+          source: "flowchart TD\nA-->B",
+        },
+      },
+    });
+
+    const bundle = await source.readDocumentBundle("access", "doc_1");
+
+    expect(bundle.content.markdown).toContain("```mermaid\nflowchart TD\nA-->B\n```");
+    expect(bundle.ir.assets.whiteboard_token_1?.reversible).toEqual(expect.objectContaining({
+      format: "mermaid",
+      origin: "whiteboard_code_export",
+      ordinal: 0,
+    }));
+  });
+
+  test("readDocumentBundle keeps token blocks when whiteboard recovery is unsupported", async () => {
+    const source = createSource({
+      "/docx/v1/documents/doc_1/blocks": {
+        items: [
+          { block_id: "doc_1", block_type: 1, children: ["wb_1"] },
+          { block_id: "wb_1", parent_id: "doc_1", block_type: 37, whiteboard: { token: "whiteboard_token_1" } },
+        ],
+      },
+      "/docx/v1/documents/doc_1": {
+        document: { document_id: "doc_1", title: "PlantUML Doc", revision_id: 7 },
+      },
+    }, {
+      whiteboard: {
+        whiteboard_token_1: {
+          format: "plantuml",
+          source: "@startuml\nAlice -> Bob\n@enduml",
+        },
+      },
+    });
+
+    const bundle = await source.readDocumentBundle("access", "doc_1");
+
+    expect(bundle.content.markdown).toContain('<whiteboard blockId="wb_1" token="whiteboard_token_1" />');
+    expect(bundle.content.markdown).not.toContain("```mermaid");
+    expect(bundle.ir.assets.whiteboard_token_1?.reversible).toBeUndefined();
   });
 });
