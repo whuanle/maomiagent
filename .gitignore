@@ -492,3 +492,5 @@ thoughts/ledgers/
 # Keep real source directories visible
 !packages/
 !packages/**
+!apps/desktop/MaomiAgent/src/bun/modules/logs/
+!apps/desktop/MaomiAgent/src/bun/modules/logs/**
