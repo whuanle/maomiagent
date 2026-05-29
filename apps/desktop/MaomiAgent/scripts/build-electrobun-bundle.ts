@@ -1,5 +1,5 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -16,8 +16,8 @@ const buildFolder = process.env.MAOMI_DESKTOP_DEV_BUILD_FOLDER?.trim() || "build
 const artifactFolder = process.env.MAOMI_DESKTOP_ARTIFACT_FOLDER?.trim() || "artifacts";
 const buildMode = process.env.MAOMI_DESKTOP_BUILD_MODE?.trim() === "release" ? "release" : "dev";
 const ELECTROBUN_PACKAGE_ROOT = resolveElectrobunPackageRoot();
-const ELECTROBUN_WINDOWS_DIST = join(ELECTROBUN_PACKAGE_ROOT, "dist-win-x64");
 const ELECTROBUN_SHARED_DIST = join(ELECTROBUN_PACKAGE_ROOT, "dist");
+const ELECTROBUN_WINDOWS_DIST = join(ELECTROBUN_PACKAGE_ROOT, "dist-win-x64");
 const ELECTROBUN_ZIG_ASAR_X64 = join(
   ELECTROBUN_WINDOWS_DIST,
   "zig-asar",
@@ -36,6 +36,17 @@ const BUNDLED_RENDERER_DIST = join(projectRoot, "dist");
 const GENERATED_FOLDER = join(projectRoot, ".generated");
 const GENERATED_UPDATE_CONFIG_PATH = join(GENERATED_FOLDER, "update-config.json");
 const ELECTROBUN_STABLE_ENV = "stable";
+
+type DesktopTargetPlatform = ReturnType<typeof resolveDesktopAppUpdatePlatform>;
+
+type BundleLayout = {
+  bundleRoot: string;
+  bundleContentsDir: string;
+  bundleBinDir: string;
+  bundleResourcesDir: string;
+  bundleAppDir: string;
+  bundleBunDir: string;
+};
 
 await main().catch((error) => {
   console.error(error);
@@ -62,166 +73,322 @@ async function main(): Promise<void> {
 }
 
 async function prepareReleaseArtifacts(channel: string): Promise<void> {
-  if (process.platform !== "linux") {
-    await runCommand(["bun", "x", "electrobun", "build", `--env=${ELECTROBUN_STABLE_ENV}`], undefined, projectRoot);
-    return;
-  }
-
   try {
     await runCommand(["bun", "x", "electrobun", "build", `--env=${ELECTROBUN_STABLE_ENV}`], undefined, projectRoot);
     return;
   } catch (error) {
-    // The first Linux rollout only needs the bundle tarball. If Electrobun's
-    // release installer packaging fails, fall back to exporting the bundle
-    // directly so tag-driven GitHub Releases stay publishable.
     console.warn(
-      `[release] Linux stable packaging failed, retrying with bundle-only export: ${normalizeError(error)}`,
+      `[release] Stable Electrobun packaging failed, retrying with bundle-only export: ${normalizeError(error)}`,
     );
   }
 
-  await prepareLinuxBundleOnlyReleaseArtifacts(channel);
+  await prepareBundleOnlyReleaseArtifacts(channel, resolveDesktopAppUpdatePlatform());
 }
 
 async function prepareWindowsBundle(): Promise<string> {
   const bundleRoot = join(projectRoot, buildFolder, WINDOWS_BUILD_ENVIRONMENT, WINDOWS_APP_NAME);
-  await prepareWindowsBundleAt({
+  await prepareBundleAt({
     bundleRoot,
     appVersion: APP_VERSION,
     channel: "dev",
+    bundleRuntimeName: WINDOWS_APP_NAME,
+    targetPlatform: {
+      os: "win",
+      arch: "x64",
+    },
   });
 
   return bundleRoot;
 }
 
-async function prepareLinuxBundleOnlyReleaseArtifacts(channel: string): Promise<void> {
-  const targetPlatform = resolveDesktopAppUpdatePlatform();
-  if (targetPlatform.os !== "linux") {
-    throw new Error(`Linux bundle-only fallback can only run on Linux, received ${targetPlatform.os}`);
-  }
-
-  await runCommand(["bun", "x", "electrobun", "build"], undefined, projectRoot);
-
-  const devPlatformPrefix = formatPlatformPrefix("dev", targetPlatform.os, targetPlatform.arch);
+async function prepareBundleOnlyReleaseArtifacts(
+  channel: string,
+  targetPlatform: DesktopTargetPlatform,
+): Promise<void> {
   const releasePlatformPrefix = formatPlatformPrefix(channel, targetPlatform.os, targetPlatform.arch);
-  const devBundleRoot = join(projectRoot, buildFolder, devPlatformPrefix, `${APP_NAME}-dev`);
   const releaseBuildRoot = join(projectRoot, buildFolder, releasePlatformPrefix);
-  const releaseBundleRoot = join(releaseBuildRoot, APP_NAME);
-  const tarPath = join(releaseBuildRoot, `${APP_NAME}.tar`);
+  const bundleRoot = join(releaseBuildRoot, resolveReleaseBundleFolderName(targetPlatform.os));
+  const tarPath = join(releaseBuildRoot, `${basename(bundleRoot)}.tar`);
   const compressedTarPath = `${tarPath}.zst`;
   const artifactRoot = join(projectRoot, artifactFolder);
   const artifactBundlePath = join(
     artifactRoot,
-    `${releasePlatformPrefix}-${APP_NAME}.tar.zst`,
+    `${releasePlatformPrefix}-${basename(compressedTarPath)}`,
   );
-  const zstdPath = join(resolveElectrobunPlatformDist(targetPlatform.os, targetPlatform.arch), "zig-zstd");
-
-  if (!existsSync(devBundleRoot)) {
-    throw new Error(`Linux fallback could not find the dev bundle at ${devBundleRoot}`);
-  }
-  if (!existsSync(zstdPath)) {
-    throw new Error(`Linux fallback could not find zig-zstd at ${zstdPath}`);
-  }
+  const zstdPath = join(
+    resolveElectrobunPlatformDist(targetPlatform.os, targetPlatform.arch),
+    resolveExecutableName("zig-zstd", targetPlatform.os),
+  );
 
   rmSync(releaseBuildRoot, { recursive: true, force: true });
   mkdirSync(releaseBuildRoot, { recursive: true });
-  cpSync(devBundleRoot, releaseBundleRoot, { recursive: true, force: true });
-  rewriteReleaseBundleVersionFile(releaseBundleRoot, channel);
 
-  await runCommand(["tar", "-cf", tarPath, APP_NAME], undefined, releaseBuildRoot);
+  await prepareBundleAt({
+    bundleRoot,
+    appVersion: APP_VERSION,
+    channel,
+    bundleRuntimeName: APP_NAME,
+    targetPlatform,
+  });
+
+  await createTarArchive({
+    tarPath,
+    cwd: releaseBuildRoot,
+    entries: [basename(bundleRoot)],
+  });
   await runCommand(
-    [zstdPath, "compress", "-i", tarPath, "-o", compressedTarPath, "--threads", "max"],
+    [
+      zstdPath,
+      "compress",
+      "-i",
+      basename(tarPath),
+      "-o",
+      basename(compressedTarPath),
+      "--threads",
+      "max",
+    ],
     undefined,
-    projectRoot,
+    releaseBuildRoot,
   );
 
   rmSync(artifactRoot, { recursive: true, force: true });
   mkdirSync(artifactRoot, { recursive: true });
   cpSync(compressedTarPath, artifactBundlePath, { force: true });
 
-  console.log(`[release] exported Linux bundle-only artifact ${artifactBundlePath}`);
+  console.log(`[release] exported ${targetPlatform.os}-${targetPlatform.arch} bundle-only artifact ${artifactBundlePath}`);
 }
 
-async function prepareWindowsBundleAt(input: {
+async function prepareBundleAt(input: {
   bundleRoot: string;
   appVersion: string;
   channel: string;
+  bundleRuntimeName: string;
+  targetPlatform: DesktopTargetPlatform;
 }): Promise<void> {
-  const bundleRoot = input.bundleRoot;
-  const bundleBinDir = join(bundleRoot, "bin");
-  const bundleResourcesDir = join(bundleRoot, "Resources");
-  const bundleAppDir = join(bundleResourcesDir, "app");
-  const bundleBunDir = join(bundleAppDir, "bun");
+  const layout = resolveBundleLayout(input.bundleRoot, input.targetPlatform.os);
 
-  rmSync(bundleRoot, { force: true, recursive: true });
-  mkdirSync(bundleBinDir, { recursive: true });
-  mkdirSync(bundleBunDir, { recursive: true });
+  rmSync(input.bundleRoot, { force: true, recursive: true });
+  mkdirSync(layout.bundleBinDir, { recursive: true });
+  mkdirSync(layout.bundleBunDir, { recursive: true });
 
-  copyRequiredFile(join(ELECTROBUN_WINDOWS_DIST, "launcher.exe"), join(bundleBinDir, "launcher.exe"));
-  copyRequiredFile(join(ELECTROBUN_WINDOWS_DIST, "bun.exe"), join(bundleBinDir, "bun.exe"));
-  copyRequiredFile(join(ELECTROBUN_WINDOWS_DIST, "bspatch.exe"), join(bundleBinDir, "bspatch.exe"));
-  copyRequiredFile(join(ELECTROBUN_WINDOWS_DIST, "zig-zstd.exe"), join(bundleBinDir, "zig-zstd.exe"));
+  copyPlatformRuntimeFiles(layout, input.targetPlatform);
+  await buildBundleEntrypoint(layout, input.targetPlatform);
+  copyBundledRenderer(layout.bundleAppDir);
+
+  if (input.targetPlatform.os === "linux") {
+    copyLinuxBundleIcons(layout);
+  }
+  if (input.targetPlatform.os === "macos") {
+    writeMacInfoPlist(layout.bundleContentsDir, input.bundleRuntimeName, input.appVersion);
+  }
+
+  writeBundleMetadata({
+    layout,
+    appVersion: input.appVersion,
+    channel: input.channel,
+    bundleRuntimeName: input.bundleRuntimeName,
+    targetPlatform: input.targetPlatform,
+  });
+}
+
+function resolveBundleLayout(bundleRoot: string, os: string): BundleLayout {
+  if (os === "macos") {
+    const bundleContentsDir = join(bundleRoot, "Contents");
+    const bundleBinDir = join(bundleContentsDir, "MacOS");
+    const bundleResourcesDir = join(bundleContentsDir, "Resources");
+    const bundleAppDir = join(bundleResourcesDir, "app");
+    const bundleBunDir = join(bundleAppDir, "bun");
+
+    return {
+      bundleRoot,
+      bundleContentsDir,
+      bundleBinDir,
+      bundleResourcesDir,
+      bundleAppDir,
+      bundleBunDir,
+    };
+  }
+
+  if (os === "win" || os === "linux") {
+    const bundleContentsDir = bundleRoot;
+    const bundleBinDir = join(bundleRoot, "bin");
+    const bundleResourcesDir = join(bundleRoot, "Resources");
+    const bundleAppDir = join(bundleResourcesDir, "app");
+    const bundleBunDir = join(bundleAppDir, "bun");
+
+    return {
+      bundleRoot,
+      bundleContentsDir,
+      bundleBinDir,
+      bundleResourcesDir,
+      bundleAppDir,
+      bundleBunDir,
+    };
+  }
+
+  throw new Error(`Unsupported desktop bundle target: ${os}`);
+}
+
+function copyPlatformRuntimeFiles(
+  layout: BundleLayout,
+  targetPlatform: DesktopTargetPlatform,
+): void {
+  const platformDist = resolveElectrobunPlatformDist(targetPlatform.os, targetPlatform.arch);
+  const executableNames = ["launcher", "bun", "bspatch", "zig-zstd"] as const;
+
+  for (const executableName of executableNames) {
+    const fileName = resolveExecutableName(executableName, targetPlatform.os);
+    copyRequiredFile(join(platformDist, fileName), join(layout.bundleBinDir, fileName));
+  }
+
+  const libraryExtension = resolveLibraryExtension(targetPlatform.os);
   copyRequiredFile(
-    join(ELECTROBUN_WINDOWS_DIST, "libNativeWrapper.dll"),
-    join(bundleBinDir, "libNativeWrapper.dll"),
+    join(platformDist, `libNativeWrapper${libraryExtension}`),
+    join(layout.bundleBinDir, `libNativeWrapper${libraryExtension}`),
   );
-  copyRequiredFile(
-    join(ELECTROBUN_WINDOWS_DIST, "WebView2Loader.dll"),
-    join(bundleBinDir, "WebView2Loader.dll"),
+
+  if (targetPlatform.os === "win") {
+    copyRequiredFile(join(platformDist, "WebView2Loader.dll"), join(layout.bundleBinDir, "WebView2Loader.dll"));
+    copyRequiredFile(ELECTROBUN_ZIG_ASAR_X64, join(layout.bundleBinDir, "libasar.dll"));
+    copyRequiredFile(ELECTROBUN_ZIG_ASAR_ARM64, join(layout.bundleBinDir, "libasar-arm64.dll"));
+  } else {
+    copyRequiredFile(
+      join(platformDist, `libasar${libraryExtension}`),
+      join(layout.bundleBinDir, `libasar${libraryExtension}`),
+    );
+  }
+
+  copyRequiredFile(resolveElectrobunMainJsPath(targetPlatform), join(layout.bundleResourcesDir, "main.js"));
+}
+
+async function buildBundleEntrypoint(
+  layout: BundleLayout,
+  targetPlatform: DesktopTargetPlatform,
+): Promise<void> {
+  const bunBinaryPath = join(
+    layout.bundleBinDir,
+    resolveExecutableName("bun", targetPlatform.os),
   );
-  copyRequiredFile(ELECTROBUN_ZIG_ASAR_X64, join(bundleBinDir, "libasar.dll"));
-  copyRequiredFile(ELECTROBUN_ZIG_ASAR_ARM64, join(bundleBinDir, "libasar-arm64.dll"));
-  copyRequiredFile(join(ELECTROBUN_SHARED_DIST, "main.js"), join(bundleResourcesDir, "main.js"));
 
   await runCommand(
     [
-      join(bundleBinDir, "bun.exe"),
+      bunBinaryPath,
       "build",
       "./src/bun/index.ts",
       "--target",
       "bun",
       "--outdir",
-      bundleBunDir,
+      layout.bundleBunDir,
       "--external",
       "playwright",
     ],
     undefined,
     projectRoot,
   );
+}
 
-  copyBundledRenderer(bundleAppDir);
+function copyLinuxBundleIcons(layout: BundleLayout): void {
+  const iconSourcePath = join(
+    projectRoot,
+    "src",
+    "mainview",
+    "public",
+    "branding",
+    "generated",
+    "icon-512.png",
+  );
+
+  if (!existsSync(iconSourcePath)) {
+    return;
+  }
+
+  copyRequiredFile(iconSourcePath, join(layout.bundleResourcesDir, "appIcon.png"));
+  copyRequiredFile(iconSourcePath, join(layout.bundleAppDir, "icon.png"));
+}
+
+function writeMacInfoPlist(
+  bundleContentsDir: string,
+  bundleRuntimeName: string,
+  appVersion: string,
+): void {
+  writeFileSync(
+    join(bundleContentsDir, "Info.plist"),
+    `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>launcher</string>
+    <key>CFBundleIdentifier</key>
+    <string>${APP_IDENTIFIER}</string>
+    <key>CFBundleName</key>
+    <string>${bundleRuntimeName}</string>
+    <key>CFBundleVersion</key>
+    <string>${appVersion}</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+</dict>
+</plist>
+`,
+  );
+}
+
+function writeBundleMetadata(input: {
+  layout: BundleLayout;
+  appVersion: string;
+  channel: string;
+  bundleRuntimeName: string;
+  targetPlatform: DesktopTargetPlatform;
+}): void {
+  const bunBinaryPath = join(
+    input.layout.bundleBinDir,
+    resolveExecutableName("bun", input.targetPlatform.os),
+  );
 
   writeFileSync(
-    join(bundleResourcesDir, "version.json"),
-    JSON.stringify({
+    join(input.layout.bundleResourcesDir, "version.json"),
+    `${JSON.stringify({
       version: input.appVersion,
       hash: "",
       channel: input.channel,
       baseUrl: "",
-      name: basename(bundleRoot),
+      name: input.bundleRuntimeName,
       identifier: APP_IDENTIFIER,
-    }),
+    })}\n`,
   );
   writeFileSync(
-    join(bundleResourcesDir, "build.json"),
-    JSON.stringify({
+    join(input.layout.bundleResourcesDir, "build.json"),
+    `${JSON.stringify({
       defaultRenderer: "native",
       availableRenderers: ["native"],
       runtime: {},
-      bunVersion: resolveEmbeddedBunVersion(join(bundleBinDir, "bun.exe")),
-    }),
+      bunVersion: resolveEmbeddedBunVersion(bunBinaryPath),
+    })}\n`,
   );
   writeFileSync(
-    join(bundleAppDir, "update-config.json"),
+    join(input.layout.bundleAppDir, "update-config.json"),
     `${JSON.stringify(
       createPackagedDesktopAppUpdateConfig({
         channel: input.channel,
-        os: "win",
-        arch: "x64",
+        os: input.targetPlatform.os,
+        arch: input.targetPlatform.arch,
       }),
       null,
       2,
     )}\n`,
   );
+}
+
+async function createTarArchive(input: {
+  tarPath: string;
+  cwd: string;
+  entries: string[];
+}): Promise<void> {
+  const resolvedTarPath = process.platform === "win32"
+    ? relative(input.cwd, input.tarPath)
+    : input.tarPath;
+
+  await runCommand(["tar", "-cf", resolvedTarPath, ...input.entries], undefined, input.cwd);
 }
 
 function writeGeneratedUpdateConfig(channel: string): void {
@@ -246,28 +413,42 @@ function resolveReleaseChannel(): string {
   return normalized === "preview" ? "preview" : "stable";
 }
 
-function rewriteReleaseBundleVersionFile(bundleRoot: string, channel: string): void {
-  const versionFilePath = join(bundleRoot, "Resources", "version.json");
-  const payload = existsSync(versionFilePath)
-    ? JSON.parse(readFileSync(versionFilePath, "utf8")) as Record<string, unknown>
-    : {};
-
-  writeFileSync(
-    versionFilePath,
-    `${JSON.stringify({
-      ...payload,
-      version: APP_VERSION,
-      hash: "",
-      channel,
-      baseUrl: "",
-      name: APP_NAME,
-      identifier: APP_IDENTIFIER,
-    })}\n`,
-  );
+function resolveReleaseBundleFolderName(os: string): string {
+  return os === "macos" ? `${APP_NAME}.app` : APP_NAME;
 }
 
 function resolveElectrobunPlatformDist(os: string, arch: string): string {
   return join(ELECTROBUN_PACKAGE_ROOT, `dist-${os}-${arch}`);
+}
+
+function resolveElectrobunMainJsPath(targetPlatform: DesktopTargetPlatform): string {
+  const platformMainPath = join(
+    resolveElectrobunPlatformDist(targetPlatform.os, targetPlatform.arch),
+    "main.js",
+  );
+  if (existsSync(platformMainPath)) {
+    return platformMainPath;
+  }
+
+  return join(ELECTROBUN_SHARED_DIST, "main.js");
+}
+
+function resolveExecutableName(baseName: string, os: string): string {
+  return os === "win" ? `${baseName}.exe` : baseName;
+}
+
+function resolveLibraryExtension(os: string): string {
+  if (os === "win") {
+    return ".dll";
+  }
+  if (os === "macos") {
+    return ".dylib";
+  }
+  if (os === "linux") {
+    return ".so";
+  }
+
+  throw new Error(`Unsupported desktop library target: ${os}`);
 }
 
 function formatPlatformPrefix(channel: string, os: string, arch: string): string {

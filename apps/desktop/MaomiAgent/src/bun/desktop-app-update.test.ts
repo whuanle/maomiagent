@@ -193,6 +193,106 @@ describe("desktop app updater runtime", () => {
     expect(result.updateInfoAsset).toBeUndefined();
   });
 
+  test("treats a macOS bundle-only release as a valid downloadable update", async () => {
+    await createPackagedRuntimeFixture({
+      channel: "stable",
+      os: "macos",
+      arch: "arm64",
+    });
+
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      id: 18,
+      tag_name: "v1.2.4",
+      assets: [
+        {
+          id: 180,
+          name: "stable-macos-arm64-MaomiAgent.app.tar.zst",
+          size: 13,
+          browser_download_url: "https://example.test/macos.tar.zst",
+        },
+      ],
+    }), {
+      headers: {
+        "content-type": "application/json",
+      },
+    })) as unknown as typeof fetch;
+
+    const result = await checkDesktopAppUpdate();
+
+    expect(result).toMatchObject({
+      configured: true,
+      supported: true,
+      installSupported: false,
+      hasUpdate: true,
+      currentChannel: "stable",
+      releaseId: 18,
+      releaseVersion: "1.2.4.0",
+      message: "A newer desktop version is available for download.",
+      bundleAsset: {
+        assetId: 180,
+        fileName: "stable-macos-arm64-MaomiAgent.app.tar.zst",
+        downloadUrl: "https://example.test/macos.tar.zst",
+      },
+      downloadAsset: {
+        assetId: 180,
+        fileName: "stable-macos-arm64-MaomiAgent.app.tar.zst",
+        downloadUrl: "https://example.test/macos.tar.zst",
+      },
+    });
+    expect(result.installerAsset).toBeUndefined();
+    expect(result.updateInfoAsset).toBeUndefined();
+  });
+
+  test("treats a windows bundle-only release as an installable update", async () => {
+    await createPackagedRuntimeFixture({
+      channel: "stable",
+      os: "win",
+      arch: "x64",
+    });
+
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      id: 19,
+      tag_name: "v1.2.4",
+      assets: [
+        {
+          id: 190,
+          name: "stable-win-x64-MaomiAgent.tar.zst",
+          size: 14,
+          browser_download_url: "https://example.test/win.tar.zst",
+        },
+      ],
+    }), {
+      headers: {
+        "content-type": "application/json",
+      },
+    })) as unknown as typeof fetch;
+
+    const result = await checkDesktopAppUpdate();
+
+    expect(result).toMatchObject({
+      configured: true,
+      supported: true,
+      installSupported: true,
+      hasUpdate: true,
+      currentChannel: "stable",
+      releaseId: 19,
+      releaseVersion: "1.2.4.0",
+      message: "A newer desktop version is available.",
+      bundleAsset: {
+        assetId: 190,
+        fileName: "stable-win-x64-MaomiAgent.tar.zst",
+        downloadUrl: "https://example.test/win.tar.zst",
+      },
+      downloadAsset: {
+        assetId: 190,
+        fileName: "stable-win-x64-MaomiAgent.tar.zst",
+        downloadUrl: "https://example.test/win.tar.zst",
+      },
+    });
+    expect(result.installerAsset).toBeUndefined();
+    expect(result.updateInfoAsset).toBeUndefined();
+  });
+
   test("uses the prerelease listing path and reports missing platform assets honestly", async () => {
     await createPackagedRuntimeFixture({
       channel: "preview",
