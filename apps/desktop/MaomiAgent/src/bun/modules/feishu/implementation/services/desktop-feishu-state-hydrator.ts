@@ -50,6 +50,7 @@ const DEFAULT_DEVELOPER_SCOPES = [
   "docx:document:readonly",
   "docx:document:create",
   "docx:document:write_only",
+  "docx:document.block:convert",
   "wiki:wiki:readonly",
   "wiki:node:read",
   "wiki:node:create",

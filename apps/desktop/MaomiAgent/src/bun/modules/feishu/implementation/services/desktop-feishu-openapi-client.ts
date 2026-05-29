@@ -236,6 +236,39 @@ export class DesktopFeishuOpenApiClient {
     }));
   }
 
+  async deleteAuthorizedJson<T>(url: string, accessToken: string, body: Record<string, unknown>): Promise<T> {
+    return this.readEnvelope<T>(await this.fetchImpl(url, {
+      method: "DELETE",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        "content-type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify(body),
+    }));
+  }
+
+  async patchAuthorizedJson<T>(url: string, accessToken: string, body: Record<string, unknown>): Promise<T> {
+    return this.readEnvelope<T>(await this.fetchImpl(url, {
+      method: "PATCH",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        "content-type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify(body),
+    }));
+  }
+
+  async putAuthorizedJson<T>(url: string, accessToken: string, body: Record<string, unknown>): Promise<T> {
+    return this.readEnvelope<T>(await this.fetchImpl(url, {
+      method: "PUT",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        "content-type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify(body),
+    }));
+  }
+
   private async postOAuthTokenJson(body: Record<string, string>): Promise<FeishuOAuthTokenData> {
     const response = await this.fetchImpl(FEISHU_OAUTH_TOKEN_URL, {
       method: "POST",
@@ -300,25 +333,28 @@ export class DesktopFeishuOpenApiClient {
   }
 
   private toTokens(data: FeishuOAuthTokenData, options: TokenMappingOptions): DesktopFeishuOpenApiTokens {
-    const missingFields = [
-      !data.access_token ? "access_token" : "",
-      data.expires_in == null ? "expires_in" : "",
-      options.requireRefreshToken && !data.refresh_token ? "refresh_token" : "",
-      options.requireRefreshToken && data.refresh_expires_in == null ? "refresh_expires_in" : "",
-    ].filter(Boolean);
-
-    if (missingFields.length > 0) {
+    const accessToken = data.access_token;
+    const expiresIn = data.expires_in;
+    const refreshToken = data.refresh_token ?? "";
+    const refreshExpiresIn = data.refresh_expires_in;
+    if (!accessToken || expiresIn == null || (options.requireRefreshToken && (!refreshToken || refreshExpiresIn == null))) {
+      const missingFields = [
+        !accessToken ? "access_token" : "",
+        expiresIn == null ? "expires_in" : "",
+        options.requireRefreshToken && !refreshToken ? "refresh_token" : "",
+        options.requireRefreshToken && refreshExpiresIn == null ? "refresh_expires_in" : "",
+      ].filter((value): value is string => value.length > 0);
       throw new Error(`Feishu API response missing token data: ${missingFields.join(", ")}`);
     }
 
     const nowMs = this.now().getTime();
     return {
-      accessToken: data.access_token,
-      refreshToken: data.refresh_token ?? "",
-      accessTokenExpiresAt: new Date(nowMs + data.expires_in * 1000).toISOString(),
-      refreshTokenExpiresAt: data.refresh_expires_in == null
+      accessToken,
+      refreshToken,
+      accessTokenExpiresAt: new Date(nowMs + expiresIn * 1000).toISOString(),
+      refreshTokenExpiresAt: refreshExpiresIn == null
         ? ""
-        : new Date(nowMs + data.refresh_expires_in * 1000).toISOString(),
+        : new Date(nowMs + refreshExpiresIn * 1000).toISOString(),
     };
   }
 }

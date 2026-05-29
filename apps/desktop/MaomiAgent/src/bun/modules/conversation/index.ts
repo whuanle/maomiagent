@@ -12,6 +12,10 @@ export type {
   DesktopConversationCapabilityListQuery,
   DesktopConversationCapabilityListResponse,
   DesktopConversationCapabilityPreferences,
+  DesktopConversationReadWorkspaceSettingsInput,
+  DesktopConversationReadWorkspaceSettingsResponse,
+  DesktopConversationSaveWorkspaceSettingsInput,
+  DesktopConversationSaveWorkspaceSettingsResponse,
   DesktopConversationCapabilityScope,
   DesktopConversationCreateSessionInput,
   DesktopConversationCreateSessionResponse,
@@ -32,6 +36,8 @@ export type {
   DesktopConversationSessionListResponse,
   DesktopConversationSessionSettings,
   DesktopConversationSessionStatus,
+  DesktopConversationWorkspaceFilePreviewMode,
+  DesktopConversationWorkspaceSettings,
   DesktopConversationToggleCapabilityDescriptor,
 } from "./abstraction/models/desktop-conversation.models";
 export type {
@@ -56,4 +62,5 @@ export {
   DESKTOP_CONVERSATION_SERVICE_TOKEN,
 } from "./composition/conversation.module";
 export { DesktopConversationService } from "./implementation/services/desktop-conversation-service";
+export { DesktopConversationWorkspaceSettingsService } from "./implementation/services/desktop-conversation-workspace-settings-service";
 export { DesktopConversationStore } from "./implementation/stores/desktop-conversation-store";

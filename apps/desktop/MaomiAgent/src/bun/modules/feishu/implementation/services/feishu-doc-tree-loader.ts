@@ -55,6 +55,19 @@ export class FeishuDocTreeLoader {
       ? await this.deps.cache.readBranch(scopeId, input.token, cachedRoot.rootNodeId)
       : null;
 
+    if (input.preloadSubtree) {
+      try {
+        return await this.refreshRoot(scopeId, input.token, {
+          waitForHydration: true,
+        });
+      } catch (error) {
+        if (!input.forceRefresh && cachedRoot && cachedBranch) {
+          return this.cacheResult(cachedRoot, cachedBranch);
+        }
+        throw error;
+      }
+    }
+
     if (!input.forceRefresh && cachedRoot && cachedBranch) {
       void this.refreshRoot(scopeId, input.token).catch((error) => {
         void error;
@@ -84,7 +97,11 @@ export class FeishuDocTreeLoader {
     return this.refreshBranch(scopeId, input.rootToken, input.parentToken);
   }
 
-  private async refreshRoot(scopeId: string, token: string): Promise<FeishuDocTreeLoadResult> {
+  private async refreshRoot(
+    scopeId: string,
+    token: string,
+    options?: { waitForHydration?: boolean },
+  ): Promise<FeishuDocTreeLoadResult> {
     const accessToken = await this.deps.accessToken();
     const recognizedRoot = await this.deps.remote.recognizeRoot(accessToken, token);
     const children = await this.deps.remote.listChildren(accessToken, recognizedRoot);
@@ -118,16 +135,18 @@ export class FeishuDocTreeLoader {
       loadedAt,
     };
     this.deps.emit({ type: "root-refreshed", payload: result });
-    this.startHydrationTask(
-      this.hydrateChildrenProgressively(
-        scopeId,
-        token,
-        recognizedRoot,
-        children.nodes,
-        accessToken,
-        new Set([recognizedRoot.rootNodeId]),
-      ),
+    const hydrationTask = this.hydrateChildrenProgressively(
+      scopeId,
+      token,
+      recognizedRoot,
+      children.nodes,
+      accessToken,
+      new Set([recognizedRoot.rootNodeId]),
     );
+    this.startHydrationTask(hydrationTask);
+    if (options?.waitForHydration) {
+      await hydrationTask;
+    }
     return result;
   }
 

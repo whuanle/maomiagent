@@ -4,6 +4,7 @@ import {
   createServiceToken,
   type DependencyModuleContext,
 } from "../../../shared/ioc";
+import type { SingleInstanceHttpResponse } from "../../../single-instance";
 import {
   DESKTOP_FEISHU_DOC_MEDIA_PREVIEW_PATH,
   DESKTOP_FEISHU_DOC_WHITEBOARD_PREVIEW_PATH,
@@ -44,11 +45,13 @@ import { DesktopFeishuSmartAssistantActionExecutor } from "../implementation/ser
 import { DesktopFeishuOpenApiClient } from "../implementation/services/desktop-feishu-openapi-client";
 import { DesktopFeishuBotTenantSdkGateway } from "../implementation/services/desktop-feishu-bot-tenant-sdk-gateway";
 import {
+  clearDesktopFeishuDeveloperAutoRefreshTask,
   DESKTOP_FEISHU_DEVELOPER_TOKEN_AUTO_REFRESH_INTERVAL_MS,
   ensureDesktopFeishuDeveloperAccessToken,
   failDesktopFeishuDeveloperAutoRefreshTask,
   markDesktopFeishuDeveloperAutoRefreshTaskRunning,
   scheduleDesktopFeishuDeveloperAutoRefreshTask,
+  shouldRunDesktopFeishuDeveloperAutoRefreshTask,
   withDesktopFeishuDeveloperAccessTokenRetry,
 } from "../implementation/services/desktop-feishu-developer-token";
 import {
@@ -235,7 +238,7 @@ export class DesktopFeishuModule extends DependencyModuleBase {
     }) => runtimeContext.singleInstance.registerHttpRoute({
       method: "GET",
       path: input.path,
-      handler: async (request) => {
+      handler: async (request): Promise<SingleInstanceHttpResponse> => {
         const token = request.url.searchParams.get("token")?.trim() ?? "";
         if (!token) {
           return {
@@ -324,13 +327,14 @@ export class DesktopFeishuModule extends DependencyModuleBase {
 
     const runDeveloperTokenAutoRefresh = async () => {
       try {
-        const state = await feishu.getState();
-        if (state.smartAssistant.authStatus !== "authorized" || !state.smartAssistant.hasRefreshToken) {
+        const now = new Date();
+        const snapshot = await store.read();
+        if (!shouldRunDesktopFeishuDeveloperAutoRefreshTask(snapshot, now)) {
           return;
         }
 
         await runDesktopFeishuStoreMutation(store, (snapshot) => {
-          markDesktopFeishuDeveloperAutoRefreshTaskRunning(snapshot, new Date());
+          markDesktopFeishuDeveloperAutoRefreshTaskRunning(snapshot, now);
         });
         await feishu.refreshDeveloperToken();
       } catch (error) {
@@ -350,6 +354,11 @@ export class DesktopFeishuModule extends DependencyModuleBase {
     if (state.smartAssistant.authStatus === "authorized" && state.smartAssistant.hasRefreshToken) {
       await runDesktopFeishuStoreMutation(store, (snapshot) => {
         scheduleDesktopFeishuDeveloperAutoRefreshTask(snapshot, new Date(), "queued");
+      });
+      await runDeveloperTokenAutoRefresh();
+    } else {
+      await runDesktopFeishuStoreMutation(store, (snapshot) => {
+        clearDesktopFeishuDeveloperAutoRefreshTask(snapshot);
       });
     }
 

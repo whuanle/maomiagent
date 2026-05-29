@@ -33,6 +33,7 @@ import type {
   FeishuDocWhiteboardPreviewErrorItem,
   FeishuDocSummary,
   FeishuDocTreeNode,
+  FeishuDocTreeSnapshotNode,
   FeishuStateView,
 } from "../../../../shared/desktop-feishu"
 import type { FeishuDocIR } from "../../../../shared/desktop-feishu-doc-ir"
@@ -61,6 +62,7 @@ import {
   extractFeishuMediaTokens,
   extractFeishuWhiteboardTokens,
 } from "./feishu-doc-preview-support"
+import { buildFeishuDocChatDraftText } from "./feishu-doc-chat-draft"
 
 const { Text, Title } = Typography
 
@@ -158,6 +160,14 @@ function resolveStatusTagText(status: "blocked" | "limited" | "ready" | "probing
 
 function mapTreeNodes(items: FeishuDocTreeNode[]): DocsTreeNode[] {
   return items.map(mapTreeNode)
+}
+
+function mapTreeSnapshotNodes(items: FeishuDocTreeSnapshotNode[]): DocsTreeNode[] {
+  return items.map((item) => ({
+    ...mapTreeNode(item),
+    loaded: item.hasChild !== true || Boolean(item.children?.length),
+    ...(item.children?.length ? { children: mapTreeSnapshotNodes(item.children) } : {}),
+  }))
 }
 
 function mapTreeNode(item: FeishuDocTreeNode): DocsTreeNode {
@@ -298,38 +308,6 @@ function resolveInitialExpandedKeys(nodes: DocsTreeNode[], keys: string[] | unde
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value)
-}
-
-function buildDocChatDraftText(input: {
-  title: string
-  docId: string
-  resolvedDocId?: string
-  rootDocId?: string
-  url?: string
-  updateTime?: string
-  originalRelativePath?: string
-  draftRelativePath?: string
-  t: Translate
-}): string {
-  const relativeUpdate = formatRelativeDocUpdateTime(input.updateTime, input.t)
-
-  return [
-    "请先读取这篇飞书文档拉取到工作区的原始 Markdown 文件，所有总结、改写和重新生成都必须基于这个原始文件。",
-    "如果需要生成修改稿，只能写入本地 Markdown 草稿，不可以直接改动飞书远端，也不能由任何自动化流程直接推送远端。",
-    "",
-    "<feishu_doc_context>",
-    `doc_token: ${input.docId}`,
-    input.resolvedDocId && input.resolvedDocId !== input.docId ? `resolved_document_id: ${input.resolvedDocId}` : undefined,
-    `title: ${input.title}`,
-    input.rootDocId ? `root_doc_token: ${input.rootDocId}` : undefined,
-    input.url ? `url: ${input.url}` : undefined,
-    relativeUpdate ? `updated_at: ${relativeUpdate}` : undefined,
-    input.originalRelativePath ? `original_markdown_path: ${input.originalRelativePath}` : undefined,
-    input.draftRelativePath ? `local_draft_path: ${input.draftRelativePath}` : undefined,
-    input.rootDocId ? "create_target: root_doc_token" : "create_target: query_workspace_root_doc_first",
-    "workflow: read_original_then_edit_local_draft",
-    "</feishu_doc_context>",
-  ].filter((item): item is string => Boolean(item)).join("\n")
 }
 
 function resolveRemoteDocId(doc: {
@@ -607,8 +585,12 @@ export function FeishuDocsWorkbench(props: Props) {
     }
   }, [props.baseUrl, remoteDocsReady])
 
-  const hydrateTreeBranches = useCallback((rootToken: string, nodes: DocsTreeNode[], options?: { forceRefresh?: boolean }) => {
-    const runId = ++treeHydrationRunIdRef.current
+  const hydrateTreeBranches = useCallback(async (
+    rootToken: string,
+    nodes: DocsTreeNode[],
+    options?: { forceRefresh?: boolean; runId?: number },
+  ) => {
+    const runId = options?.runId ?? ++treeHydrationRunIdRef.current
     const visitedKeys = new Set<string>()
 
     const visitNode = async (node: DocsTreeNode, lineage: Set<string>): Promise<void> => {
@@ -654,16 +636,14 @@ export function FeishuDocsWorkbench(props: Props) {
       }
     }
 
-    void (async () => {
-      for (const node of nodes) {
-        await visitNode(node, new Set())
-      }
-    })()
+    for (const node of nodes) {
+      await visitNode(node, new Set())
+    }
   }, [props.baseUrl])
 
   const loadTree = useCallback(async (
     rootDocId: string,
-    options?: { forceRefresh?: boolean },
+    options?: { forceRefresh?: boolean; preloadSubtree?: boolean },
   ) => {
     const normalizedRootDocId = rootDocId.trim()
     if (!normalizedRootDocId) {
@@ -698,19 +678,46 @@ export function FeishuDocsWorkbench(props: Props) {
       setTreeLoading(true)
       setTreeStatus("loading")
       setTreeError("")
-      treeHydrationRunIdRef.current += 1
+      const hydrationRunId = treeHydrationRunIdRef.current + 1
+      treeHydrationRunIdRef.current = hydrationRunId
       loadingTreeNodeKeysRef.current.clear()
       const result = await loadFeishuDocTreeRoot(props.baseUrl, {
         token: normalizedRootDocId,
         forceRefresh: options?.forceRefresh,
+        preloadSubtree: options?.preloadSubtree,
       })
-      const nextNodes = mapTreeNodes(result.nodes)
+      const nextNodes = result.subtree?.length
+        ? mapTreeSnapshotNodes(result.subtree)
+        : mapTreeNodes(result.nodes)
       setTreeNodes(nextNodes)
       setExpandedKeys((previous) => result.source === "cache" ? previous : collectExpandableKeys(nextNodes))
       setTreeError(result.error ?? "")
-      setTreeStatus(result.source === "cache" ? "cached" : result.refreshing ? "refreshing" : "ready")
+      const shouldPreloadSubtree = options?.preloadSubtree === true
+      const hasHydratedSubtree = Boolean(result.subtree?.length)
+      setTreeStatus(
+        shouldPreloadSubtree
+          ? hasHydratedSubtree ? "ready" : "refreshing"
+          : result.source === "cache"
+            ? "cached"
+            : result.refreshing
+              ? "refreshing"
+              : "ready",
+      )
       if (!result.error) {
-        hydrateTreeBranches(normalizedRootDocId, nextNodes, { forceRefresh: options?.forceRefresh })
+        if (hasHydratedSubtree) {
+          return
+        }
+        if (shouldPreloadSubtree) {
+          await hydrateTreeBranches(normalizedRootDocId, nextNodes, {
+            forceRefresh: options?.forceRefresh,
+            runId: hydrationRunId,
+          })
+          if (treeHydrationRunIdRef.current === hydrationRunId) {
+            setTreeStatus("ready")
+          }
+        } else {
+          void hydrateTreeBranches(normalizedRootDocId, nextNodes, { forceRefresh: options?.forceRefresh })
+        }
       }
     } catch (error) {
       setTreeError(error instanceof Error ? error.message : String(error))
@@ -802,7 +809,7 @@ export function FeishuDocsWorkbench(props: Props) {
       }
 
       void loadCapabilities()
-      void loadTree(treeRootDocId, { forceRefresh: true })
+      void loadTree(treeRootDocId, { forceRefresh: true, preloadSubtree: true })
       if (currentDoc?.docId) {
         void handleOpenDoc({
           id: currentDoc.docId,
@@ -876,6 +883,9 @@ export function FeishuDocsWorkbench(props: Props) {
       lastSavedDraftRef.current = result.item.markdown
       setSaveError(result.pushStatus === "blocked" ? (result.message ?? "文档未推送") : "")
       setSaveState(result.pushStatus === "blocked" ? "error" : "saved")
+      if (result.pushStatus !== "blocked") {
+        notifier.success(props.t("飞书页.文档.反馈.推送已完成"))
+      }
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : String(error))
       setSaveState("error")
@@ -887,13 +897,14 @@ export function FeishuDocsWorkbench(props: Props) {
     hasWorkspaceContext,
     persistDraftIfDirty,
     props.baseUrl,
+    props.t,
     props.workspaceId,
   ])
 
   const handleTreeSubmit = useCallback(() => {
     const nextRoot = treeQuery.trim()
     setTreeRootDocId(nextRoot)
-    void loadTree(nextRoot, { forceRefresh: true })
+    void loadTree(nextRoot, { forceRefresh: true, preloadSubtree: true })
   }, [loadTree, treeQuery])
 
   const handleTreeQueryChange = useCallback((value: string) => {
@@ -986,7 +997,7 @@ export function FeishuDocsWorkbench(props: Props) {
       return
     }
 
-    void loadTree(treeRootDocId.trim())
+    void loadTree(treeRootDocId.trim(), { preloadSubtree: true })
   }, [loadTree, remoteDocsBlockedMessage, remoteDocsReady, statePending, treeRootDocId])
 
   useEffect(() => {
@@ -1362,7 +1373,7 @@ export function FeishuDocsWorkbench(props: Props) {
   const pushConfirmDescription = useMemo(() => {
     const details = [
       currentDoc?.cache?.hasRevisionConflict ? "远端基线已变化，本次推送会先阻止覆盖。" : "",
-      currentDoc?.cache?.hasBlockedChanges ? "当前改动不适合覆盖原文，更适合发布新文档。" : "",
+      currentDoc?.cache?.hasBlockedChanges ? "当前改动包含暂不支持的结构变更，推送会失败。" : "",
     ].filter(Boolean)
 
     if (!currentDoc?.analysis.riskyBlocks.length && details.length === 0) {
@@ -1580,22 +1591,27 @@ export function FeishuDocsWorkbench(props: Props) {
                                       const chatDoc = currentDoc?.docId === docId
                                         ? currentDoc
                                         : await openFeishuWorkspaceDoc(props.baseUrl, props.workspaceId, docId)
+                                      const chatPreviewPath = chatDoc.cache?.draftRelativePath ?? chatDoc.cache?.originalRelativePath
+                                      const chatPreviewFallbackPath = chatDoc.cache?.draftRelativePath
+                                        && chatDoc.cache?.originalRelativePath
+                                        && chatDoc.cache.draftRelativePath !== chatDoc.cache.originalRelativePath
+                                        ? chatDoc.cache.originalRelativePath
+                                        : undefined
 
                                       conversationLauncher.openConversation({
                                         workspaceId: props.workspaceId,
                                         createSession: true,
-                                        draftText: buildDocChatDraftText({
+                                        draftText: buildFeishuDocChatDraftText({
                                           title: target.doc?.title ?? target.title,
                                           docId,
                                           resolvedDocId: chatDoc.resolvedDocId ?? target.doc?.resolvedDocId,
                                           rootDocId: treeRootDocId || undefined,
                                           url: target.doc?.url,
-                                          updateTime: target.doc?.updateTime,
+                                          relativeUpdate: formatRelativeDocUpdateTime(target.doc?.updateTime, props.t),
                                           originalRelativePath: chatDoc.cache?.originalRelativePath,
                                           draftRelativePath: chatDoc.cache?.draftRelativePath,
-                                          t: props.t,
                                         }),
-                                        attachedTabs: chatDoc.cache?.originalRelativePath
+                                        attachedTabs: chatPreviewPath
                                           ? [{
                                               kind: "preview",
                                               title: target.doc?.title ?? target.title,
@@ -1603,7 +1619,8 @@ export function FeishuDocsWorkbench(props: Props) {
                                               source: {
                                                 kind: "feishu-doc",
                                                 docId,
-                                                path: chatDoc.cache.originalRelativePath,
+                                                path: chatPreviewPath,
+                                                ...(chatPreviewFallbackPath ? { fallbackPath: chatPreviewFallbackPath } : {}),
                                               },
                                             }]
                                           : undefined,

@@ -70,7 +70,7 @@ describe("assessFeishuDocPush", () => {
     expect(conflict.hasRevisionConflict).toBe(true);
   });
 
-  test("downgrades to publish_new when blocked changes exist", () => {
+  test("keeps direct push semantics and blocks when compiler changes are unsafe", () => {
     const assessment = assessFeishuDocPush({
       hasRawSourceBaseline: true,
       base: createDocIR(),
@@ -81,7 +81,37 @@ describe("assessFeishuDocPush", () => {
     });
 
     expect(assessment.status).toBe("blocked");
-    expect(assessment.publishModeRecommendation).toBe("publish_new");
+    expect(assessment.publishModeRecommendation).toBe("update_existing");
     expect(assessment.hasBlockedChanges).toBe(true);
+  });
+
+  test("blocks unsupported structural patch operations before remote push", () => {
+    const base = createDocIR();
+    const current = structuredClone(base);
+    current.blocks.h2 = {
+      id: "h2",
+      type: "heading2",
+      parentId: "doc_1",
+      children: [],
+      editable: true,
+      text: [{ kind: "text", text: "Another heading", attrs: {}, raw: {} }],
+      resource: null,
+      attrs: {},
+      raw: {},
+    };
+    current.blocks.doc_1!.children.push("h2");
+
+    const assessment = assessFeishuDocPush({
+      hasRawSourceBaseline: true,
+      base,
+      current,
+      blockedChanges: [],
+      sourceRevisionId: "1",
+      baseRevisionId: "1",
+    });
+
+    expect(assessment.status).toBe("blocked");
+    expect(assessment.publishModeRecommendation).toBe("update_existing");
+    expect(assessment.blockedChanges).toEqual([{ blockId: "h2", reason: "Unsupported patch operation: insert_block" }]);
   });
 });

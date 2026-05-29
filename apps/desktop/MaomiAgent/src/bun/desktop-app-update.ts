@@ -1,23 +1,33 @@
 import { createHash, type Hash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import {
-  buildDesktopFileDownloadUrl,
-  buildDesktopLatestVersionUrl,
-  loadDesktopAppUpdateConfig,
+  buildDesktopLatestReleaseUrl,
+  buildDesktopReleasesUrl,
   DEFAULT_DESKTOP_APP_UPDATE_CHANNEL,
+  isDesktopAppUpdateConfigured,
+  loadDesktopAppUpdateConfig,
+  normalizeDesktopAppUpdateChannel,
 } from "./desktop-app-update/config";
 import {
   parseDesktopAppPublicLatestRelease,
   selectDesktopAppPublicReleaseAssets,
+  type DesktopAppPublicLatestRelease,
 } from "./desktop-app-update/public-contract";
-import {
-  resolveDesktopAppUpdatePlatformExecutor,
-} from "./desktop-app-update/platform-executor";
+import { resolveDesktopAppUpdatePlatformExecutor } from "./desktop-app-update/platform-executor";
 import type {
+  DesktopAppUpdateAsset,
   DesktopAppUpdateCheckResult,
   DesktopAppUpdateInstallInput,
   DesktopAppUpdateInstallResult,
@@ -32,89 +42,73 @@ type LocalVersionInfo = {
   bundleRoot?: string;
 };
 
-type FrontDownloadUrlResponse = {
-  downloadUrl: string;
-  fileName: string;
-};
-
 type EmbeddedUpdateInfo = {
   version?: string;
   hash?: string;
 };
 
 const DEFAULT_VERSION = "0.1.0";
+const GITHUB_RELEASE_HEADERS = {
+  Accept: "application/vnd.github+json",
+} as const;
 
 export async function checkDesktopAppUpdate(): Promise<DesktopAppUpdateCheckResult> {
   const localInfo = await resolveLocalVersionInfo();
   const updateConfig = await loadDesktopAppUpdateConfig(localInfo.resourcesRoot);
-  const platformExecutor = resolveDesktopAppUpdatePlatformExecutor();
-
-  if (!platformExecutor.supported) {
-    return {
-      configured: Boolean(updateConfig.publicBaseUrl),
-      supported: false,
-      hasUpdate: false,
-      currentVersion: localInfo.version,
-      currentVersionCode: localInfo.versionCode,
-      currentChannel: localInfo.channel,
-      message: platformExecutor.message,
-    };
-  }
+  const currentChannel = normalizeDesktopAppUpdateChannel(
+    updateConfig.channel || localInfo.channel,
+  );
+  const configured = isDesktopAppUpdateConfigured(updateConfig);
+  const baseResult = createBaseCheckResult(localInfo, currentChannel, configured);
 
   if (!localInfo.bundleRoot || !localInfo.resourcesRoot) {
     return {
-      configured: false,
-      supported: true,
-      hasUpdate: false,
-      currentVersion: localInfo.version,
-      currentVersionCode: localInfo.versionCode,
-      currentChannel: localInfo.channel,
+      ...baseResult,
       message: "The current runtime is not a packaged desktop bundle.",
     };
   }
 
-  if (!updateConfig.publicBaseUrl) {
+  if (!configured) {
     return {
+      ...baseResult,
       configured: false,
-      supported: true,
-      hasUpdate: false,
-      currentVersion: localInfo.version,
-      currentVersionCode: localInfo.versionCode,
-      currentChannel: localInfo.channel,
-      message: "Desktop update service is not configured.",
+      message: "Desktop update source is not configured.",
     };
   }
 
-  const targetOs = updateConfig.os || "win";
-  const targetArch = updateConfig.arch || "x64";
-  const latestVersionUrl = buildDesktopLatestVersionUrl(updateConfig);
-  const response = await fetch(latestVersionUrl);
-  if (response.status === 404) {
+  let release: DesktopAppPublicLatestRelease | undefined;
+  try {
+    release = await fetchLatestDesktopRelease(updateConfig.channel, updateConfig);
+  } catch (error) {
     return {
+      ...baseResult,
       configured: true,
-      supported: true,
-      hasUpdate: false,
-      currentVersion: localInfo.version,
-      currentVersionCode: localInfo.versionCode,
-      currentChannel: localInfo.channel,
+      message: normalizeUpdateCheckError(error),
+    };
+  }
+
+  if (!release) {
+    return {
+      ...baseResult,
+      configured: true,
       message: "No published desktop version is available yet.",
     };
   }
-  if (!response.ok) {
-    throw new Error(`Update check failed (${response.status}).`);
+
+  const remoteVersion = release.version;
+  const remoteVersionCode = release.versionCode ?? resolveVersionCode(remoteVersion || "");
+  if (!release.versionId || !remoteVersion || remoteVersionCode <= 0) {
+    return {
+      ...baseResult,
+      configured: true,
+      message: "The latest GitHub Release tag is not a supported desktop version.",
+    };
   }
 
-  const payload = parseDesktopAppPublicLatestRelease(await response.json());
-  const remoteVersion = payload.version;
-  const remoteVersionCode = payload.versionCode ?? resolveVersionCode(remoteVersion || "");
-  if (!payload.versionId || !remoteVersion || remoteVersionCode <= localInfo.versionCode) {
+  if (remoteVersionCode <= localInfo.versionCode) {
     return {
+      ...baseResult,
       configured: true,
-      supported: true,
-      hasUpdate: false,
-      currentVersion: localInfo.version,
-      currentVersionCode: localInfo.versionCode,
-      currentChannel: localInfo.channel,
       message: "You are already on the latest version.",
     };
   }
@@ -123,40 +117,44 @@ export async function checkDesktopAppUpdate(): Promise<DesktopAppUpdateCheckResu
     bundleAsset,
     updateInfoAsset,
     installerAsset,
-  } = selectDesktopAppPublicReleaseAssets(payload.assets, {
-    os: targetOs,
-    arch: targetArch,
+  } = selectDesktopAppPublicReleaseAssets(release.assets, {
+    os: updateConfig.os,
+    arch: updateConfig.arch,
   });
-  if (!bundleAsset) {
+  const downloadAsset = resolveDownloadAsset(installerAsset, bundleAsset);
+  const platformExecutor = resolveDesktopAppUpdatePlatformExecutor();
+  const installSupported =
+    platformExecutor.supported &&
+    updateConfig.os === "win" &&
+    Boolean(bundleAsset?.downloadUrl);
+
+  if (!downloadAsset) {
     return {
+      ...baseResult,
       configured: true,
-      supported: true,
-      hasUpdate: false,
-      currentVersion: localInfo.version,
-      currentVersionCode: localInfo.versionCode,
-      currentChannel: localInfo.channel,
-      message: "The latest release does not contain a downloadable bundle package.",
+      message: "The latest release does not contain a downloadable package for this platform.",
     };
   }
 
   return {
+    ...baseResult,
     configured: true,
-    supported: true,
+    installSupported,
     hasUpdate: true,
-    currentVersion: localInfo.version,
-    currentVersionCode: localInfo.versionCode,
-    currentChannel: localInfo.channel,
-    message: "A newer desktop version is available.",
-    releaseId: payload.versionId,
+    message: installSupported
+      ? "A newer desktop version is available."
+      : "A newer desktop version is available for download.",
+    releaseId: release.versionId,
     releaseVersion: remoteVersion,
     releaseVersionCode: remoteVersionCode,
-    title: payload.title,
-    releaseNotes: payload.releaseNotes,
-    isForceUpdate: payload.isForceUpdate,
-    isPrerelease: payload.isPrerelease,
+    title: release.title,
+    releaseNotes: release.releaseNotes,
+    isForceUpdate: release.isForceUpdate,
+    isPrerelease: release.isPrerelease,
     bundleAsset,
     installerAsset,
     updateInfoAsset,
+    downloadAsset,
   };
 }
 
@@ -173,24 +171,28 @@ export async function installDesktopAppUpdate(
     throw new Error("The current runtime is not a packaged desktop bundle.");
   }
 
-  const updateConfig = await loadDesktopAppUpdateConfig(localInfo.resourcesRoot);
-  if (!updateConfig.publicBaseUrl) {
-    throw new Error("Desktop update service is not configured.");
+  const bundleDownloadUrl = normalizeText(input.bundleDownloadUrl);
+  if (!bundleDownloadUrl) {
+    throw new Error("Update bundle download URL is required.");
   }
 
   const stagingRoot = await createUpdateStagingRoot();
-  const bundleDownload = await requestDownloadUrl(updateConfig.publicBaseUrl, input.bundleAssetId);
-  const archivePath = path.join(stagingRoot, sanitizeFileName(bundleDownload.fileName || `${input.targetVersion}.tar.zst`));
-  const expectedBundleHash = input.updateInfoAssetId
-    ? await fetchExpectedBundleHash(updateConfig.publicBaseUrl, input.updateInfoAssetId)
+  const archivePath = path.join(
+    stagingRoot,
+    resolveDownloadFileName(bundleDownloadUrl, `${input.targetVersion}.tar.zst`),
+  );
+  const expectedBundleHash = input.updateInfoDownloadUrl
+    ? await fetchExpectedBundleHash(input.updateInfoDownloadUrl)
     : "";
 
   try {
-    await downloadToFile(bundleDownload.downloadUrl, archivePath);
+    await downloadToFile(bundleDownloadUrl, archivePath);
 
     const archiveStat = await stat(archivePath);
     if (input.bundleFileSize > 0 && archiveStat.size !== input.bundleFileSize) {
-      throw new Error(`Downloaded bundle size mismatch. Expected ${input.bundleFileSize}, received ${archiveStat.size}.`);
+      throw new Error(
+        `Downloaded bundle size mismatch. Expected ${input.bundleFileSize}, received ${archiveStat.size}.`,
+      );
     }
 
     if (expectedBundleHash) {
@@ -239,6 +241,47 @@ export async function installDesktopAppUpdate(
   }
 }
 
+async function fetchLatestDesktopRelease(
+  channel: string,
+  config: Parameters<typeof buildDesktopLatestReleaseUrl>[0],
+): Promise<DesktopAppPublicLatestRelease | undefined> {
+  if (normalizeDesktopAppUpdateChannel(channel) === "preview") {
+    const url = new URL(buildDesktopReleasesUrl(config));
+    url.searchParams.set("per_page", "20");
+
+    const response = await fetch(url.toString(), {
+      headers: GITHUB_RELEASE_HEADERS,
+    });
+    if (response.status === 404) {
+      return undefined;
+    }
+    if (!response.ok) {
+      throw new Error(`GitHub Release update check failed (${response.status}).`);
+    }
+
+    const payload = await response.json();
+    if (!Array.isArray(payload)) {
+      return undefined;
+    }
+
+    return payload
+      .map(parseDesktopAppPublicLatestRelease)
+      .find((release) => release.versionId && !release.isDraft && release.isPrerelease);
+  }
+
+  const response = await fetch(buildDesktopLatestReleaseUrl(config), {
+    headers: GITHUB_RELEASE_HEADERS,
+  });
+  if (response.status === 404) {
+    return undefined;
+  }
+  if (!response.ok) {
+    throw new Error(`GitHub Release update check failed (${response.status}).`);
+  }
+
+  return parseDesktopAppPublicLatestRelease(await response.json());
+}
+
 async function resolveLocalVersionInfo(): Promise<LocalVersionInfo> {
   const resourcesRoot = resolveResourcesRoot();
   const versionInfoPath = resourcesRoot ? path.join(resourcesRoot, "version.json") : "";
@@ -254,7 +297,9 @@ async function resolveLocalVersionInfo(): Promise<LocalVersionInfo> {
 
   const payload = JSON.parse(await readFile(versionInfoPath, "utf8")) as Record<string, unknown>;
   const version = readText(payload, ["version"]) || fallbackVersion;
-  const channel = readText(payload, ["channel"]) || DEFAULT_DESKTOP_APP_UPDATE_CHANNEL;
+  const channel = normalizeDesktopAppUpdateChannel(
+    readText(payload, ["channel"]) || DEFAULT_DESKTOP_APP_UPDATE_CHANNEL,
+  );
 
   return {
     version,
@@ -266,6 +311,11 @@ async function resolveLocalVersionInfo(): Promise<LocalVersionInfo> {
 }
 
 function resolveResourcesRoot(): string | undefined {
+  const configuredResourcesRoot = normalizeText(process.env.MAOMI_DESKTOP_RESOURCES_ROOT);
+  if (configuredResourcesRoot && existsSync(path.join(configuredResourcesRoot, "version.json"))) {
+    return configuredResourcesRoot;
+  }
+
   const candidates = [
     path.resolve(import.meta.dir, "..", ".."),
     path.resolve(process.execPath, "..", "..", "Resources"),
@@ -274,34 +324,45 @@ function resolveResourcesRoot(): string | undefined {
   return candidates.find((candidate) => existsSync(path.join(candidate, "version.json")));
 }
 
-async function requestDownloadUrl(
-  publicBaseUrl: string,
-  versionFileId: number,
-): Promise<FrontDownloadUrlResponse> {
-  const response = await fetch(buildDesktopFileDownloadUrl(publicBaseUrl, versionFileId));
-
-  if (!response.ok) {
-    throw new Error(`Failed to request download URL (${response.status}).`);
-  }
-
-  const payload = await response.json() as Record<string, unknown>;
-  const downloadUrl = readText(payload, ["downloadUrl", "DownloadUrl"]);
-  if (!downloadUrl) {
-    throw new Error("Download URL response did not contain a valid downloadUrl.");
-  }
-
+function createBaseCheckResult(
+  localInfo: LocalVersionInfo,
+  currentChannel: string,
+  configured: boolean,
+): DesktopAppUpdateCheckResult {
   return {
-    downloadUrl,
-    fileName: readText(payload, ["fileName", "FileName"]) || "",
+    configured,
+    supported: true,
+    installSupported: false,
+    hasUpdate: false,
+    currentVersion: localInfo.version,
+    currentVersionCode: localInfo.versionCode,
+    currentChannel,
   };
 }
 
-async function fetchExpectedBundleHash(
-  publicBaseUrl: string,
-  updateInfoAssetId: number,
-): Promise<string> {
-  const download = await requestDownloadUrl(publicBaseUrl, updateInfoAssetId);
-  const response = await fetch(download.downloadUrl);
+function resolveDownloadAsset(
+  installerAsset?: DesktopAppUpdateAsset,
+  bundleAsset?: DesktopAppUpdateAsset,
+): DesktopAppUpdateAsset | undefined {
+  if (installerAsset?.downloadUrl) {
+    return installerAsset;
+  }
+  if (bundleAsset?.downloadUrl) {
+    return bundleAsset;
+  }
+  return installerAsset ?? bundleAsset;
+}
+
+function normalizeUpdateCheckError(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+
+  return "GitHub Release update check failed.";
+}
+
+async function fetchExpectedBundleHash(downloadUrl: string): Promise<string> {
+  const response = await fetch(downloadUrl);
   if (!response.ok) {
     throw new Error(`Failed to download update metadata (${response.status}).`);
   }
@@ -454,6 +515,16 @@ async function updateHashFromFile(hash: Hash, filePath: string): Promise<void> {
 
 function resolveVersionCode(version: string): number {
   return deriveWoaiVersionCode(version) ?? 0;
+}
+
+function resolveDownloadFileName(url: string, fallback: string): string {
+  try {
+    const parsed = new URL(url);
+    const decoded = decodeURIComponent(parsed.pathname.split("/").pop() || "");
+    return sanitizeFileName(decoded || fallback);
+  } catch {
+    return sanitizeFileName(fallback);
+  }
 }
 
 function normalizeText(value: unknown): string {

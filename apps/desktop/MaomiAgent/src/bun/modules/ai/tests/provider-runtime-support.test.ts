@@ -98,4 +98,15 @@ describe("desktop ai provider runtime support", () => {
       reason: "ollama is cataloged as ollama/ollama-chat, but desktop ai has no matching runtime adapter yet",
     });
   });
+
+  test("keeps google generate-content cataloged until a desktop ai runtime driver is implemented", () => {
+    expect(resolveDesktopAiProviderRuntimeSupport({
+      providerType: "google",
+      protocolFamily: "google",
+      apiStyle: "generate-content",
+    })).toEqual({
+      status: "catalog-only",
+      reason: "google is cataloged as google/generate-content, but desktop ai has no matching runtime adapter yet",
+    });
+  });
 });

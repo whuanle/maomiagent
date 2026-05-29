@@ -22,9 +22,13 @@ function createLoader(options: { remoteFailure?: boolean; recognizeRoot?: (acces
     now: () => "2026-05-21T00:00:00.000Z",
     cache: {
       readRoot: async (_scope: string, token: string) => roots.get(token) ?? null,
-      saveRoot: async (_scope: string, entry: any) => roots.set(entry.token, entry),
+      saveRoot: async (_scope: string, entry: any) => {
+        roots.set(entry.token, entry);
+      },
       readBranch: async (_scope: string, _root: string, parent: string) => branches.get(parent) ?? null,
-      saveBranch: async (_scope: string, entry: any) => branches.set(entry.parentToken, entry),
+      saveBranch: async (_scope: string, entry: any) => {
+        branches.set(entry.parentToken, entry);
+      },
     },
     remote: {
       recognizeRoot: options.recognizeRoot ?? (async (_access: string, token: string) => {
@@ -93,6 +97,50 @@ describe("FeishuDocTreeLoader", () => {
     expect(branches.get("child_parent").nodes[0].token).toBe("grandchild");
   });
 
+  test("preloadSubtree waits for recursive hydration before resolving the root load", async () => {
+    const deferredBranch = createDeferred<any>();
+    const { loader, branches, updates } = createLoader({
+      listChildren: async (_access: string, root: any) => {
+        if (root.rootNodeId === "root") {
+          return {
+            nodes: [
+              { id: "child_parent", token: "child_parent", kind: "wiki_node", title: "Child Parent", hasChild: true },
+            ],
+            hasMore: false,
+          };
+        }
+
+        if (root.rootNodeId === "child_parent") {
+          return deferredBranch.promise;
+        }
+
+        return { nodes: [], hasMore: false };
+      },
+    });
+    let resolved = false;
+    const resultPromise = loader.loadRoot({ token: "root", preloadSubtree: true }).then((result) => {
+      resolved = true;
+      return result;
+    });
+
+    await Promise.resolve();
+
+    expect(resolved).toBe(false);
+    expect(branches.get("child_parent")).toBeUndefined();
+    expect(updates).not.toContainEqual(expect.objectContaining({ type: "branch-refreshed" }));
+
+    deferredBranch.resolve({
+      nodes: [{ id: "grandchild", token: "grandchild", kind: "document", title: "Grandchild", hasChild: false }],
+      hasMore: false,
+    });
+
+    const result = await resultPromise;
+
+    expect(result.source).toBe("remote");
+    expect(branches.get("child_parent").nodes[0].token).toBe("grandchild");
+    expect(updates).toContainEqual(expect.objectContaining({ type: "branch-refreshed" }));
+  });
+
   test("returns cache immediately while refreshing cached root in the background", async () => {
     const deferredRoot = createDeferred<any>();
     const { loader, roots, branches } = createLoader({
@@ -132,6 +180,23 @@ describe("FeishuDocTreeLoader", () => {
     roots.set("root", { token: "root", kind: "wiki_node", rootNodeId: "root", title: "Root", loadedAt: "2026-05-20T00:00:00.000Z" });
     branches.set("root", { rootToken: "root", parentToken: "root", loadedAt: "2026-05-20T00:00:00.000Z", complete: true, nodes: [{ id: "cached", token: "cached", kind: "document", title: "Cached", hasChild: false }] });
     await expect(loader.loadRoot({ token: "root", forceRefresh: true })).rejects.toThrow("remote down");
+  });
+
+  test("preloadSubtree falls back to cached root when the remote refresh fails", async () => {
+    const { loader, roots, branches } = createLoader({ remoteFailure: true });
+    roots.set("root", { token: "root", kind: "wiki_node", rootNodeId: "root", title: "Root", loadedAt: "2026-05-20T00:00:00.000Z" });
+    branches.set("root", {
+      rootToken: "root",
+      parentToken: "root",
+      loadedAt: "2026-05-20T00:00:00.000Z",
+      complete: true,
+      nodes: [{ id: "cached", token: "cached", kind: "document", title: "Cached", hasChild: false }],
+    });
+
+    const result = await loader.loadRoot({ token: "root", preloadSubtree: true });
+
+    expect(result.source).toBe("cache");
+    expect(result.nodes[0].title).toBe("Cached");
   });
 
   test("loads and caches a branch from the remote source", async () => {

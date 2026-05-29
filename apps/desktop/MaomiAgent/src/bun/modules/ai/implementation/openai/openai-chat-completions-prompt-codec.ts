@@ -38,6 +38,7 @@ export type OpenAIChatCompletionsMessage =
   | {
       role: "assistant";
       content: string | null;
+      reasoning_content?: string | null;
       tool_calls?: OpenAIChatCompletionsToolCall[];
     }
   | {
@@ -123,6 +124,14 @@ function collectTextParts(parts: readonly MessagePart[]): string {
     .trim();
 }
 
+function collectReasoningParts(parts: readonly MessagePart[]): string {
+  return parts
+    .filter((part): part is Extract<MessagePart, { type: "reasoning" }> => part.type === "reasoning")
+    .map((part) => part.text)
+    .join("")
+    .trim();
+}
+
 function collectToolCallRefs(
   parts: readonly MessagePart[],
 ): Array<Extract<MessagePart, { type: "tool_call_ref" }>> {
@@ -189,6 +198,7 @@ function buildAssistantMessage(
   message: MessageRecordWithParts,
 ): OpenAIChatCompletionsMessage | undefined {
   const text = collectTextParts(message.parts);
+  const reasoning = collectReasoningParts(message.parts);
   const toolCalls = collectToolCallRefs(message.parts).map((toolCall) => ({
     id: toolCall.toolCallId,
     type: "function" as const,
@@ -198,13 +208,14 @@ function buildAssistantMessage(
     },
   }));
 
-  if (!text && toolCalls.length === 0) {
+  if (!text && !reasoning && toolCalls.length === 0) {
     return undefined;
   }
 
   return {
     role: "assistant",
     content: text || null,
+    ...(reasoning ? { reasoning_content: reasoning } : {}),
     ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
   };
 }

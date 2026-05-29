@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 
 import {
   BUILTIN_MAOMI_AGENTS,
+  FEISHU_DOC_WRITER_AGENT_ID,
   resolveBuiltinDefaultAgentId,
 } from "./builtin-agents";
 import {
@@ -35,4 +36,22 @@ test("builtin wechat agent is a visible primary agent with a lightweight executo
   expect(item?.prompt).toContain("这类任务请到桌面继续");
   expect(item?.prompt).toContain("<tool_call>");
   expect(item?.prompt).toContain("不要输出 reasoning");
+});
+
+test("builtin feishu doc agent is visible in both primary and subagent contexts with doc-safe rules", () => {
+  const item = BUILTIN_MAOMI_AGENTS.find((agent) => agent.agentId === FEISHU_DOC_WRITER_AGENT_ID);
+
+  expect(item).toMatchObject({
+    agentId: FEISHU_DOC_WRITER_AGENT_ID,
+    name: "飞书文档助手",
+    mode: "all",
+    enabled: true,
+    source: "builtin-maomi",
+  });
+  expect(item?.prompt).toContain("本地草稿");
+  expect(item?.prompt).toContain("不直接推送");
+  expect(item?.prompt).toContain("标题层级");
+  expect(item?.prompt).toContain("callout");
+  expect(item?.prompt).toContain("同步块");
+  expect(item?.prompt).toContain("不臆造资源 token");
 });

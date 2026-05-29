@@ -26,6 +26,7 @@ describe("Feishu docs workbench IR loading bridge", () => {
 
   test("workbench opens and pulls workspace markdown for visual preview", async () => {
     const workbench = await source("src/mainview/modules/feishu/components/docs-workbench.tsx");
+    const draftBuilder = await source("src/mainview/modules/feishu/components/feishu-doc-chat-draft.ts");
     const page = await source("src/mainview/modules/feishu/page.tsx");
     const app = await source("src/mainview/App.tsx");
     const services = await source("src/mainview/services/app-service-container.ts");
@@ -33,16 +34,27 @@ describe("Feishu docs workbench IR loading bridge", () => {
     const pane = await source("src/mainview/modules/chat/components/workspace-pane.tsx");
 
     expect(workbench).toContain("? await openFeishuWorkspaceDoc(props.baseUrl, props.workspaceId, docId)");
-    expect(workbench).toContain("所有总结、改写和重新生成都必须基于这个原始文件");
+    expect(workbench).toContain('import { buildFeishuDocChatDraftText } from "./feishu-doc-chat-draft"');
+    expect(workbench).toContain("draftText: buildFeishuDocChatDraftText({");
+    expect(workbench).toContain("relativeUpdate: formatRelativeDocUpdateTime(target.doc?.updateTime, props.t)");
     expect(workbench).toContain("const result = await pullFeishuWorkspaceDoc(props.baseUrl, props.workspaceId, currentDoc.docId)");
+    expect(workbench).toContain("preloadSubtree: options?.preloadSubtree");
+    expect(workbench).toContain("const nextNodes = result.subtree?.length");
+    expect(workbench).toContain("mapTreeSnapshotNodes(result.subtree)");
+    expect(workbench).toContain("await hydrateTreeBranches(normalizedRootDocId, nextNodes, {");
     expect(workbench).toContain("<FeishuDocVisualEditor");
     expect(workbench).toContain("mdx={draft}");
     expect(workbench).not.toContain('className="feishu-docs-workspace-view-switch is-secondary"');
     expect(workbench).toContain("treeNodes: snapshotTreeNodes(treeNodes)");
     expect(page).toContain("initialTreeNodes={docsUiState.treeNodes}");
     expect(page).toContain("readSavedFeishuActiveWorkspaceId");
-    expect(workbench).toContain("original_markdown_path:");
+    expect(draftBuilder).toContain("original_markdown_path:");
+    expect(draftBuilder).toContain('    "---",');
+    expect(draftBuilder).toContain('    "注意：",');
+    expect(draftBuilder).not.toContain("请在上方填写你的问题或任务。");
     expect(workbench).toContain("draftRelativePath: chatDoc.cache?.draftRelativePath");
+    expect(workbench).toContain("const chatPreviewPath = chatDoc.cache?.draftRelativePath ?? chatDoc.cache?.originalRelativePath");
+    expect(workbench).toContain("const chatPreviewFallbackPath = chatDoc.cache?.draftRelativePath");
     expect(workbench).not.toContain("当前依据：飞书原始结构 + 结构化基线");
     expect(workbench).not.toContain("推荐发布方式：先重新拉取远端基线");
     expect(workbench).not.toContain("未知块保留：");
@@ -54,9 +66,13 @@ describe("Feishu docs workbench IR loading bridge", () => {
     expect(workbench).toContain("if (currentDoc?.cache?.hasLocalChanges)");
     expect(workbench).toContain("void fetchFeishuDocWhiteboardPreviewUrls(props.baseUrl, {");
     expect(workbench).toContain("createSession: true");
+    expect(workbench).toContain("void loadTree(treeRootDocId, { forceRefresh: true, preloadSubtree: true })");
+    expect(workbench).toContain("void loadTree(nextRoot, { forceRefresh: true, preloadSubtree: true })");
+    expect(workbench).toContain('void loadTree(treeRootDocId.trim(), { preloadSubtree: true })');
     expect(workbench).toContain('kind: "preview"');
     expect(workbench).toContain('kind: "feishu-doc"');
-    expect(workbench).toContain('path: chatDoc.cache.originalRelativePath');
+    expect(workbench).toContain("path: chatPreviewPath");
+    expect(workbench).toContain("fallbackPath: chatPreviewFallbackPath");
     expect(workbench).not.toContain('kind: "feishu-docs-workspace"');
     expect(app).toContain("registerAppServiceConversationLauncher");
     expect(app).toContain("pendingConversationOpenRef");

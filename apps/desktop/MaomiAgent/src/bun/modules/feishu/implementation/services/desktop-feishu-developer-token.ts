@@ -13,7 +13,9 @@ import { runDesktopFeishuStoreMutation } from "./desktop-feishu-store-mutation";
 
 const ACCESS_TOKEN_REFRESH_SKEW_MS = 5 * 60 * 1000;
 const FORCED_REFRESH_REUSE_WINDOW_MS = 30 * 1000;
-export const DESKTOP_FEISHU_DEVELOPER_TOKEN_AUTO_REFRESH_INTERVAL_MS = 60 * 60 * 1000;
+const DESKTOP_FEISHU_DEVELOPER_TOKEN_AUTO_REFRESH_FALLBACK_DELAY_MS = 60 * 60 * 1000;
+const DESKTOP_FEISHU_DEVELOPER_TOKEN_AUTO_REFRESH_RETRY_DELAY_MS = 5 * 60 * 1000;
+export const DESKTOP_FEISHU_DEVELOPER_TOKEN_AUTO_REFRESH_INTERVAL_MS = 60 * 1000;
 export const DESKTOP_FEISHU_DEVELOPER_TOKEN_AUTO_REFRESH_TASK_ID = "desktop.feishu.developer-token-auto-refresh";
 const FEISHU_REAUTHORIZE_MESSAGE = "飞书授权已过期，请重新授权";
 const FEISHU_REFRESH_TOKEN_REVOKED_MESSAGE = "refresh_token 已被撤销，请重新发起授权流程以获取新的 refresh_token";
@@ -33,6 +35,10 @@ type DeveloperTokenRetryAttempt = {
   accessToken: string;
   retried: boolean;
 };
+
+type EnsureAccessTokenResult =
+  | { ok: true; accessToken: string }
+  | { ok: false; error: Error };
 
 function getTime(value: string): number | null {
   if (!value) {
@@ -92,8 +98,33 @@ function readDeveloperCredentials(snapshot: DesktopFeishuStoreSnapshot): {
   };
 }
 
-function resolveDesktopFeishuAutoRefreshTaskNextRunAt(now: Date): string {
-  return new Date(now.getTime() + DESKTOP_FEISHU_DEVELOPER_TOKEN_AUTO_REFRESH_INTERVAL_MS).toISOString();
+function resolveAutoRefreshFallbackNextRunAt(now: Date, delayMs = DESKTOP_FEISHU_DEVELOPER_TOKEN_AUTO_REFRESH_FALLBACK_DELAY_MS): string {
+  return new Date(now.getTime() + delayMs).toISOString();
+}
+
+function resolveDesktopFeishuAutoRefreshTaskNextRunAt(
+  snapshot: DesktopFeishuStoreSnapshot,
+  now: Date,
+): string {
+  const accessExpiresAt = getTime(snapshot.developerToken.accessTokenExpiresAt);
+  if (accessExpiresAt != null) {
+    return new Date(Math.max(now.getTime(), accessExpiresAt - ACCESS_TOKEN_REFRESH_SKEW_MS)).toISOString();
+  }
+  return resolveAutoRefreshFallbackNextRunAt(now);
+}
+
+function resolvePersistedRefreshFailureMessage(snapshot: DesktopFeishuStoreSnapshot): string | null {
+  const smartAssistantMessage = snapshot.state.smartAssistant.lastError?.trim();
+  if (snapshot.state.smartAssistant.authStatus === "expired" && smartAssistantMessage) {
+    return smartAssistantMessage;
+  }
+
+  const developerMessage = snapshot.state.developer?.lastError?.trim();
+  if (snapshot.state.developer?.authStatus === "expired" && developerMessage) {
+    return developerMessage;
+  }
+
+  return null;
 }
 
 function applyDesktopFeishuAutoRefreshTaskToTarget(
@@ -123,7 +154,7 @@ export function scheduleDesktopFeishuDeveloperAutoRefreshTask(
     taskId: DESKTOP_FEISHU_DEVELOPER_TOKEN_AUTO_REFRESH_TASK_ID,
     enabled: true,
     status,
-    nextRunAt: resolveDesktopFeishuAutoRefreshTaskNextRunAt(now),
+    nextRunAt: resolveDesktopFeishuAutoRefreshTaskNextRunAt(snapshot, now),
   };
 
   if (snapshot.state.developer) {
@@ -137,7 +168,7 @@ export function markDesktopFeishuDeveloperAutoRefreshTaskRunning(
   now: Date,
 ): void {
   const nextRunAt = snapshot.state.smartAssistant.autoRefreshTask.nextRunAt
-    || resolveDesktopFeishuAutoRefreshTaskNextRunAt(now);
+    || resolveDesktopFeishuAutoRefreshTaskNextRunAt(snapshot, now);
   const task: DesktopFeishuAutoRefreshTaskState = {
     taskId: DESKTOP_FEISHU_DEVELOPER_TOKEN_AUTO_REFRESH_TASK_ID,
     enabled: true,
@@ -154,12 +185,29 @@ export function markDesktopFeishuDeveloperAutoRefreshTaskRunning(
 export function failDesktopFeishuDeveloperAutoRefreshTask(
   snapshot: DesktopFeishuStoreSnapshot,
   now: Date,
+  delayMs = DESKTOP_FEISHU_DEVELOPER_TOKEN_AUTO_REFRESH_RETRY_DELAY_MS,
 ): void {
   const task: DesktopFeishuAutoRefreshTaskState = {
     taskId: DESKTOP_FEISHU_DEVELOPER_TOKEN_AUTO_REFRESH_TASK_ID,
     enabled: true,
     status: "failed",
-    nextRunAt: resolveDesktopFeishuAutoRefreshTaskNextRunAt(now),
+    nextRunAt: resolveAutoRefreshFallbackNextRunAt(now, delayMs),
+  };
+
+  if (snapshot.state.developer) {
+    applyDesktopFeishuAutoRefreshTaskToTarget(snapshot.state.developer, task);
+  }
+  applyDesktopFeishuAutoRefreshTaskToTarget(snapshot.state.smartAssistant, task);
+}
+
+function disableDesktopFeishuDeveloperAutoRefreshTask(
+  snapshot: DesktopFeishuStoreSnapshot,
+  status: DesktopFeishuAutoRefreshTaskStatus,
+): void {
+  const task: DesktopFeishuAutoRefreshTaskState = {
+    taskId: DESKTOP_FEISHU_DEVELOPER_TOKEN_AUTO_REFRESH_TASK_ID,
+    enabled: false,
+    status,
   };
 
   if (snapshot.state.developer) {
@@ -172,15 +220,25 @@ function applyRefreshFailure(
   snapshot: DesktopFeishuStoreSnapshot,
   message: string,
   failedAt: Date,
-  authStatus: "error" | "expired",
+  authStatus: "authorized" | "error" | "expired",
 ): void {
+  const hasRefreshToken = authStatus === "authorized"
+    ? Boolean(snapshot.developerToken.refreshToken)
+    : false;
   if (snapshot.state.developer) {
     snapshot.state.developer.authStatus = authStatus;
+    snapshot.state.developer.hasRefreshToken = hasRefreshToken;
     snapshot.state.developer.lastError = message;
   }
   snapshot.state.smartAssistant.authStatus = authStatus;
+  snapshot.state.smartAssistant.hasRefreshToken = hasRefreshToken;
   snapshot.state.smartAssistant.lastError = message;
-  failDesktopFeishuDeveloperAutoRefreshTask(snapshot, failedAt);
+  if (authStatus === "authorized") {
+    failDesktopFeishuDeveloperAutoRefreshTask(snapshot, failedAt);
+    return;
+  }
+
+  disableDesktopFeishuDeveloperAutoRefreshTask(snapshot, "failed");
 }
 
 function applyRefreshSuccess(snapshot: DesktopFeishuStoreSnapshot, refreshedAt: string, refreshedAtDate: Date): void {
@@ -214,46 +272,84 @@ export async function ensureDesktopFeishuDeveloperAccessToken(
     return reusableAccessToken;
   }
 
+  const persistedFailureMessage = resolvePersistedRefreshFailureMessage(snapshot);
+  if (persistedFailureMessage) {
+    throw new Error(persistedFailureMessage);
+  }
+
   const inFlightRefresh = developerTokenRefreshInFlight.get(deps.store);
   if (inFlightRefresh) {
     return inFlightRefresh;
   }
 
-  const refreshPromise = runDesktopFeishuStoreMutation(deps.store, async (snapshot) => {
-    const reusableAccessToken = resolveReusableAccessToken(snapshot, nowMs, forceRefresh);
-    if (reusableAccessToken) {
-      return reusableAccessToken;
+  const refreshPromise = (async () => {
+    const result = await runDesktopFeishuStoreMutation(
+      deps.store,
+      async (snapshot): Promise<EnsureAccessTokenResult> => {
+        const reusableAccessToken = resolveReusableAccessToken(snapshot, nowMs, forceRefresh);
+        if (reusableAccessToken) {
+          return {
+            ok: true,
+            accessToken: reusableAccessToken,
+          };
+        }
+
+        const persistedFailureMessage = resolvePersistedRefreshFailureMessage(snapshot);
+        if (persistedFailureMessage) {
+          return {
+            ok: false,
+            error: new Error(persistedFailureMessage),
+          };
+        }
+
+        const { appId, appSecret, refreshToken } = readDeveloperCredentials(snapshot);
+        const refreshExpiresAt = getTime(snapshot.developerToken.refreshTokenExpiresAt);
+
+        try {
+          if (!appId || !appSecret || !refreshToken) {
+            throw new Error("请先完成飞书授权");
+          }
+          if (refreshExpiresAt != null && refreshExpiresAt <= nowMs) {
+            throw new Error("飞书授权已过期，请重新授权");
+          }
+
+          const tokens = await deps.openApiClient.refreshUserAccessToken({
+            appId,
+            appSecret,
+            refreshToken,
+          });
+          snapshot.developerToken = tokens;
+          applyRefreshSuccess(snapshot, now.toISOString(), now);
+          return {
+            ok: true,
+            accessToken: tokens.accessToken,
+          };
+        } catch (error) {
+          const rawMessage = error instanceof Error ? error.message : String(error);
+          const isRefreshTokenExpired = rawMessage === FEISHU_REAUTHORIZE_MESSAGE;
+          const isRefreshTokenRevoked = isDesktopFeishuRefreshTokenExpiredError(error);
+          const isCredentialMisconfigured = rawMessage === "请先完成飞书授权";
+          const authStatus = isRefreshTokenExpired || isRefreshTokenRevoked
+            ? "expired"
+            : isCredentialMisconfigured
+              ? "error"
+              : "authorized";
+          const message = isRefreshTokenRevoked ? FEISHU_REFRESH_TOKEN_REVOKED_MESSAGE : rawMessage;
+          applyRefreshFailure(snapshot, message, now, authStatus);
+          return {
+            ok: false,
+            error: new Error(message),
+          };
+        }
+      },
+    );
+
+    if (!result.ok) {
+      throw result.error;
     }
 
-    const { appId, appSecret, refreshToken } = readDeveloperCredentials(snapshot);
-    const refreshExpiresAt = getTime(snapshot.developerToken.refreshTokenExpiresAt);
-
-    try {
-      if (!appId || !appSecret || !refreshToken) {
-        throw new Error("请先完成飞书授权");
-      }
-      if (refreshExpiresAt != null && refreshExpiresAt <= nowMs) {
-        throw new Error("飞书授权已过期，请重新授权");
-      }
-
-      const tokens = await deps.openApiClient.refreshUserAccessToken({
-        appId,
-        appSecret,
-        refreshToken,
-      });
-      snapshot.developerToken = tokens;
-      applyRefreshSuccess(snapshot, now.toISOString(), now);
-      return tokens.accessToken;
-    } catch (error) {
-      const rawMessage = error instanceof Error ? error.message : String(error);
-      const isRefreshTokenExpired = rawMessage === FEISHU_REAUTHORIZE_MESSAGE;
-      const isRefreshTokenRevoked = isDesktopFeishuRefreshTokenExpiredError(error);
-      const authStatus = isRefreshTokenExpired || isRefreshTokenRevoked ? "expired" : "error";
-      const message = isRefreshTokenRevoked ? FEISHU_REFRESH_TOKEN_REVOKED_MESSAGE : rawMessage;
-      applyRefreshFailure(snapshot, message, now, authStatus);
-      throw new Error(message);
-    }
-  });
+    return result.accessToken;
+  })();
 
   developerTokenRefreshInFlight.set(deps.store, refreshPromise);
 
@@ -275,6 +371,35 @@ export async function refreshDesktopFeishuDeveloperToken(
   });
   const snapshot = await deps.store.read();
   return hydrateDesktopFeishuStateView(snapshot.state as FeishuStateView);
+}
+
+export function shouldRunDesktopFeishuDeveloperAutoRefreshTask(
+  snapshot: DesktopFeishuStoreSnapshot,
+  now: Date,
+): boolean {
+  if (
+    snapshot.state.smartAssistant.authStatus !== "authorized"
+    || !snapshot.state.smartAssistant.hasRefreshToken
+    || !snapshot.state.smartAssistant.autoRefreshTask.enabled
+  ) {
+    return false;
+  }
+
+  const nowMs = now.getTime();
+  const nextRunAt = getTime(
+    snapshot.state.smartAssistant.autoRefreshTask.nextRunAt
+    || resolveDesktopFeishuAutoRefreshTaskNextRunAt(snapshot, now),
+  );
+
+  if (nextRunAt != null && nowMs >= nextRunAt) {
+    return true;
+  }
+
+  if (snapshot.state.smartAssistant.autoRefreshTask.status === "failed") {
+    return false;
+  }
+
+  return !hasFreshAccessToken(snapshot, nowMs);
 }
 
 export async function withDesktopFeishuDeveloperAccessTokenRetry<T>(

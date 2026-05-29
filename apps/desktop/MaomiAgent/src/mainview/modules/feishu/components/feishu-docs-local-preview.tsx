@@ -23,6 +23,7 @@ import "@mdxeditor/editor/style.css"
 import DOMPurify from "dompurify"
 import katex from "katex"
 import "katex/dist/katex.min.css"
+import mermaid from "mermaid"
 import { Image, Tag, Typography } from "antd"
 import { gfmStrikethroughToMarkdown } from "mdast-util-gfm-strikethrough"
 import { gfmTableToMarkdown } from "mdast-util-gfm-table"
@@ -49,6 +50,7 @@ import {
   isMarkdownIndentedCodeLine,
   parseMarkdownIndentedCodeBlock,
 } from "./feishu-docs-markdown-code"
+import { shouldRenderFeishuDocsMermaidBlock } from "./feishu-docs-mermaid"
 import { renderHighlightedFeishuDocsCode, resolveFeishuDocsHighlightLanguage } from "./feishu-docs-markdown-highlight"
 import { parseFeishuDocsLocalPreview, type FeishuDocsPreviewNode } from "./feishu-docs-local-preview-model"
 import {
@@ -172,6 +174,8 @@ type FeishuDocsMdxJsxNode = JsxEditorProps["mdastNode"]
 
 const FEISHU_DOCS_BOARD_PREVIEW_MAX_WIDTH = 700
 const FEISHU_DOCS_BOARD_PREVIEW_MAX_HEIGHT = 700
+const FEISHU_DOCS_DIAGRAM_PREVIEW_MAX_WIDTH = 700
+const FEISHU_DOCS_DIAGRAM_PREVIEW_MAX_HEIGHT = 700
 
 export const FEISHU_DOCS_MARKDOWN_CODE_BLOCK_LANGUAGE_LABELS: Record<string, string> = {
   bash: "Bash",
@@ -215,7 +219,6 @@ export const FEISHU_DOCS_MARKDOWN_CODE_BLOCK_LANGUAGE_LABELS: Record<string, str
   zsh: "Zsh",
 }
 
-const MERMAID_CODE_BLOCK_LANGUAGES = new Set(["mermaid"])
 const MATH_CODE_BLOCK_LANGUAGES = new Set(["katex", "latex", "math", "tex"])
 
 const FEISHU_DOCS_READONLY_BLOCKS = new Set([
@@ -409,6 +412,7 @@ function FeishuDocsPreviewImage(input: {
   t?: Translate
 }) {
   const [thumbnailSrc, setThumbnailSrc] = useState(input.src)
+  const [imageFailed, setImageFailed] = useState(false)
   const imageStyle: (CSSProperties & {
     "--feishu-docs-preview-image-max-width"?: string
     "--feishu-docs-preview-image-max-height"?: string
@@ -421,6 +425,7 @@ function FeishuDocsPreviewImage(input: {
 
   useEffect(() => {
     setThumbnailSrc(input.src)
+    setImageFailed(false)
 
     if (
       input.displayMode !== "board"
@@ -590,16 +595,24 @@ function FeishuDocsPreviewImage(input: {
       style={imageStyle}
     >
       <div className="feishu-docs-local-preview-image-frame">
-        <Image
-          className="feishu-docs-local-preview-image"
-          rootClassName="feishu-docs-local-preview-image-root"
-          src={thumbnailSrc}
-          alt={input.alt}
-          loading="lazy"
-          preview={{
-            src: input.src,
-          }}
-        />
+        {imageFailed ? (
+          <div className={`feishu-docs-local-preview-image-placeholder${input.plain ? " is-plain" : ""}`}>
+            <PictureOutlined />
+            <Text type="secondary">{input.alt || "预览加载失败"}</Text>
+          </div>
+        ) : (
+          <Image
+            className="feishu-docs-local-preview-image"
+            rootClassName="feishu-docs-local-preview-image-root"
+            src={thumbnailSrc}
+            alt={input.alt}
+            loading="lazy"
+            preview={{
+              src: input.src,
+            }}
+            onError={() => setImageFailed(true)}
+          />
+        )}
       </div>
     </div>
   )
@@ -701,6 +714,7 @@ function FeishuDocsMermaidBlock(input: {
   const renderId = useId().replace(/[^a-zA-Z0-9_-]/g, "")
   const [svg, setSvg] = useState("")
   const [error, setError] = useState("")
+  const mermaidTheme = isDarkThemeMode(readThemeMode()) ? "dark" : "default"
 
   useEffect(() => {
     if (!source || typeof window === "undefined") {
@@ -713,26 +727,26 @@ function FeishuDocsMermaidBlock(input: {
     setSvg("")
     setError("")
 
-    void import("mermaid")
-      .then(async (module) => {
-        const mermaid = module.default
-        mermaid.initialize({
-          startOnLoad: false,
-          securityLevel: "strict",
-          theme: isDarkThemeMode(readThemeMode()) ? "dark" : "default",
-          htmlLabels: false,
-        })
-        const rendered = await mermaid.render(`feishu-docs-mermaid-${renderId}`, source)
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: "strict",
+      theme: mermaidTheme,
+      htmlLabels: false,
+    })
+
+    void mermaid.render(`feishu-docs-mermaid-${renderId}`, source)
+      .then((rendered) => {
         if (cancelled) {
           return
         }
         setSvg(
           DOMPurify.sanitize(rendered.svg, {
             USE_PROFILES: {
-              html: true,
               svg: true,
               svgFilters: true,
             },
+            ADD_TAGS: ["style"],
+            ADD_ATTR: ["style"],
           }),
         )
         setError("")
@@ -748,13 +762,17 @@ function FeishuDocsMermaidBlock(input: {
     return () => {
       cancelled = true
     }
-  }, [renderId, source])
+  }, [mermaidTheme, renderId, source])
 
   return (
     <div className="feishu-docs-local-preview-mermaid-shell">
       {svg ? (
         <div
           className="feishu-docs-local-preview-mermaid-rendered"
+          style={{
+            maxWidth: `${FEISHU_DOCS_DIAGRAM_PREVIEW_MAX_WIDTH}px`,
+            maxHeight: `${FEISHU_DOCS_DIAGRAM_PREVIEW_MAX_HEIGHT}px`,
+          }}
           dangerouslySetInnerHTML={{ __html: svg }}
         />
       ) : (
@@ -1544,10 +1562,6 @@ function buildFeishuDocsHeadingAnchorId(text: string, slugCounts: Map<string, nu
   return nextCount === 1 ? `feishu-doc-heading-${slugBase}` : `feishu-doc-heading-${slugBase}-${nextCount}`
 }
 
-function isMermaidCodeBlockLanguage(language?: string): boolean {
-  return MERMAID_CODE_BLOCK_LANGUAGES.has(language?.trim().toLowerCase() ?? "")
-}
-
 function isMathCodeBlockLanguage(language?: string): boolean {
   return MATH_CODE_BLOCK_LANGUAGES.has(language?.trim().toLowerCase() ?? "")
 }
@@ -1968,18 +1982,18 @@ function renderMarkdownCodeBlock(
   key: string,
   context: InlineRenderContext,
 ) {
-  if (isMermaidCodeBlockLanguage(block.language)) {
-    return (
-      <div key={key} className="feishu-docs-local-preview-code-block is-mermaid" data-language={block.language}>
-        <FeishuDocsMermaidBlock source={block.code} t={context.t} />
-      </div>
-    )
-  }
-
   if (isMathCodeBlockLanguage(block.language)) {
     return (
       <div key={key} className="feishu-docs-local-preview-code-block is-math" data-language={block.language}>
         <FeishuDocsMathBlock expression={block.code} t={context.t} />
+      </div>
+    )
+  }
+
+  if (shouldRenderFeishuDocsMermaidBlock({ language: block.language, source: block.code })) {
+    return (
+      <div key={key} className="feishu-docs-local-preview-code-block is-mermaid" data-language={block.language}>
+        <FeishuDocsMermaidBlock source={block.code} t={context.t} />
       </div>
     )
   }
@@ -1991,7 +2005,7 @@ function renderMarkdownCodeBlock(
       key={key}
       markdown={fencedMarkdown}
       t={context.t}
-      language={context.language}
+      language={context.language ?? "zh-CN"}
       className="is-nested feishu-docs-local-preview-code-block-mdx"
     />
   )
@@ -3121,12 +3135,12 @@ function FeishuDocsReadonlyMdxMarkdown(props: FeishuDocsMdxMarkdownProps) {
     match: () => true,
     priority: 100,
     Editor: (editorProps) => {
-      if (isMermaidCodeBlockLanguage(editorProps.language)) {
-        return <FeishuDocsMermaidBlock source={editorProps.code} t={props.t} />
-      }
-
       if (isMathCodeBlockLanguage(editorProps.language)) {
         return <FeishuDocsMathBlock expression={editorProps.code} t={props.t} />
+      }
+
+      if (shouldRenderFeishuDocsMermaidBlock({ language: editorProps.language, source: editorProps.code })) {
+        return <FeishuDocsMermaidBlock source={editorProps.code} t={props.t} />
       }
 
       return (

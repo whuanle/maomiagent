@@ -1,4 +1,8 @@
 import type { DesktopAppUpdateAsset } from "../../shared/desktop-updater";
+import {
+  deriveWoaiVersionCode,
+  normalizeWoaiVersion,
+} from "../../shared/woai-version";
 
 export type DesktopAppPublicLatestRelease = {
   versionId?: number;
@@ -8,7 +12,8 @@ export type DesktopAppPublicLatestRelease = {
   releaseNotes?: string;
   isForceUpdate?: boolean;
   isPrerelease?: boolean;
-  minSupportedVersionCode?: number;
+  isDraft?: boolean;
+  htmlUrl?: string;
   assets: DesktopAppUpdateAsset[];
 };
 
@@ -18,29 +23,41 @@ export type DesktopAppPublicReleaseAssets = {
   installerAsset?: DesktopAppUpdateAsset;
 };
 
-export function parseDesktopAppPublicLatestRelease(value: unknown): DesktopAppPublicLatestRelease {
+const PLATFORM_FILE_NAME_RE =
+  /^(?<channel>.+)-(?<os>win|macos|linux)-(?<arch>x64|arm64)-(?<artifactName>.+)$/u;
+
+export function parseDesktopAppPublicLatestRelease(
+  value: unknown,
+): DesktopAppPublicLatestRelease {
   const payload = isRecord(value) ? value : {};
-  const rawAssets = Array.isArray(payload.files)
-    ? payload.files
-    : Array.isArray(payload.Files)
-      ? payload.Files
-      : Array.isArray(payload.assets)
-        ? payload.assets
-        : Array.isArray(payload.Assets)
-          ? payload.Assets
+  const rawAssets = Array.isArray(payload.assets)
+    ? payload.assets
+    : Array.isArray(payload.Assets)
+      ? payload.Assets
+      : Array.isArray(payload.files)
+        ? payload.files
+        : Array.isArray(payload.Files)
+          ? payload.Files
           : [];
-  const version = readText(payload, ["version", "Version"]);
+  const version = normalizeReleaseVersion(
+    readText(payload, ["tag_name", "tagName", "version", "Version"]),
+  );
 
   return {
-    versionId: readInteger(payload, ["versionId", "VersionId", "releaseId", "ReleaseId"]),
+    versionId: readInteger(payload, ["id", "releaseId", "ReleaseId", "versionId", "VersionId"]),
     version,
-    versionCode: readInteger(payload, ["versionCode", "VersionCode"]),
-    title: readText(payload, ["title", "Title"]),
-    releaseNotes: readText(payload, ["releaseNotes", "ReleaseNotes"]),
+    versionCode: readInteger(payload, ["versionCode", "VersionCode"]) ?? deriveWoaiVersionCode(version),
+    title: readText(payload, ["name", "title", "Title"]),
+    releaseNotes: readText(payload, ["body", "releaseNotes", "ReleaseNotes"]),
     isForceUpdate: readBoolean(payload, ["isForceUpdate", "IsForceUpdate"]),
-    isPrerelease: readBoolean(payload, ["isPrerelease", "IsPrerelease"]) || version.endsWith("_preview"),
-    minSupportedVersionCode: readInteger(payload, ["minSupportedVersionCode", "MinSupportedVersionCode"]),
-    assets: rawAssets.map(parseDesktopAppPublicAsset).filter(Boolean) as DesktopAppUpdateAsset[],
+    isPrerelease:
+      readBoolean(payload, ["prerelease", "isPrerelease", "IsPrerelease"]) ||
+      version.endsWith("_preview"),
+    isDraft: readBoolean(payload, ["draft", "isDraft", "IsDraft"]),
+    htmlUrl: readText(payload, ["html_url", "htmlUrl", "HtmlUrl"]),
+    assets: rawAssets
+      .map(parseDesktopAppPublicAsset)
+      .filter(Boolean) as DesktopAppUpdateAsset[],
   };
 }
 
@@ -53,25 +70,37 @@ export function selectDesktopAppPublicReleaseAssets(
 ): DesktopAppPublicReleaseAssets {
   return {
     bundleAsset: selectDesktopAppPublicAsset(assets, "bundle", "tar.zst", platform),
-    updateInfoAsset: selectDesktopAppPublicAsset(assets, "update-info", "json", platform),
+    updateInfoAsset: selectDesktopAppPublicAsset(
+      assets,
+      "update-info",
+      "json",
+      platform,
+    ),
     installerAsset: selectDesktopAppPublicAsset(assets, "installer", undefined, platform),
   };
 }
 
-function parseDesktopAppPublicAsset(value: unknown): DesktopAppUpdateAsset | undefined {
+function parseDesktopAppPublicAsset(
+  value: unknown,
+): DesktopAppUpdateAsset | undefined {
   if (!isRecord(value)) {
     return undefined;
   }
 
-  const assetId = readInteger(value, ["versionFileId", "VersionFileId", "assetId", "AssetId"]);
-  const packageType = normalizeIdentifier(readText(value, ["packageType", "PackageType"]));
-  const fileName = readText(value, ["fileName", "FileName"]);
-  const fileSize = readInteger(value, ["fileSize", "FileSize"]);
+  const assetId = readInteger(value, ["id", "assetId", "AssetId", "versionFileId", "VersionFileId"]);
+  const fileName = readText(value, ["name", "fileName", "FileName"]);
+  const fileSize = readInteger(value, ["size", "fileSize", "FileSize"]);
+  const explicitPackageType = normalizeIdentifier(
+    readText(value, ["packageType", "PackageType"]),
+  );
+  const parsedFileName = parseArtifactFileName(fileName);
+  const packageType = explicitPackageType || inferPackageType(parsedFileName?.artifactName || fileName);
   const packageFormat = normalizePackageFormat(
     readText(value, ["packageFormat", "PackageFormat", "fileExtension", "FileExtension"]),
-    fileName,
+    parsedFileName?.artifactName || fileName,
   );
-  if (!assetId || !packageType || !packageFormat || !fileName || !fileSize) {
+
+  if (!assetId || !fileName || !fileSize || !packageType || !packageFormat) {
     return undefined;
   }
 
@@ -81,9 +110,19 @@ function parseDesktopAppPublicAsset(value: unknown): DesktopAppUpdateAsset | und
     packageFormat,
     fileName,
     fileSize,
-    os: normalizeIdentifier(readText(value, ["os", "Os"])),
-    arch: normalizeIdentifier(readText(value, ["arch", "Arch"])),
+    os: normalizeIdentifier(
+      readText(value, ["os", "Os"]) || parsedFileName?.os || "",
+    ),
+    arch: normalizeIdentifier(
+      readText(value, ["arch", "Arch"]) || parsedFileName?.arch || "",
+    ),
     fileHash: readText(value, ["fileHash", "FileHash"]),
+    downloadUrl: readText(value, [
+      "browser_download_url",
+      "browserDownloadUrl",
+      "downloadUrl",
+      "DownloadUrl",
+    ]),
   };
 }
 
@@ -97,7 +136,9 @@ function selectDesktopAppPublicAsset(
   },
 ): DesktopAppUpdateAsset | undefined {
   const normalizedPackageType = normalizeIdentifier(packageType);
-  const normalizedPackageFormat = packageFormat ? normalizeIdentifier(packageFormat) : "";
+  const normalizedPackageFormat = packageFormat
+    ? normalizeIdentifier(packageFormat)
+    : "";
   const normalizedPlatform = {
     os: normalizeIdentifier(platform?.os ?? ""),
     arch: normalizeIdentifier(platform?.arch ?? ""),
@@ -115,9 +156,55 @@ function selectDesktopAppPublicAsset(
     return normalizeIdentifier(asset.packageFormat) === normalizedPackageFormat;
   });
 
-  return candidates.find((asset) => matchesExactPlatform(asset, normalizedPlatform))
-    ?? candidates.find((asset) => matchesWildcardPlatform(asset, normalizedPlatform))
-    ?? candidates[0];
+  const exactMatch = candidates.find((asset) => matchesExactPlatform(asset, normalizedPlatform));
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  const wildcardMatch = candidates.find((asset) => matchesWildcardPlatform(asset, normalizedPlatform));
+  if (wildcardMatch) {
+    return wildcardMatch;
+  }
+
+  if (!normalizedPlatform.os && !normalizedPlatform.arch) {
+    return candidates[0];
+  }
+
+  return undefined;
+}
+
+function inferPackageType(fileName: string): string {
+  if (fileName === "update.json") {
+    return "update-info";
+  }
+  if (fileName.endsWith(".tar.zst")) {
+    return "bundle";
+  }
+  if (fileName.endsWith(".patch")) {
+    return "patch";
+  }
+  return "installer";
+}
+
+function parseArtifactFileName(fileName: string): {
+  os: string;
+  arch: string;
+  artifactName: string;
+} | undefined {
+  const match = PLATFORM_FILE_NAME_RE.exec(fileName);
+  if (!match?.groups) {
+    return undefined;
+  }
+
+  return {
+    os: match.groups.os,
+    arch: match.groups.arch,
+    artifactName: match.groups.artifactName,
+  };
+}
+
+function normalizeReleaseVersion(value: string): string {
+  return normalizeWoaiVersion(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

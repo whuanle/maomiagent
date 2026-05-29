@@ -136,6 +136,7 @@ class TextProcessorHandle implements ProcessorHandle {
         return
       case "reasoning.delta":
         this.reasoningBuffer += event.delta
+        await this.flushReasoningBuffer()
         return
       case "reasoning.end":
         await this.flushReasoningBuffer()

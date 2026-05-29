@@ -5,6 +5,7 @@ import type { DesktopFeishuStoreSnapshot } from "../../abstraction/ports/desktop
 import {
   DESKTOP_FEISHU_DEVELOPER_TOKEN_AUTO_REFRESH_TASK_ID,
   ensureDesktopFeishuDeveloperAccessToken,
+  shouldRunDesktopFeishuDeveloperAutoRefreshTask,
   withDesktopFeishuDeveloperAccessTokenRetry,
 } from "./desktop-feishu-developer-token";
 import { DesktopFeishuOpenApiError } from "./desktop-feishu-openapi-client";
@@ -105,6 +106,7 @@ function createSnapshot(overrides: Partial<DesktopFeishuStoreSnapshot["developer
       version: "1.0",
       bindings: [],
       processedMessages: [],
+      pendingActions: [],
     },
     docs: {},
     developerCredential: {
@@ -127,14 +129,24 @@ function createSnapshot(overrides: Partial<DesktopFeishuStoreSnapshot["developer
   };
 }
 
+function cloneSnapshot(snapshot: DesktopFeishuStoreSnapshot): DesktopFeishuStoreSnapshot {
+  return JSON.parse(JSON.stringify(snapshot)) as DesktopFeishuStoreSnapshot;
+}
+
 function createStore(snapshot: DesktopFeishuStoreSnapshot) {
-  let current = snapshot;
+  let current = cloneSnapshot(snapshot);
   return {
-    read: async () => current,
+    read: async () => cloneSnapshot(current),
     write: async (next: DesktopFeishuStoreSnapshot) => {
-      current = next;
+      current = cloneSnapshot(next);
     },
-    snapshot: () => current,
+    mutate: async <T>(mutator: (next: DesktopFeishuStoreSnapshot) => Promise<T> | T) => {
+      const next = cloneSnapshot(current);
+      const result = await mutator(next);
+      current = cloneSnapshot(next);
+      return result;
+    },
+    snapshot: () => cloneSnapshot(current),
   };
 }
 
@@ -207,7 +219,7 @@ describe("ensureDesktopFeishuDeveloperAccessToken", () => {
       taskId: DESKTOP_FEISHU_DEVELOPER_TOKEN_AUTO_REFRESH_TASK_ID,
       enabled: true,
       status: "success",
-      nextRunAt: "2026-05-22T01:00:00.000Z",
+      nextRunAt: "2026-05-22T01:55:00.000Z",
     });
   });
 
@@ -309,9 +321,8 @@ describe("ensureDesktopFeishuDeveloperAccessToken", () => {
     expect(store.snapshot().state.smartAssistant.lastError).toBe("飞书授权已过期，请重新授权");
     expect(store.snapshot().state.smartAssistant.autoRefreshTask).toMatchObject({
       taskId: DESKTOP_FEISHU_DEVELOPER_TOKEN_AUTO_REFRESH_TASK_ID,
-      enabled: true,
+      enabled: false,
       status: "failed",
-      nextRunAt: "2026-05-22T01:00:00.000Z",
     });
   });
 
@@ -338,10 +349,92 @@ describe("ensureDesktopFeishuDeveloperAccessToken", () => {
     expect(store.snapshot().state.smartAssistant.lastError).toBe("refresh_token 已被撤销，请重新发起授权流程以获取新的 refresh_token");
     expect(store.snapshot().state.smartAssistant.autoRefreshTask).toMatchObject({
       taskId: DESKTOP_FEISHU_DEVELOPER_TOKEN_AUTO_REFRESH_TASK_ID,
+      enabled: false,
+      status: "failed",
+    });
+  });
+
+  test("reuses the persisted revoked-token failure instead of retrying the same refresh token", async () => {
+    const store = createStore(createSnapshot({
+      accessTokenExpiresAt: "2026-05-22T00:00:00.000Z",
+    }));
+    let refreshCalls = 0;
+
+    const openApiClient = {
+      refreshUserAccessToken: async () => {
+        refreshCalls += 1;
+        throw new DesktopFeishuOpenApiError({
+          message: "Feishu API HTTP error 400 (code 20064): The refresh token has been revoked. Please note that a refresh token can only be used once.",
+          status: 400,
+          code: 20064,
+        });
+      },
+    };
+
+    await expect(ensureDesktopFeishuDeveloperAccessToken({
+      store,
+      now: () => new Date("2026-05-22T00:00:00.000Z"),
+      openApiClient,
+    })).rejects.toThrow("refresh_token 已被撤销，请重新发起授权流程以获取新的 refresh_token");
+
+    await expect(ensureDesktopFeishuDeveloperAccessToken({
+      store,
+      now: () => new Date("2026-05-22T00:01:00.000Z"),
+      openApiClient,
+    })).rejects.toThrow("refresh_token 已被撤销，请重新发起授权流程以获取新的 refresh_token");
+
+    expect(refreshCalls).toBe(1);
+  });
+
+  test("keeps the authorization state for transient refresh failures so auto refresh can retry later", async () => {
+    const store = createStore(createSnapshot({
+      accessTokenExpiresAt: "2026-05-22T00:00:00.000Z",
+    }));
+
+    await expect(ensureDesktopFeishuDeveloperAccessToken({
+      store,
+      now: () => new Date("2026-05-22T00:00:00.000Z"),
+      openApiClient: {
+        refreshUserAccessToken: async () => {
+          throw new Error("network down");
+        },
+      },
+    })).rejects.toThrow("network down");
+
+    expect(store.snapshot().state.smartAssistant.authStatus).toBe("authorized");
+    expect(store.snapshot().state.smartAssistant.hasRefreshToken).toBe(true);
+    expect(store.snapshot().state.smartAssistant.lastError).toBe("network down");
+    expect(store.snapshot().state.smartAssistant.autoRefreshTask).toMatchObject({
+      taskId: DESKTOP_FEISHU_DEVELOPER_TOKEN_AUTO_REFRESH_TASK_ID,
       enabled: true,
       status: "failed",
-      nextRunAt: "2026-05-22T01:00:00.000Z",
+      nextRunAt: "2026-05-22T00:05:00.000Z",
     });
+  });
+
+  test("treats stale auto refresh schedules as due when the access token is already near expiry", () => {
+    const snapshot = createSnapshot({
+      accessTokenExpiresAt: "2026-05-22T00:03:00.000Z",
+    });
+    snapshot.state.smartAssistant.autoRefreshTask = {
+      taskId: DESKTOP_FEISHU_DEVELOPER_TOKEN_AUTO_REFRESH_TASK_ID,
+      enabled: true,
+      status: "queued",
+      nextRunAt: "2026-05-22T01:00:00.000Z",
+    };
+    if (snapshot.state.developer) {
+      snapshot.state.developer.autoRefreshTask = {
+        taskId: DESKTOP_FEISHU_DEVELOPER_TOKEN_AUTO_REFRESH_TASK_ID,
+        enabled: true,
+        status: "queued",
+        nextRunAt: "2026-05-22T01:00:00.000Z",
+      };
+    }
+
+    expect(shouldRunDesktopFeishuDeveloperAutoRefreshTask(
+      snapshot,
+      new Date("2026-05-22T00:00:00.000Z"),
+    )).toBe(true);
   });
 
   test("retries once with a forced refresh when the request fails with an expired token code", async () => {

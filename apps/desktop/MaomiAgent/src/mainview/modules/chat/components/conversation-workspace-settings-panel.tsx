@@ -3,12 +3,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
   DesktopConversationCapabilityDescriptor,
-  DesktopConversationSessionSettings,
 } from "../../../../shared/desktop-conversation";
 import type { DesktopWorkspaceItem } from "../../../../shared/desktop-workspace";
 import type { LanguageCode } from "../../../config/titlebar";
 import {
-  applyDesktopConversationWorkspaceSettings,
   hasDesktopConversationBridge,
   listDesktopConversationCapabilities,
 } from "../../../lib/desktop-conversation";
@@ -17,9 +15,7 @@ import {
   clampContextCompressionThresholdPercent,
   CONTEXT_COMPRESSION_THRESHOLD_PERCENT_MAX,
   CONTEXT_COMPRESSION_THRESHOLD_PERCENT_MIN,
-  type ConversationGlobalSettings,
   type ConversationWorkspaceSettings,
-  useConversationGlobalSettings,
   useConversationWorkspaceSettings,
 } from "./conversation-workspace-settings-storage";
 import { ConversationApprovalRulesModal } from "./conversation-approval-rules-modal";
@@ -45,17 +41,17 @@ function resolveCopy(language: LanguageCode) {
   if (language === "en-US") {
     return {
       emptyWorkspace: "Select a workspace first.",
-      globalSectionTitle: "Global settings",
-      globalSectionMeta: "Applies to chat defaults on this device.",
+      defaultsSectionTitle: "Default settings",
+      defaultsSectionMeta: "Saved in the current workspace.",
       replyStyleLabel: "AI reply style",
       replyStyleHint: "Chat replies are currently fixed to Programming mode.",
       replyStyleProgramming: "Programming",
       approvalLabel: "Auto approval",
       approvalHint: "Enabled by default. Turn this off to keep new approvals manual.",
       compressionLabel: "Context compression",
-      compressionHint: "Saved as the default threshold and injected into conversation runtime preferences.",
-      workspaceSectionTitle: "Workspace settings",
-      workspaceSectionMeta: "Saved as defaults for the current workspace.",
+      compressionHint: "Saved as the default threshold for this workspace.",
+      runtimeSectionTitle: "Runtime settings",
+      runtimeSectionMeta: "Applied to new conversations in the current workspace.",
       thinkingLabel: "Enable thinking",
       thinkingHint: "Save the default reasoning preference for new conversations in this workspace.",
       managedExecutionLabel: "Managed execution",
@@ -74,22 +70,23 @@ function resolveCopy(language: LanguageCode) {
       approvalConfigureLabel: "Configure rules",
       settingsSaveFailed: "Failed to save chat settings",
       settingsBridgeUnavailable: "Desktop chat settings are unavailable in the current runtime.",
+      settingsWarningTitle: "Workspace settings were restored with defaults",
     };
   }
 
   return {
     emptyWorkspace: "请先选择工作区。",
-    globalSectionTitle: "全局设置",
-    globalSectionMeta: "作用于当前设备上的聊天默认偏好。",
+    defaultsSectionTitle: "默认设置",
+    defaultsSectionMeta: "保存在当前工作区。",
     replyStyleLabel: "AI 回复样式",
     replyStyleHint: "聊天回复当前固定为编程模式。",
     replyStyleProgramming: "编程模式",
     approvalLabel: "自动审批",
     approvalHint: "默认开启。关闭后，新请求会按手动审批偏好处理。",
     compressionLabel: "上下文压缩",
-    compressionHint: "保存为当前设备默认阈值，并写入对话运行时偏好。",
-    workspaceSectionTitle: "工作区设置",
-    workspaceSectionMeta: "作为当前工作区默认偏好保存。",
+    compressionHint: "保存为当前工作区默认阈值。",
+    runtimeSectionTitle: "运行设置",
+    runtimeSectionMeta: "应用到当前工作区的新会话。",
     thinkingLabel: "启用 Thinking",
     thinkingHint: "将 Thinking 保存为当前工作区默认偏好，并同步到对话运行时偏好。",
     managedExecutionLabel: "全自动托管",
@@ -108,6 +105,7 @@ function resolveCopy(language: LanguageCode) {
     approvalConfigureLabel: "配置规则",
     settingsSaveFailed: "保存聊天设置失败",
     settingsBridgeUnavailable: "当前运行环境暂不支持聊天设置同步。",
+    settingsWarningTitle: "工作区设置已回退为默认值",
   };
 }
 
@@ -136,35 +134,34 @@ function resolveCapabilityEnabled(
     return storedPreference;
   }
 
-  switch (capabilityId) {
-    case "memory.runtime":
-      return settings.memoryEnabled === true;
-    case "feishu.smartAssistant":
-      return settings.feishuSmartAssistantEnabled === true;
-    default:
-      return false;
-  }
+  return false;
 }
 
 export function ConversationWorkspaceSettingsPanel(props: Props) {
   const { message } = App.useApp();
   const copy = useMemo(() => resolveCopy(props.language), [props.language]);
-  const { settings: globalSettings, updateSettings: updateGlobalSettings } = useConversationGlobalSettings();
-  const { settings: workspaceSettings, updateSettings: updateWorkspaceSettings } = useConversationWorkspaceSettings(
+  const {
+    settings: workspaceSettings,
+    warnings: workspaceWarnings,
+    loading: loadingWorkspaceSettings,
+    saving: savingWorkspaceSettings,
+    error: workspaceSettingsError,
+    saveSettings: saveWorkspaceSettings,
+  } = useConversationWorkspaceSettings(
     props.selectedWorkspace?.workspaceId,
   );
   const [contextCompressionThresholdPercent, setContextCompressionThresholdPercent] = useState(
-    globalSettings.contextCompressionThresholdPercent,
+    workspaceSettings.contextCompressionThresholdPercent,
   );
   const [capabilitiesLoading, setCapabilitiesLoading] = useState(false);
   const [capabilities, setCapabilities] = useState<DesktopConversationCapabilityDescriptor[]>([]);
   const [capabilityLoadError, setCapabilityLoadError] = useState("");
-  const [savingSettings, setSavingSettings] = useState(false);
   const [approvalRulesOpen, setApprovalRulesOpen] = useState(false);
+  const savingSettings = savingWorkspaceSettings || loadingWorkspaceSettings;
 
   useEffect(() => {
-    setContextCompressionThresholdPercent(globalSettings.contextCompressionThresholdPercent);
-  }, [globalSettings.contextCompressionThresholdPercent]);
+    setContextCompressionThresholdPercent(workspaceSettings.contextCompressionThresholdPercent);
+  }, [workspaceSettings.contextCompressionThresholdPercent]);
 
   useEffect(() => {
     let disposed = false;
@@ -211,11 +208,9 @@ export function ConversationWorkspaceSettingsPanel(props: Props) {
     };
   }, [props.selectedSession?.sessionId, props.selectedWorkspace?.workspaceId]);
 
-  const applySessionSettings = useCallback(async (input: {
-    sessionSettings: DesktopConversationSessionSettings;
-    nextGlobalSettings?: Partial<ConversationGlobalSettings>;
-    nextWorkspaceSettings?: Partial<ConversationWorkspaceSettings>;
-  }) => {
+  const persistWorkspaceSettings = useCallback(async (
+    patch: Partial<ConversationWorkspaceSettings>,
+  ) => {
     const workspaceId = props.selectedWorkspace?.workspaceId;
     if (!workspaceId) {
       return false;
@@ -226,138 +221,76 @@ export function ConversationWorkspaceSettingsPanel(props: Props) {
       return false;
     }
 
-    const previousGlobalSettings = globalSettings;
-    const previousWorkspaceSettings = workspaceSettings;
-
-    if (input.nextGlobalSettings) {
-      updateGlobalSettings(input.nextGlobalSettings);
-    }
-    if (input.nextWorkspaceSettings) {
-      updateWorkspaceSettings(input.nextWorkspaceSettings);
-    }
-
-    setSavingSettings(true);
     try {
-      await applyDesktopConversationWorkspaceSettings({
-        workspaceId,
-        settings: input.sessionSettings,
+      await saveWorkspaceSettings(patch, {
+        syncExistingSessions: true,
       });
       return true;
     } catch (error) {
-      if (input.nextGlobalSettings) {
-        updateGlobalSettings(previousGlobalSettings);
-      }
-      if (input.nextWorkspaceSettings) {
-        updateWorkspaceSettings(previousWorkspaceSettings);
-      }
       void message.error(formatSettingsSaveErrorMessage(copy.settingsSaveFailed, error));
       return false;
-    } finally {
-      setSavingSettings(false);
     }
   }, [
     copy.settingsBridgeUnavailable,
     copy.settingsSaveFailed,
-    globalSettings,
     message,
     props.selectedWorkspace?.workspaceId,
-    updateGlobalSettings,
-    updateWorkspaceSettings,
-    workspaceSettings,
+    saveWorkspaceSettings,
   ]);
 
   const handleContextCompressionThresholdPercentChange = useCallback((value: number) => {
     const nextValue = clampContextCompressionThresholdPercent(value);
     setContextCompressionThresholdPercent(nextValue);
-    void applySessionSettings({
-      sessionSettings: {
-        contextCompressionThresholdPercent: nextValue,
-      },
-      nextGlobalSettings: {
-        contextCompressionThresholdPercent: nextValue,
-      },
+    void persistWorkspaceSettings({
+      contextCompressionThresholdPercent: nextValue,
+    }).then((saved) => {
+      if (!saved) {
+        setContextCompressionThresholdPercent(workspaceSettings.contextCompressionThresholdPercent);
+      }
     });
-  }, [applySessionSettings]);
+  }, [persistWorkspaceSettings, workspaceSettings.contextCompressionThresholdPercent]);
 
   const handleApprovalModeChange = useCallback((value: boolean) => {
-    void applySessionSettings({
-      sessionSettings: {
-        approvalMode: value ? "auto" : "manual",
-      },
-      nextGlobalSettings: {
-        approvalAutoEnabled: value,
-      },
+    void persistWorkspaceSettings({
+      approvalAutoEnabled: value,
     });
-  }, [applySessionSettings]);
+  }, [persistWorkspaceSettings]);
 
   const handleThinkingEnabledChange = useCallback((value: boolean) => {
-    void applySessionSettings({
-      sessionSettings: {
-        thinkingEnabled: value,
-      },
-      nextWorkspaceSettings: {
-        thinkingEnabled: value,
-      },
+    void persistWorkspaceSettings({
+      thinkingEnabled: value,
     });
-  }, [applySessionSettings]);
+  }, [persistWorkspaceSettings]);
 
   const handleManagedExecutionChange = useCallback((value: boolean) => {
-    void applySessionSettings({
-      sessionSettings: {
-        managedExecutionEnabled: value,
-      },
-      nextWorkspaceSettings: {
-        managedExecutionEnabled: value,
-      },
+    void persistWorkspaceSettings({
+      managedExecutionEnabled: value,
     });
-  }, [applySessionSettings]);
+  }, [persistWorkspaceSettings]);
 
   const handleMemoryEnabledChange = useCallback((value: boolean) => {
-    void applySessionSettings({
-      sessionSettings: {
-        memoryEnabled: value,
-        capabilityPreferences: {
-          "memory.runtime": value,
-        },
-      },
-      nextWorkspaceSettings: {
-        memoryEnabled: value,
-        capabilityPreferences: {
-          ...(workspaceSettings.capabilityPreferences ?? {}),
-          "memory.runtime": value,
-        },
+    void persistWorkspaceSettings({
+      memoryEnabled: value,
+      capabilityPreferences: {
+        "memory.runtime": value,
       },
     });
-  }, [applySessionSettings, workspaceSettings.capabilityPreferences]);
+  }, [persistWorkspaceSettings]);
 
   const handleSandboxEnabledChange = useCallback((value: boolean) => {
-    void applySessionSettings({
-      sessionSettings: {
-        sandboxEnabled: value,
-      },
-      nextWorkspaceSettings: {
-        sandboxEnabled: value,
-      },
+    void persistWorkspaceSettings({
+      sandboxEnabled: value,
     });
-  }, [applySessionSettings]);
+  }, [persistWorkspaceSettings]);
 
   const handleFeishuEnabledChange = useCallback((value: boolean) => {
-    void applySessionSettings({
-      sessionSettings: {
-        feishuSmartAssistantEnabled: value,
-        capabilityPreferences: {
-          "feishu.smartAssistant": value,
-        },
-      },
-      nextWorkspaceSettings: {
-        feishuSmartAssistantEnabled: value,
-        capabilityPreferences: {
-          ...(workspaceSettings.capabilityPreferences ?? {}),
-          "feishu.smartAssistant": value,
-        },
+    void persistWorkspaceSettings({
+      feishuSmartAssistantEnabled: value,
+      capabilityPreferences: {
+        "feishu.smartAssistant": value,
       },
     });
-  }, [applySessionSettings, workspaceSettings.capabilityPreferences]);
+  }, [persistWorkspaceSettings]);
 
   const handleCapabilityToggleChange = useCallback((capabilityId: string, value: boolean) => {
     if (capabilityId === "memory.runtime") {
@@ -370,40 +303,26 @@ export function ConversationWorkspaceSettingsPanel(props: Props) {
       return;
     }
 
-    void applySessionSettings({
-      sessionSettings: {
-        capabilityPreferences: {
-          [capabilityId]: value,
-        },
-      },
-      nextWorkspaceSettings: {
-        capabilityPreferences: {
-          ...(workspaceSettings.capabilityPreferences ?? {}),
-          [capabilityId]: value,
-        },
+    void persistWorkspaceSettings({
+      capabilityPreferences: {
+        [capabilityId]: value,
       },
     });
   }, [
-    applySessionSettings,
     handleFeishuEnabledChange,
     handleMemoryEnabledChange,
-    workspaceSettings.capabilityPreferences,
+    persistWorkspaceSettings,
   ]);
 
   const handleApprovalRulesSave = useCallback((rules: NonNullable<ConversationWorkspaceSettings["permissionRules"]>) => {
-    void applySessionSettings({
-      sessionSettings: {
-        permissionRules: rules,
-      },
-      nextWorkspaceSettings: {
-        permissionRules: rules,
-      },
+    void persistWorkspaceSettings({
+      permissionRules: rules,
     }).then((saved) => {
       if (saved) {
         setApprovalRulesOpen(false);
       }
     });
-  }, [applySessionSettings]);
+  }, [persistWorkspaceSettings]);
 
   if (!props.selectedWorkspace) {
     return (
@@ -424,13 +343,31 @@ export function ConversationWorkspaceSettingsPanel(props: Props) {
   return (
     <div className="chat-session-settings-panel">
       <div className="chat-session-settings-panel-content">
+        {workspaceWarnings.length > 0 ? (
+          <Alert
+            showIcon
+            type="warning"
+            message={copy.settingsWarningTitle}
+            description={workspaceWarnings.join(" ")}
+          />
+        ) : null}
+
+        {workspaceSettingsError ? (
+          <Alert
+            showIcon
+            type="error"
+            message={copy.settingsSaveFailed}
+            description={workspaceSettingsError}
+          />
+        ) : null}
+
         <section className="chat-session-settings-section">
           <div className="chat-session-settings-section-head">
             <Typography.Title level={5} className="chat-session-settings-section-title">
-              {copy.globalSectionTitle}
+              {copy.defaultsSectionTitle}
             </Typography.Title>
             <Typography.Paragraph className="chat-session-settings-section-meta">
-              {copy.globalSectionMeta}
+              {copy.defaultsSectionMeta}
             </Typography.Paragraph>
           </div>
 
@@ -454,12 +391,12 @@ export function ConversationWorkspaceSettingsPanel(props: Props) {
             </Typography.Text>
             <div className="chat-session-settings-field-control">
               <Switch
-                checked={globalSettings.approvalAutoEnabled}
+                checked={workspaceSettings.approvalAutoEnabled}
                 loading={savingSettings}
                 onChange={handleApprovalModeChange}
                 aria-label={copy.approvalLabel}
               />
-              {!globalSettings.approvalAutoEnabled ? (
+              {!workspaceSettings.approvalAutoEnabled ? (
                 <Button
                   size="small"
                   className="chat-session-settings-inline-action"
@@ -473,7 +410,7 @@ export function ConversationWorkspaceSettingsPanel(props: Props) {
             <Typography.Paragraph className="chat-session-settings-hint">
               {copy.approvalHint}
             </Typography.Paragraph>
-            {!globalSettings.approvalAutoEnabled ? (
+            {!workspaceSettings.approvalAutoEnabled ? (
               <Typography.Paragraph className="chat-session-settings-hint">
                 {resolveApprovalRulesHint(props.language, approvalRuleCount)}
               </Typography.Paragraph>
@@ -519,10 +456,10 @@ export function ConversationWorkspaceSettingsPanel(props: Props) {
         <section className="chat-session-settings-section">
           <div className="chat-session-settings-section-head">
             <Typography.Title level={5} className="chat-session-settings-section-title">
-              {copy.workspaceSectionTitle}
+              {copy.runtimeSectionTitle}
             </Typography.Title>
             <Typography.Paragraph className="chat-session-settings-section-meta">
-              {copy.workspaceSectionMeta}
+              {copy.runtimeSectionMeta}
             </Typography.Paragraph>
           </div>
 

@@ -936,6 +936,10 @@ export type FeishuDocTreeNode = FeishuDocSummary & {
   hasChild: boolean
 }
 
+export type FeishuDocTreeSnapshotNode = FeishuDocTreeNode & {
+  children?: FeishuDocTreeSnapshotNode[]
+}
+
 export type FeishuDocTreeRoot = "my_library" | "document"
 
 export type FeishuDocTreeQuery = {
@@ -957,6 +961,7 @@ export type FeishuDocTreeView = {
 export type FeishuDocTreeLoadInput = {
   token: string
   forceRefresh?: boolean
+  preloadSubtree?: boolean
 }
 
 export type FeishuDocTreeBranchInput = {
@@ -969,6 +974,7 @@ export type FeishuDocTreeLoadResult = {
   rootToken: string
   rootKind: FeishuDocTreeNodeKind
   nodes: FeishuDocTreeNode[]
+  subtree?: FeishuDocTreeSnapshotNode[]
   hasMore: boolean
   pageToken?: string
   source: FeishuDocTreeSource

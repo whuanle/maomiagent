@@ -22,6 +22,7 @@ export type ChatActionErrorType =
   | "loadSessions"
   | "loadSessionDetail"
   | "createSession"
+  | "saveWorkspaceSettings"
   | "hideSession"
   | "sendMessage"
   | "replyInteraction";
@@ -93,6 +94,7 @@ export type ChatPreviewSource =
     kind: "feishu-doc";
     docId: string;
     path: string;
+    fallbackPath?: string;
     targetWorkspaceId?: string;
     requestId?: string;
   };
@@ -204,6 +206,7 @@ export type ChatCopy = {
   loadSessionsFailed: string;
   loadSessionDetailFailed: string;
   createSessionFailed: string;
+  saveWorkspaceSettingsFailed: string;
   hideSessionFailed: string;
   attachFilesFailed: string;
   sendMessageFailed: string;

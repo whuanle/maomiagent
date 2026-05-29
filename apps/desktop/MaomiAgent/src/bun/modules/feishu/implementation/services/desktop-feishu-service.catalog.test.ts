@@ -210,6 +210,7 @@ describe("DesktopFeishuService smart assistant catalog hydration", () => {
         "calendar:calendar.event:create",
         "calendar:calendar.free_busy:read",
         "contact:contact.base:readonly",
+        "docx:document.block:convert",
         "docx:document:create",
         "docx:document:write_only",
         "docs:document.media:download",
@@ -433,6 +434,7 @@ describe("DesktopFeishuService smart assistant catalog hydration", () => {
     expect(authUrl.searchParams.get("scope")?.split(" ")).toEqual(
       expect.arrayContaining([
         "offline_access",
+        "docx:document.block:convert",
         "docx:document:readonly",
         "wiki:node:read",
         "search:docs:read",

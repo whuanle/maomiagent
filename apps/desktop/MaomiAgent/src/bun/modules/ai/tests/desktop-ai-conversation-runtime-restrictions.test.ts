@@ -2,8 +2,13 @@ import { describe, expect, test } from "bun:test";
 
 import {
   applyConversationFunctionCallPreferenceToTurnRequest,
+  applyConversationHistoryPruningToTurnRequest,
+  normalizeProviderFacingTurnRequest,
+} from "../implementation/shared/turn-request-normalizers";
+import {
   applyConversationThinkingPreferenceToServiceConfig,
   mergeConversationExecutionProfile,
+  resolveConversationTurnNoActivityTimeoutMs,
   shouldRestrictDesktopConversationBuiltinToolsForLatestUserTurn,
 } from "../implementation/services/desktop-ai-conversation-runtime";
 import type { AiTurnRequest } from "../kernel-bridge";
@@ -63,6 +68,126 @@ function createTurnRequestWithTools(): AiTurnRequest {
       toolChoice: "auto",
     },
   };
+}
+
+function createTurnRequestWithHeavyToolHistory(input: {
+  supportsFunctionCall: boolean;
+}): AiTurnRequest {
+  const request = createTurnRequestWithTools();
+  request.executionProfile.metadata = {
+    supportsFunctionCall: input.supportsFunctionCall,
+  };
+  request.prompt.messages = [{
+    message: {
+      id: "message-user-older" as AiTurnRequest["prompt"]["messages"][number]["message"]["id"],
+      sessionId: "session-1" as AiTurnRequest["prompt"]["sessionId"],
+      role: "user",
+      createdAt: 1,
+    },
+    parts: [{
+      id: "message-user-older-text" as AiTurnRequest["prompt"]["messages"][number]["parts"][number]["id"],
+      type: "text",
+      text: "Draft a plan for the rewrite.",
+    }],
+  }, {
+    message: {
+      id: "message-assistant-older-tool-call" as AiTurnRequest["prompt"]["messages"][number]["message"]["id"],
+      sessionId: "session-1" as AiTurnRequest["prompt"]["sessionId"],
+      role: "assistant",
+      createdAt: 2,
+    },
+    parts: [{
+      id: "message-assistant-older-tool-call-part" as AiTurnRequest["prompt"]["messages"][number]["parts"][number]["id"],
+      type: "tool_call_ref",
+      toolCallId: "tool-call-older" as never,
+      toolName: "workspace_write_file",
+      input: {
+        path: "drafts/old-plan.md",
+      },
+    }],
+  }, {
+    message: {
+      id: "message-tool-older" as AiTurnRequest["prompt"]["messages"][number]["message"]["id"],
+      sessionId: "session-1" as AiTurnRequest["prompt"]["sessionId"],
+      role: "tool",
+      createdAt: 3,
+    },
+    parts: [{
+      id: "message-tool-older-result" as AiTurnRequest["prompt"]["messages"][number]["parts"][number]["id"],
+      type: "tool_result_ref",
+      toolCallId: "tool-call-older" as never,
+      toolName: "workspace_write_file",
+      output: {
+        path: "drafts/old-plan.md",
+      },
+    }, {
+      id: "message-tool-older-text" as AiTurnRequest["prompt"]["messages"][number]["parts"][number]["id"],
+      type: "text",
+      text: "A".repeat(24_000),
+    }],
+  }, {
+    message: {
+      id: "message-user-recent-1" as AiTurnRequest["prompt"]["messages"][number]["message"]["id"],
+      sessionId: "session-1" as AiTurnRequest["prompt"]["sessionId"],
+      role: "user",
+      createdAt: 4,
+    },
+    parts: [{
+      id: "message-user-recent-1-text" as AiTurnRequest["prompt"]["messages"][number]["parts"][number]["id"],
+      type: "text",
+      text: "Keep the tone sharper.",
+    }],
+  }, {
+    message: {
+      id: "message-assistant-recent-tool-call" as AiTurnRequest["prompt"]["messages"][number]["message"]["id"],
+      sessionId: "session-1" as AiTurnRequest["prompt"]["sessionId"],
+      role: "assistant",
+      createdAt: 5,
+    },
+    parts: [{
+      id: "message-assistant-recent-tool-call-part" as AiTurnRequest["prompt"]["messages"][number]["parts"][number]["id"],
+      type: "tool_call_ref",
+      toolCallId: "tool-call-recent" as never,
+      toolName: "workspace_write_file",
+      input: {
+        path: "drafts/current-plan.md",
+      },
+    }],
+  }, {
+    message: {
+      id: "message-tool-recent" as AiTurnRequest["prompt"]["messages"][number]["message"]["id"],
+      sessionId: "session-1" as AiTurnRequest["prompt"]["sessionId"],
+      role: "tool",
+      createdAt: 6,
+    },
+    parts: [{
+      id: "message-tool-recent-result" as AiTurnRequest["prompt"]["messages"][number]["parts"][number]["id"],
+      type: "tool_result_ref",
+      toolCallId: "tool-call-recent" as never,
+      toolName: "workspace_write_file",
+      output: {
+        path: "drafts/current-plan.md",
+      },
+    }, {
+      id: "message-tool-recent-text" as AiTurnRequest["prompt"]["messages"][number]["parts"][number]["id"],
+      type: "text",
+      text: "B".repeat(4_000),
+    }],
+  }, {
+    message: {
+      id: "message-user-latest" as AiTurnRequest["prompt"]["messages"][number]["message"]["id"],
+      sessionId: "session-1" as AiTurnRequest["prompt"]["sessionId"],
+      role: "user",
+      createdAt: 7,
+    },
+    parts: [{
+      id: "message-user-latest-text" as AiTurnRequest["prompt"]["messages"][number]["parts"][number]["id"],
+      type: "text",
+      text: "Now answer directly.",
+    }],
+  }];
+
+  return request;
 }
 
 describe("applyConversationFunctionCallPreferenceToTurnRequest", () => {
@@ -159,6 +284,79 @@ describe("applyConversationFunctionCallPreferenceToTurnRequest", () => {
   });
 });
 
+describe("applyConversationHistoryPruningToTurnRequest", () => {
+  test("replaces older heavy tool outputs while keeping the recent two user turns intact", () => {
+    const request = createTurnRequestWithHeavyToolHistory({
+      supportsFunctionCall: true,
+    });
+
+    const pruned = applyConversationHistoryPruningToTurnRequest({
+      request,
+    });
+
+    expect(pruned).not.toBe(request);
+    expect(pruned.prompt.messages[2]?.parts).toEqual([{
+      id: "message-tool-older-result",
+      type: "tool_result_ref",
+      toolCallId: "tool-call-older",
+      toolName: "workspace_write_file",
+      output: {
+        path: "drafts/old-plan.md",
+      },
+    }, {
+      id: "message-tool-older-text",
+      type: "text",
+      text: "[Earlier tool result omitted to keep the next reply responsive.]",
+    }]);
+    expect(pruned.prompt.messages[5]?.parts).toEqual(request.prompt.messages[5]?.parts);
+  });
+});
+
+describe("normalizeProviderFacingTurnRequest", () => {
+  test("strips unsupported tool history before sending provider-facing requests", () => {
+    const request = createTurnRequestWithHeavyToolHistory({
+      supportsFunctionCall: false,
+    });
+
+    const normalized = normalizeProviderFacingTurnRequest({
+      executionProfile: request.executionProfile,
+      request,
+    });
+
+    expect(normalized.settings.toolChoice).toBe("none");
+    expect(normalized.prompt.tools).toEqual([]);
+    expect(normalized.prompt.messages.some((message) => message.message.role === "tool")).toBe(false);
+    expect(normalized.prompt.messages.some((message) =>
+      message.parts.some((part) => part.type === "tool_call_ref" || part.type === "tool_result_ref")
+    )).toBe(false);
+  });
+
+  test("keeps pruning enabled for providers that still support function calling", () => {
+    const request = createTurnRequestWithHeavyToolHistory({
+      supportsFunctionCall: true,
+    });
+
+    const normalized = normalizeProviderFacingTurnRequest({
+      executionProfile: request.executionProfile,
+      request,
+    });
+
+    expect(normalized.prompt.messages[2]?.parts).toEqual([{
+      id: "message-tool-older-result",
+      type: "tool_result_ref",
+      toolCallId: "tool-call-older",
+      toolName: "workspace_write_file",
+      output: {
+        path: "drafts/old-plan.md",
+      },
+    }, {
+      id: "message-tool-older-text",
+      type: "text",
+      text: "[Earlier tool result omitted to keep the next reply responsive.]",
+    }]);
+  });
+});
+
 describe("mergeConversationExecutionProfile", () => {
   test("hydrates capability metadata from the materialized execution profile", () => {
     expect(mergeConversationExecutionProfile({
@@ -189,6 +387,43 @@ describe("mergeConversationExecutionProfile", () => {
         contextWindow: 65536,
       },
     });
+  });
+});
+
+describe("resolveConversationTurnNoActivityTimeoutMs", () => {
+  test("keeps the base timeout for small prompts", () => {
+    expect(resolveConversationTurnNoActivityTimeoutMs({
+      baseTimeoutMs: 90_000,
+      estimatedPromptTokens: 1_000,
+    })).toBe(90_000);
+  });
+
+  test("raises the timeout for medium prompts", () => {
+    expect(resolveConversationTurnNoActivityTimeoutMs({
+      baseTimeoutMs: 90_000,
+      estimatedPromptTokens: 7_000,
+    })).toBe(120_000);
+  });
+
+  test("raises the timeout for large prompts", () => {
+    expect(resolveConversationTurnNoActivityTimeoutMs({
+      baseTimeoutMs: 90_000,
+      estimatedPromptTokens: 15_000,
+    })).toBe(150_000);
+  });
+
+  test("raises the timeout for extra large prompts", () => {
+    expect(resolveConversationTurnNoActivityTimeoutMs({
+      baseTimeoutMs: 90_000,
+      estimatedPromptTokens: 25_000,
+    })).toBe(180_000);
+  });
+
+  test("preserves a larger custom base timeout", () => {
+    expect(resolveConversationTurnNoActivityTimeoutMs({
+      baseTimeoutMs: 200_000,
+      estimatedPromptTokens: 25_000,
+    })).toBe(200_000);
   });
 });
 

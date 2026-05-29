@@ -47,10 +47,12 @@ export function ConversationPreviewRouter(props: Props) {
 
     return (
       <FeishuDocPreviewRouter
+        conversationWorkspaceId={conversationWorkspaceId ?? targetWorkspaceId}
         workspaceId={targetWorkspaceId}
         docId={props.preview.source.docId}
         title={props.preview.title}
         path={props.preview.source.path}
+        fallbackPath={props.preview.source.fallbackPath}
       />
     );
   }

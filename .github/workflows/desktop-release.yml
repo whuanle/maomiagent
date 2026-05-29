@@ -10,26 +10,60 @@ permissions:
   contents: write
 
 env:
-  MAOMI_RELEASE_APP_CODE: maomiagent
-  MAOMI_RELEASE_CHANNEL: stable
   MAOMI_DESKTOP_ARTIFACT_FOLDER: artifacts
-  MAOMI_DESKTOP_UPDATE_BASE_URL: ${{ vars.MAOMI_DESKTOP_UPDATE_BASE_URL }}
-  MAOMI_RELEASE_ADMIN_BASE_URL: ${{ vars.MAOMI_RELEASE_ADMIN_BASE_URL }}
-  MAOMI_DESKTOP_PUBLIC_SOFTWARE_BASE_URL: ${{ vars.MAOMI_DESKTOP_PUBLIC_SOFTWARE_BASE_URL }}
-  MAOMI_RELEASE_UPLOAD_REQUEST_URL: ${{ vars.MAOMI_RELEASE_UPLOAD_REQUEST_URL }}
-  MAOMI_RELEASE_UPLOAD_COMPLETE_URL: ${{ vars.MAOMI_RELEASE_UPLOAD_COMPLETE_URL }}
-  MAOMI_RELEASE_ADMIN_RELEASES_URL: ${{ vars.MAOMI_RELEASE_ADMIN_RELEASES_URL }}
-  MAOMI_RELEASE_AUTO_PUBLISH: ${{ vars.MAOMI_RELEASE_AUTO_PUBLISH || 'false' }}
-  MAOMI_RELEASE_UPLOAD_AUTH_HEADER: ${{ vars.MAOMI_RELEASE_UPLOAD_AUTH_HEADER }}
-  MAOMI_RELEASE_ADMIN_AUTH_HEADER: ${{ vars.MAOMI_RELEASE_ADMIN_AUTH_HEADER }}
 
 jobs:
-  build-windows-x64:
-    runs-on: windows-latest
-    environment: build
-    env:
-      MAOMI_RELEASE_UPLOAD_AUTH_TOKEN: ${{ secrets.PUBLISH_KEY }}
-      MAOMI_RELEASE_ADMIN_AUTH_TOKEN: ${{ secrets.MAOMI_RELEASE_ADMIN_AUTH_TOKEN }}
+  prepare-release:
+    runs-on: ubuntu-24.04
+    outputs:
+      should_publish: ${{ steps.release.outputs.should_publish }}
+      version: ${{ steps.release.outputs.version }}
+      channel: ${{ steps.release.outputs.channel }}
+      is_prerelease: ${{ steps.release.outputs.is_prerelease }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+
+    steps:
+      - name: Resolve release metadata
+        id: release
+        shell: pwsh
+        run: |
+          $refName = "${{ github.ref_name }}".Trim()
+          if ($refName -match '^[vV]?(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:\.(?<build>\d+))?(?<preview>_preview)?$') {
+            $build = if ($Matches.build) { $Matches.build } else { '0' }
+            $preview = if ($Matches.preview) { '_preview' } else { '' }
+            $channel = if ($Matches.preview) { 'preview' } else { 'stable' }
+            $isPrerelease = if ($Matches.preview) { 'true' } else { 'false' }
+            $version = "$($Matches.major).$($Matches.minor).$($Matches.patch).$build$preview"
+            "should_publish=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            "channel=$channel" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            "is_prerelease=$isPrerelease" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            "tag_name=$refName" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          } else {
+            Write-Host "Ignoring ref '$refName' because it does not match the desktop release version format."
+            "should_publish=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            "version=" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            "channel=stable" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            "is_prerelease=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            "tag_name=$refName" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
+
+  build:
+    if: needs.prepare-release.outputs.should_publish == 'true'
+    needs: prepare-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            target: win-x64
+          - runner: ubuntu-24.04
+            target: linux-x64
+          - runner: macos-15
+            target: macos-arm64
+          - runner: macos-15-intel
+            target: macos-x64
+    runs-on: ${{ matrix.runner }}
 
     steps:
       - name: Checkout repository
@@ -46,53 +80,40 @@ jobs:
       - name: Verify root legacy guards
         run: bun run verify
 
-      - name: Resolve release metadata
-        id: release
-        shell: pwsh
-        run: |
-          $refName = "${{ github.ref_name }}".Trim()
-          if ($refName -match '^[vV]?(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:\.(?<build>\d+))?(?<preview>_preview)?$') {
-            $build = if ($Matches.build) { $Matches.build } else { '0' }
-            $preview = if ($Matches.preview) { '_preview' } else { '' }
-            $version = "$($Matches.major).$($Matches.minor).$($Matches.patch).$build$preview"
-            "should_publish=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-            "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          } else {
-            Write-Host "Ignoring ref '$refName' because it does not match the WoAI release version format."
-            "should_publish=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          }
-
       - name: Build desktop release artifacts
-        if: steps.release.outputs.should_publish == 'true'
         env:
-          MAOMI_DESKTOP_VERSION: ${{ steps.release.outputs.version }}
-          MAOMI_RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          MAOMI_DESKTOP_VERSION: ${{ needs.prepare-release.outputs.version }}
+          MAOMI_RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
+          MAOMI_RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
+          MAOMI_DESKTOP_GITHUB_OWNER: ${{ github.repository_owner }}
+          MAOMI_DESKTOP_GITHUB_REPO: ${{ github.event.repository.name }}
         run: bun run release:build
 
-      - name: Generate desktop release manifest
-        if: steps.release.outputs.should_publish == 'true'
-        env:
-          MAOMI_DESKTOP_VERSION: ${{ steps.release.outputs.version }}
-          MAOMI_RELEASE_VERSION: ${{ steps.release.outputs.version }}
-        run: bun run release:manifest
-
-      - name: Upload desktop release artifacts to object storage
-        if: steps.release.outputs.should_publish == 'true' && env.MAOMI_RELEASE_UPLOAD_AUTH_TOKEN != ''
-        env:
-          MAOMI_DESKTOP_VERSION: ${{ steps.release.outputs.version }}
-          MAOMI_RELEASE_VERSION: ${{ steps.release.outputs.version }}
-        run: bun run release:upload
-
       - name: Upload workflow artifact
-        if: steps.release.outputs.should_publish == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: MaomiAgent-release-v${{ steps.release.outputs.version }}-windows-x64
+          name: MaomiAgent-release-${{ matrix.target }}
           path: apps/desktop/MaomiAgent/artifacts/*
 
-      - name: Publish GitHub Release asset
-        if: steps.release.outputs.should_publish == 'true'
+  publish-release:
+    if: needs.prepare-release.outputs.should_publish == 'true'
+    needs:
+      - prepare-release
+      - build
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: MaomiAgent-release-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Publish GitHub Release assets
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.prepare-release.outputs.tag_name }}
           generate_release_notes: true
-          files: apps/desktop/MaomiAgent/artifacts/*
+          prerelease: ${{ needs.prepare-release.outputs.is_prerelease == 'true' }}
+          files: release-assets/*

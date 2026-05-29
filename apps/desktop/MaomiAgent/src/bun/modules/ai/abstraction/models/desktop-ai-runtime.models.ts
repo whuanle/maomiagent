@@ -26,6 +26,46 @@ export type DesktopAiProviderRuntimeBinding = {
   adapterId: string;
 };
 
+export type DesktopAiProviderTelemetryStage =
+  | "request_built"
+  | "request_sent"
+  | "response_headers"
+  | "first_byte"
+  | "first_protocol_frame"
+  | "first_ai_event"
+  | "stream_finished";
+
+export type DesktopAiProviderTelemetryEvent = {
+  stage: DesktopAiProviderTelemetryStage;
+  protocolFamily?: DesktopModelProviderProtocolFamily;
+  apiStyle?: DesktopModelProviderApiStyle;
+  providerType?: string;
+  modelId?: string;
+  runId?: string;
+  turnId?: string;
+  status?: number;
+  contentType?: string;
+  requestDurationMs?: number;
+  firstByteLatencyMs?: number;
+  firstEventLatencyMs?: number;
+};
+
+export type DesktopAiProviderTelemetrySink = (
+  event: DesktopAiProviderTelemetryEvent,
+) => void | Promise<void>;
+
+export type DesktopAiRuntimeCapabilities = {
+  supportsFunctionCall?: boolean;
+  supportsReasoning?: boolean;
+  supportsStructuredOutput?: boolean;
+  supportsAttachments?: boolean;
+  supportsTemperature?: boolean;
+  supportsParallelToolCalls?: boolean;
+  supportsInterleavedReasoning?: boolean;
+  supportsSystemBlocks?: boolean;
+  supportsJsonMode?: boolean;
+};
+
 export type DesktopAiProviderServiceConfig = {
   apiKey: string;
   baseUrl?: string;
@@ -50,4 +90,5 @@ export type DesktopAiProviderRuntimeCreateTurnPortInput = {
   fetchFn?: typeof fetch;
   retryPolicy?: RetryBackoffPolicy;
   sleepFn?: (ms: number) => Promise<void>;
+  telemetrySink?: DesktopAiProviderTelemetrySink;
 };

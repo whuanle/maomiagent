@@ -52,11 +52,29 @@ export function assessFeishuDocPush(input: {
   if (input.blockedChanges.length > 0) {
     return {
       status: "blocked",
-      publishModeRecommendation: "publish_new",
+      publishModeRecommendation: "update_existing",
       hasRevisionConflict: false,
       hasBlockedChanges: true,
       unknownBlockCount,
       blockedChanges: input.blockedChanges,
+    };
+  }
+
+  const plan = planFeishuDocPatch(input.base, input.current);
+  const unsupported = plan.operations.find((operation) => operation.kind === "blocked_change" || operation.kind !== "update_text");
+  if (unsupported) {
+    const reason = unsupported.kind === "blocked_change"
+      ? unsupported.reason
+      : `Unsupported patch operation: ${unsupported.kind}`;
+
+    return {
+      status: "blocked",
+      publishModeRecommendation: "update_existing",
+      hasRevisionConflict: false,
+      hasBlockedChanges: true,
+      unknownBlockCount,
+      blockedChanges: [{ blockId: unsupported.blockId, reason }],
+      plan,
     };
   }
 
@@ -67,6 +85,6 @@ export function assessFeishuDocPush(input: {
     hasBlockedChanges: false,
     unknownBlockCount,
     blockedChanges: [],
-    plan: planFeishuDocPatch(input.base, input.current),
+    plan,
   };
 }

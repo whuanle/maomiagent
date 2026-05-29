@@ -34,16 +34,25 @@ function createDocTreeView(): FeishuDocTreeView {
     root: "document",
     nodes: [
       {
+        id: "doc-roadmap",
+        token: "doc-roadmap",
+        kind: "document",
         docId: "doc-roadmap",
         title: "产品路线图",
         hasChild: false,
       },
       {
+        id: "doc-sync",
+        token: "doc-sync",
+        kind: "document",
         docId: "doc-sync",
         title: "团队周报",
         hasChild: false,
       },
       {
+        id: "doc-empty",
+        token: "doc-empty",
+        kind: "document",
         docId: "doc-empty",
         title: "未命中记录",
         hasChild: false,
@@ -179,6 +188,10 @@ describe("DocsDomainActionHandler docs.search", () => {
             hasRevisionConflict: true,
             hasBlockedChanges: false,
             unknownBlockCount: 1,
+            hasBaseline: true,
+            hasLocalChanges: true,
+            localChecksum: "sha256:local",
+            status: "cached",
           },
         }),
         pushStatus: "blocked",
@@ -205,20 +218,25 @@ describe("DocsDomainActionHandler docs.search", () => {
     expect(result.result).toEqual(expect.objectContaining({ ok: false, stage: "blocked" }))
   })
 
-  test("summarizes publish-new push results as a new document publish", async () => {
+  test("summarizes blocked unsupported push results without recommending a new document", async () => {
     const handler = createHandler({
       pushWorkspaceDoc: async () => ({
         item: createDocContentView({
-          docId: "doc-new-1",
-          title: "新文档",
-          markdown: "# 新文档",
+          docId: "doc-roadmap",
+          title: "产品路线图",
+          markdown: "# 产品路线图",
           cache: {
             workspaceId: "ws_1",
             publishModeRecommendation: "update_existing",
+            hasBlockedChanges: true,
+            hasBaseline: true,
+            hasLocalChanges: true,
+            localChecksum: "sha256:local",
+            status: "cached",
           },
         }),
-        pushStatus: "published_new",
-        message: "已发布为新文档：doc-new-1",
+        pushStatus: "blocked",
+        message: "当前改动暂不支持直接推送：Unsupported patch operation: insert_block",
         warnings: ["unsupported or unknown block removed from draft"],
       }),
     })
@@ -234,8 +252,11 @@ describe("DocsDomainActionHandler docs.search", () => {
       availableRuntimeCount: 1,
     })
 
-    expect(result.summary.headline).toBe("已发布为新文档")
-    expect(result.summary.details).toContain("已发布为新文档：doc-new-1")
+    expect(result.summary.headline).toBe("文档未推送")
+    expect(result.summary.details).toContain("推荐发布方式：覆盖原文")
+    expect(result.summary.details).toContain("当前改动包含暂不支持的结构变更。")
+    expect(result.summary.details).not.toContain("推荐发布方式：发布新文档")
+    expect(result.summary.details).toContain("当前改动暂不支持直接推送：Unsupported patch operation: insert_block")
     expect(result.summary.details).toContain("warnings: unsupported or unknown block removed from draft")
   })
 });

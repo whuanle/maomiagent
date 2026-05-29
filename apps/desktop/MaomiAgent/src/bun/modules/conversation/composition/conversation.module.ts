@@ -42,6 +42,7 @@ import {
 import { DesktopConversationCapabilityRegistryService } from "../implementation/services/desktop-conversation-capability-registry-service";
 import { createDesktopConversationBuiltinToolBundle } from "../implementation/services/desktop-conversation-builtin-tools";
 import { DesktopConversationService } from "../implementation/services/desktop-conversation-service";
+import { DesktopConversationWorkspaceSettingsService } from "../implementation/services/desktop-conversation-workspace-settings-service";
 import { DesktopConversationStore } from "../implementation/stores/desktop-conversation-store";
 
 export const DESKTOP_CONVERSATION_SERVICE_TOKEN =
@@ -90,6 +91,9 @@ export class DesktopConversationModule extends DependencyModuleBase {
           terminalCommand: services.resolve(DESKTOP_TERMINALS_COMMAND_PORT),
           taskBridge: services.resolve(DESKTOP_CONVERSATION_TASK_BRIDGE_PORT),
         });
+        const workspaceSettingsService = new DesktopConversationWorkspaceSettingsService(
+          services.resolve(DESKTOP_WORKSPACE_QUERY_PORT),
+        );
 
         return new DesktopConversationService(
           new DesktopConversationStore(connection),
@@ -106,6 +110,7 @@ export class DesktopConversationModule extends DependencyModuleBase {
             capabilityProviders,
             toolSources: builtinTools.toolSources,
             toolHandlers: builtinTools.toolHandlers,
+            workspaceSettingsService,
           },
         );
       },

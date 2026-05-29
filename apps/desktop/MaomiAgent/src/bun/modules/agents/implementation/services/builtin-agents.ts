@@ -8,6 +8,7 @@ import {
 
 export const MAOMI_COORDINATOR_AGENT_ID = "dev-coordinator"
 export const REPO_DOC_MASTER_AGENT_ID = "repo-doc-master"
+export const FEISHU_DOC_WRITER_AGENT_ID = "feishu-doc-writer"
 
 const BUILTIN_EPOCH = "1970-01-01T00:00:00.000Z"
 
@@ -119,6 +120,18 @@ const REPOSITORY_DOCUMENTATION_MASTER_PROMPT = buildPrompt([
   "需要图表、流程图、时序图、状态图或架构图时，优先输出可直接保存的 Mermaid fenced code blocks，并为图表写清标题、节点语义和适用范围；图必须与仓库实现一致。",
   "涉及命令、路径、环境变量、接口、模块名和脚本名时，必须使用仓库中的真实名称；如果信息不足，明确列出待确认项，而不是用推测填空。",
   "输出必须包含：已确认的文档范围与语言策略、文档目标与受众、使用到的仓库证据、建议变更的 README.md/SKILL.md/docs/ 文件清单、图表计划或 Mermaid 片段、已完成内容和仍待确认的问题。",
+])
+
+const FEISHU_DOC_WRITER_PROMPT = buildPrompt([
+  "你是飞书文档助手，负责围绕飞书文档原文和本地草稿生成符合结构要求的修改稿。",
+  "开始前先读取当前文档原文、本地草稿和可用的飞书文档上下文，确认目标章节、标题层级、现有列表/表格/引用/代码块和复杂块位置；没有读到上下文前不要凭空重写。",
+  "默认只修改本地草稿，不直接推送或覆盖飞书远端；除非用户明确要求并确认 push，否则不要主动执行远端写回。",
+  "文档编写必须优先保持稳定结构：标题层级连续且语义清晰，章节边界明确，列表缩进和编号一致，引用、待办、callout、代码块、简单表格各自保持独立块语义。",
+  "优先做最小必要改动：能局部改一节就不要整篇重写，能保留原有标题和段落顺序就不要大幅重排，避免制造重复标题和漂移锚点。",
+  "可安全改写的内容优先限定在标题、段落、列表、引用、todo、callout、代码块和简单表格；需要新增内容时，也优先用这些安全结构组织。",
+  "遇到图片、文件、附件、同步块、whiteboard、grid、sheet、bitable、board、iframe 或其它未知原生块时，默认保留原样，不把它们伪装成普通 Markdown，不臆造资源 token、扩展标签、块 id 或占位语法。",
+  "如果复杂块附近需要改写，只改它前后的安全文本块，并明确保留复杂块本体；不要跨复杂块边界做大范围替换。",
+  "输出结果应适合直接写入本地飞书 Markdown 草稿：先给可落稿的正文，再在必要时单独说明保留块、风险点和不建议自动改写的区域，不要混入无关自我介绍。",
 ])
 
 const MANAGED_TASK_INTAKE_PROMPT = buildPrompt([
@@ -300,6 +313,19 @@ export const BUILTIN_MAOMI_AGENTS: AgentItem[] = [
     subAgentPolicy: {
       mode: "allow_list",
       allowedAgentIds: [...REPO_DOCUMENTATION_MASTER_DELEGATE_AGENT_IDS],
+    },
+  }),
+  createBuiltinAgent({
+    agentId: FEISHU_DOC_WRITER_AGENT_ID,
+    name: "飞书文档助手",
+    description: "负责飞书文档本地草稿改写，约束结构、格式和复杂块安全边界。",
+    mode: "all",
+    prompt: FEISHU_DOC_WRITER_PROMPT,
+    metadata: {
+      capability: "feishu-doc-writing",
+      category: "documentation",
+      localDraftOnly: true,
+      preservesComplexBlocks: true,
     },
   }),
   createBuiltinAgent({

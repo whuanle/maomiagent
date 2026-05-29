@@ -1,5 +1,8 @@
 import type { DesktopModelsQueryPort } from "../../../models";
-import type { DesktopAiProviderServiceConfig } from "../../abstraction/models/desktop-ai-runtime.models";
+import type {
+  DesktopAiProviderServiceConfig,
+  DesktopAiRuntimeCapabilities,
+} from "../../abstraction/models/desktop-ai-runtime.models";
 import type {
   DesktopAiExecutionMaterialization,
   DesktopAiExecutionProfileMaterializationInput,
@@ -18,6 +21,16 @@ function cloneServiceConfig(input: DesktopAiProviderServiceConfig): DesktopAiPro
 function normalizeOptionalText(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized ? normalized : undefined;
+}
+
+function buildRuntimeCapabilities(input: {
+  supportsFunctionCall?: boolean;
+}): DesktopAiRuntimeCapabilities {
+  return {
+    ...(typeof input.supportsFunctionCall === "boolean"
+      ? { supportsFunctionCall: input.supportsFunctionCall }
+      : {}),
+  };
 }
 
 function buildExecutionProfile(input: {
@@ -92,6 +105,13 @@ implements DesktopAiExecutionProfileMaterializerPort {
         protocolFamily: resolved.protocolFamily,
         apiStyle: resolved.apiStyle,
       },
+      protocolIdentity: {
+        protocolFamily: resolved.protocolFamily,
+        apiStyle: resolved.apiStyle,
+      },
+      capabilities: buildRuntimeCapabilities({
+        supportsFunctionCall: resolved.supportsFunctionCall,
+      }),
       resolveServiceConfig: async () => cloneServiceConfig(resolved.serviceConfig),
       target,
     };

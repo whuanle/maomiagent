@@ -5,14 +5,8 @@ import type { ConversationInteractionEntry } from "#maomiagent/kernel/src/host/a
 import type { DesktopConversationPermissionRule } from "../../../../shared/desktop-conversation";
 
 import type { LanguageCode } from "../../../config/titlebar";
-import {
-  applyDesktopConversationWorkspaceSettings,
-  hasDesktopConversationBridge,
-} from "../../../lib/desktop-conversation";
-import {
-  readConversationWorkspaceSettings,
-  writeConversationWorkspaceSettings,
-} from "./conversation-workspace-settings-storage";
+import { hasDesktopConversationBridge } from "../../../lib/desktop-conversation";
+import { useConversationWorkspaceSettings } from "./conversation-workspace-settings-storage";
 import { ConversationApprovalRulesModal } from "./conversation-approval-rules-modal";
 
 type Props = {
@@ -40,6 +34,14 @@ export function AssistantInteractionPermissionCard(props: Props) {
   const { message } = App.useApp();
   const [approvalRulesOpen, setApprovalRulesOpen] = useState(false);
   const [savingRules, setSavingRules] = useState(false);
+  const workspaceId = props.workspaceId?.trim() || "";
+  const {
+    settings: workspaceSettings,
+    loading: loadingWorkspaceSettings,
+    saving: savingWorkspaceSettings,
+    error: workspaceSettingsError,
+    saveSettings,
+  } = useConversationWorkspaceSettings(workspaceId);
 
   if (props.interaction.request.kind !== "permission") {
     return null;
@@ -47,9 +49,7 @@ export function AssistantInteractionPermissionCard(props: Props) {
 
   const isEn = props.language === "en-US";
   const request = props.interaction.request;
-  const workspaceId = props.workspaceId?.trim() || "";
-  const workspaceSettings = workspaceId ? readConversationWorkspaceSettings(workspaceId) : undefined;
-  const approvalRules = workspaceSettings?.permissionRules ?? [];
+  const approvalRules = workspaceSettings.permissionRules ?? [];
   const canConfigureRules = request.allowAlways && Boolean(workspaceId) && hasDesktopConversationBridge();
   const primaryDecision = request.allowAlways && request.defaultDecision === "approve_always"
     ? "approve_always"
@@ -62,37 +62,42 @@ export function AssistantInteractionPermissionCard(props: Props) {
   const configureLabel = isEn ? "Configure auto approval" : "配置自动授权";
   const rejectLabel = request.rejectLabel ?? (isEn ? "Reject" : "拒绝");
   const statusLabel = isEn ? "Waiting for approval" : "等待授权";
-  const actionCopy = canConfigureRules
-    ? (isEn
-      ? "No saved auto approval rule matched. Confirm this permission or save it as an always-allow rule."
-      : "当前没有命中自动授权规则。你可以直接审批，或把这条请求保存成总是允许规则。")
-    : (isEn
-      ? "The run will continue after you confirm this permission."
-      : "确认这条权限后，运行会继续。");
+  const actionCopy = loadingWorkspaceSettings
+    ? (isEn ? "Loading saved rules." : "正在加载已保存规则。")
+    : workspaceSettingsError
+      ? (isEn ? "Saved rules are unavailable right now." : "暂时无法读取已保存规则。")
+      : canConfigureRules
+        ? (isEn
+          ? "No saved auto approval rule matched. Confirm this permission or save it as an always-allow rule."
+          : "当前没有命中自动授权规则。你可以直接审批，或把这条请求保存成总是允许规则。")
+        : (isEn
+          ? "The run will continue after you confirm this permission."
+          : "确认这条权限后，运行会继续。");
 
   const handleSaveApprovalRules = useCallback(async (rules: DesktopConversationPermissionRule[]) => {
     if (!workspaceId || !hasDesktopConversationBridge()) {
       void message.error(isEn ? "Auto approval configuration is unavailable." : "当前运行环境暂不支持自动授权配置。");
       return;
     }
-
-    const previousSettings = readConversationWorkspaceSettings(workspaceId);
-    writeConversationWorkspaceSettings(workspaceId, {
-      permissionRules: rules,
-    });
+    if (loadingWorkspaceSettings || workspaceSettingsError) {
+      void message.error(
+        loadingWorkspaceSettings
+          ? (isEn ? "Saved rules are still loading." : "已保存规则仍在加载中。")
+          : (isEn ? "Saved rules are unavailable right now." : "暂时无法读取已保存规则。"),
+      );
+      return;
+    }
 
     setSavingRules(true);
     try {
-      await applyDesktopConversationWorkspaceSettings({
-        workspaceId,
-        settings: {
-          permissionRules: rules,
-        },
+      await saveSettings({
+        permissionRules: rules,
+      }, {
+        syncExistingSessions: true,
       });
       setApprovalRulesOpen(false);
       props.onApproveInteraction(props.interaction.interactionId, "approve_always");
     } catch (error) {
-      writeConversationWorkspaceSettings(workspaceId, previousSettings);
       void message.error(
         error instanceof Error && error.message.trim()
           ? `${isEn ? "Failed to save auto approval rules" : "保存自动授权规则失败"}: ${error.message}`
@@ -101,7 +106,15 @@ export function AssistantInteractionPermissionCard(props: Props) {
     } finally {
       setSavingRules(false);
     }
-  }, [isEn, message, props, workspaceId]);
+  }, [
+    isEn,
+    loadingWorkspaceSettings,
+    message,
+    props,
+    saveSettings,
+    workspaceId,
+    workspaceSettingsError,
+  ]);
 
   return (
     <div className="chat-assistant-interaction-card is-permission is-asked is-dock">
@@ -190,7 +203,7 @@ export function AssistantInteractionPermissionCard(props: Props) {
           <Button
             size="small"
             className="chat-assistant-interaction-action"
-            disabled={props.replying || savingRules}
+            disabled={props.replying || savingRules || savingWorkspaceSettings || loadingWorkspaceSettings || Boolean(workspaceSettingsError)}
             onClick={() => setApprovalRulesOpen(true)}
           >
             {configureLabel}
@@ -217,7 +230,7 @@ export function AssistantInteractionPermissionCard(props: Props) {
           open={approvalRulesOpen}
           language={props.language}
           rules={approvalRules}
-          saving={savingRules}
+          saving={savingRules || savingWorkspaceSettings || loadingWorkspaceSettings}
           request={request}
           onCancel={() => setApprovalRulesOpen(false)}
           onSubmit={handleSaveApprovalRules}

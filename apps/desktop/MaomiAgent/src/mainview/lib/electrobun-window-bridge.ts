@@ -75,12 +75,14 @@ export function installElectrobunWindowBridge() {
         rpc.request.getDesktopConversationSessionDetail({ sessionId }),
       listDesktopConversationCapabilities: (query) =>
         rpc.request.listDesktopConversationCapabilities(query),
+      getDesktopConversationWorkspaceSettings: (input) =>
+        rpc.request.getDesktopConversationWorkspaceSettings(input),
       createDesktopConversationSession: (input) =>
         rpc.request.createDesktopConversationSession(input),
       hideDesktopConversationSession: (sessionId) =>
         rpc.request.hideDesktopConversationSession({ sessionId }),
-      applyDesktopConversationWorkspaceSettings: (input) =>
-        rpc.request.applyDesktopConversationWorkspaceSettings(input),
+      saveDesktopConversationWorkspaceSettings: (input) =>
+        rpc.request.saveDesktopConversationWorkspaceSettings(input),
       sendDesktopConversationMessage: (input) =>
         rpc.request.sendDesktopConversationMessage(input),
       stopDesktopConversationMessage: (input) =>

@@ -27,8 +27,12 @@ import type {
   DesktopConversationCreateSessionResponse,
   DesktopConversationHideSessionResponse,
   DesktopConversationInteractionReplyResponse,
+  DesktopConversationReadWorkspaceSettingsInput,
+  DesktopConversationReadWorkspaceSettingsResponse,
   DesktopConversationRejectInteractionInput,
   DesktopConversationRuntimeEventsUpdateEvent,
+  DesktopConversationSaveWorkspaceSettingsInput,
+  DesktopConversationSaveWorkspaceSettingsResponse,
   DesktopConversationSendMessageInput,
   DesktopConversationSendMessageResponse,
   DesktopConversationStopMessageInput,
@@ -40,6 +44,7 @@ import type {
   DesktopConversationSessionListQuery,
   DesktopConversationSessionListResponse,
   DesktopConversationSessionSettings,
+  DesktopConversationWorkspaceSettings,
 } from "../../index";
 import { calculateRetryDelayMs } from "../../../ai/kernel-bridge";
 import type { DesktopAgentsQueryPort } from "../../../agents";
@@ -106,6 +111,14 @@ type DesktopConversationServiceOptions = {
   toolHandlers?: RegisteredToolHandler[];
   sessionDetailPublisher?: DesktopConversationSessionDetailPublisher;
   runtimeEventsPublisher?: DesktopConversationRuntimeEventsPublisher;
+  workspaceSettingsService?: {
+    read: (
+      input: DesktopConversationReadWorkspaceSettingsInput,
+    ) => Promise<DesktopConversationReadWorkspaceSettingsResponse>;
+    save: (
+      input: DesktopConversationSaveWorkspaceSettingsInput,
+    ) => Promise<DesktopConversationSaveWorkspaceSettingsResponse>;
+  };
 };
 
 type PendingConversationTaskSeed = {
@@ -399,12 +412,7 @@ function applyConversationSessionSettings(
       : {}),
     ...(settings.permissionRules !== undefined
       ? {
-          permissionRules: settings.permissionRules.map((rule) => ({
-            ...rule,
-            updatedAt: typeof rule.updatedAt === "number" && Number.isFinite(rule.updatedAt)
-              ? Math.trunc(rule.updatedAt)
-              : Date.now(),
-          })),
+          permissionRules: normalizePermissionRulesForMetadata(settings.permissionRules),
         }
       : {}),
   };
@@ -684,6 +692,204 @@ function withSelectedAgentId(
   };
 }
 
+function normalizeWorkspaceSelectionSettings(settings: DesktopConversationWorkspaceSettings) {
+  const selectedChannelId = normalizeOptionalText(settings.selectedChannelId);
+  const selectedModelId = normalizeOptionalText(settings.selectedModelId);
+
+  return {
+    selectedChannelId: selectedChannelId && selectedModelId ? selectedChannelId : undefined,
+    selectedModelId: selectedChannelId && selectedModelId ? selectedModelId : undefined,
+  };
+}
+
+function normalizePermissionRulesForMetadata(
+  rules: DesktopConversationPermissionRule[],
+): DesktopConversationPermissionRule[] {
+  return rules.map((rule) => ({
+    ...rule,
+    updatedAt: typeof rule.updatedAt === "number" && Number.isFinite(rule.updatedAt)
+      ? Math.trunc(rule.updatedAt)
+      : Date.now(),
+  }));
+}
+
+function buildConversationSessionSettingsMetadata(
+  settings: DesktopConversationSessionSettings,
+): Record<string, unknown> | undefined {
+  const interactionGovernancePatch: Record<string, unknown> = {
+    ...(settings.approvalMode !== undefined
+      ? { approvalMode: settings.approvalMode }
+      : {}),
+    ...(settings.permissionRules !== undefined
+      ? {
+          permissionRules: normalizePermissionRulesForMetadata(settings.permissionRules),
+        }
+      : {}),
+  };
+  const conversationSettingsPatch: Record<string, unknown> = {
+    ...(settings.contextCompressionThresholdPercent !== undefined
+      ? { contextCompressionThresholdPercent: settings.contextCompressionThresholdPercent }
+      : {}),
+    ...(settings.managedExecutionEnabled !== undefined
+      ? { managedExecutionEnabled: settings.managedExecutionEnabled }
+      : {}),
+    ...(settings.thinkingEnabled !== undefined
+      ? { thinkingEnabled: settings.thinkingEnabled }
+      : {}),
+    ...(settings.memoryEnabled !== undefined
+      ? { memoryEnabled: settings.memoryEnabled }
+      : {}),
+    ...(settings.sandboxEnabled !== undefined
+      ? { sandboxEnabled: settings.sandboxEnabled }
+      : {}),
+    ...(settings.feishuSmartAssistantEnabled !== undefined
+      ? { feishuSmartAssistantEnabled: settings.feishuSmartAssistantEnabled }
+      : {}),
+    ...(settings.capabilityPreferences !== undefined
+      ? { capabilityPreferences: { ...settings.capabilityPreferences } }
+      : {}),
+  };
+
+  return mergeMetadata(undefined, {
+    ...(Object.keys(interactionGovernancePatch).length > 0
+      ? { [INTERACTION_GOVERNANCE_KEY]: interactionGovernancePatch }
+      : {}),
+    ...(Object.keys(conversationSettingsPatch).length > 0
+      ? { [CONVERSATION_SETTINGS_KEY]: conversationSettingsPatch }
+      : {}),
+  });
+}
+
+function buildConversationSessionSettingsFromWorkspaceSettings(
+  settings: DesktopConversationWorkspaceSettings,
+): DesktopConversationSessionSettings {
+  return normalizeConversationSessionSettings({
+    approvalMode: settings.approvalAutoEnabled ? "auto" : "manual",
+    permissionRules: settings.permissionRules,
+    contextCompressionThresholdPercent: settings.contextCompressionThresholdPercent,
+    managedExecutionEnabled: settings.managedExecutionEnabled,
+    thinkingEnabled: settings.thinkingEnabled,
+    memoryEnabled: settings.memoryEnabled,
+    sandboxEnabled: settings.sandboxEnabled,
+    feishuSmartAssistantEnabled: settings.feishuSmartAssistantEnabled,
+    capabilityPreferences: settings.capabilityPreferences,
+  });
+}
+
+function buildConversationSessionMetadataFromWorkspaceSettings(
+  settings: DesktopConversationWorkspaceSettings,
+): Record<string, unknown> | undefined {
+  const selection = normalizeWorkspaceSelectionSettings(settings);
+  return mergeMetadata(
+    buildConversationSessionSettingsMetadata(
+      buildConversationSessionSettingsFromWorkspaceSettings(settings),
+    ),
+    selection.selectedChannelId && selection.selectedModelId
+      ? {
+          selectedChannelId: selection.selectedChannelId,
+          selectedModelId: selection.selectedModelId,
+        }
+      : undefined,
+  );
+}
+
+function mergeConversationMetadataWithWorkspaceDefaults(
+  workspaceDefaults: Record<string, unknown> | undefined,
+  explicitMetadata: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  const nextMetadata = mergeMetadata(workspaceDefaults, explicitMetadata);
+  const workspaceInteractionGovernance = isRecord(workspaceDefaults?.[INTERACTION_GOVERNANCE_KEY])
+    ? workspaceDefaults[INTERACTION_GOVERNANCE_KEY] as Record<string, unknown>
+    : undefined;
+  const explicitInteractionGovernance = isRecord(explicitMetadata?.[INTERACTION_GOVERNANCE_KEY])
+    ? explicitMetadata[INTERACTION_GOVERNANCE_KEY] as Record<string, unknown>
+    : undefined;
+  const workspaceConversationSettings = isRecord(workspaceDefaults?.[CONVERSATION_SETTINGS_KEY])
+    ? workspaceDefaults[CONVERSATION_SETTINGS_KEY] as Record<string, unknown>
+    : undefined;
+  const explicitConversationSettings = isRecord(explicitMetadata?.[CONVERSATION_SETTINGS_KEY])
+    ? explicitMetadata[CONVERSATION_SETTINGS_KEY] as Record<string, unknown>
+    : undefined;
+
+  const mergedInteractionGovernance = mergeMetadata(
+    workspaceInteractionGovernance,
+    explicitInteractionGovernance,
+  );
+  const mergedConversationSettings = mergeMetadata(
+    workspaceConversationSettings,
+    explicitConversationSettings
+      ? {
+          ...explicitConversationSettings,
+          ...(Object.prototype.hasOwnProperty.call(explicitConversationSettings, "capabilityPreferences")
+            ? {
+                capabilityPreferences: mergeMetadata(
+                  normalizeCapabilityPreferences(workspaceConversationSettings?.capabilityPreferences),
+                  normalizeCapabilityPreferences(explicitConversationSettings.capabilityPreferences),
+                ),
+              }
+            : {}),
+        }
+      : undefined,
+  );
+
+  return mergeMetadata(nextMetadata, {
+    ...(mergedInteractionGovernance
+      ? { [INTERACTION_GOVERNANCE_KEY]: mergedInteractionGovernance }
+      : {}),
+    ...(mergedConversationSettings
+      ? { [CONVERSATION_SETTINGS_KEY]: mergedConversationSettings }
+      : {}),
+  });
+}
+
+function buildConversationSessionSettingsFromWorkspacePatch(
+  patch: Partial<DesktopConversationWorkspaceSettings>,
+  settings: DesktopConversationWorkspaceSettings,
+): DesktopConversationSessionSettings {
+  const nextSettings: DesktopConversationSessionSettings = {};
+
+  if (Object.prototype.hasOwnProperty.call(patch, "approvalAutoEnabled")) {
+    nextSettings.approvalMode = settings.approvalAutoEnabled ? "auto" : "manual";
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, "permissionRules")) {
+    nextSettings.permissionRules = settings.permissionRules ?? [];
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, "contextCompressionThresholdPercent")) {
+    nextSettings.contextCompressionThresholdPercent = settings.contextCompressionThresholdPercent;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, "managedExecutionEnabled")) {
+    nextSettings.managedExecutionEnabled = settings.managedExecutionEnabled;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, "thinkingEnabled")) {
+    nextSettings.thinkingEnabled = settings.thinkingEnabled;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, "memoryEnabled")) {
+    nextSettings.memoryEnabled = settings.memoryEnabled;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, "sandboxEnabled")) {
+    nextSettings.sandboxEnabled = settings.sandboxEnabled;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, "feishuSmartAssistantEnabled")) {
+    nextSettings.feishuSmartAssistantEnabled = settings.feishuSmartAssistantEnabled;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, "capabilityPreferences") && isRecord(patch.capabilityPreferences)) {
+    const capabilityPreferences: DesktopConversationCapabilityPreferences = {};
+    for (const key of Object.keys(patch.capabilityPreferences)) {
+      const normalizedKey = normalizeOptionalText(key);
+      const enabled = normalizedKey ? settings.capabilityPreferences[normalizedKey] : undefined;
+      if (normalizedKey && typeof enabled === "boolean") {
+        capabilityPreferences[normalizedKey] = enabled;
+      }
+    }
+
+    if (Object.keys(capabilityPreferences).length > 0) {
+      nextSettings.capabilityPreferences = capabilityPreferences;
+    }
+  }
+
+  return normalizeConversationSessionSettings(nextSettings);
+}
+
 function matchesQuery(item: DesktopConversationSessionItem, queryText: string): boolean {
   if (!queryText) {
     return true;
@@ -802,6 +1008,12 @@ export class DesktopConversationService implements DesktopConversationPort {
     });
   }
 
+  async getWorkspaceSettings(
+    input: DesktopConversationReadWorkspaceSettingsInput,
+  ): Promise<DesktopConversationReadWorkspaceSettingsResponse> {
+    return this.requireWorkspaceSettingsService().read(input);
+  }
+
   async createSession(
     input: DesktopConversationCreateSessionInput,
   ): Promise<DesktopConversationCreateSessionResponse> {
@@ -818,13 +1030,23 @@ export class DesktopConversationService implements DesktopConversationPort {
 
       const now = nowIso();
       const selectedAgentId = normalizeOptionalText(input.selectedAgentId) ?? DEFAULT_DESKTOP_PRIMARY_AGENT_ID;
+      const workspaceSettingsResponse = this.options.workspaceSettingsService
+        ? await this.options.workspaceSettingsService.read({ workspaceId })
+        : undefined;
+      const workspaceMetadata = workspaceSettingsResponse
+        ? buildConversationSessionMetadataFromWorkspaceSettings(workspaceSettingsResponse.settings)
+        : undefined;
+      const inputMetadata = withSelectedAgentId(input.metadata, selectedAgentId);
       const item: DesktopConversationSessionItem = {
         sessionId,
         workspaceId,
         title: normalizeTitle(input.title) ?? "New conversation",
         status: "idle",
         parentSessionId: normalizeOptionalText(input.parentSessionId),
-        metadata: withSelectedAgentId(input.metadata, selectedAgentId),
+        metadata: mergeConversationMetadataWithWorkspaceDefaults(
+          workspaceMetadata,
+          inputMetadata,
+        ),
         createdAt: now,
         updatedAt: now,
       };
@@ -895,30 +1117,57 @@ export class DesktopConversationService implements DesktopConversationPort {
     return this.runMutation(async () => {
       const workspaceId = normalizeRequiredWorkspaceId(input.workspaceId);
       const settings = normalizeConversationSessionSettings(input.settings);
-      const workspaceItems = this.store.listSessions().filter((item) => item.workspaceId === workspaceId);
-      const updatedItems = workspaceItems.flatMap((item) => {
-        const updated = applyConversationSessionSettings(item, settings);
-        if (!updated) {
-          return [];
-        }
-
-        this.store.upsertSession(updated);
-        return [updated];
-      });
+      const result = this.applyWorkspaceConversationSessionSettings(workspaceId, settings);
 
       await this.logger.info("Desktop conversation workspace settings applied", {
         context: {
           workspaceId,
-          updatedCount: updatedItems.length,
-          totalCount: workspaceItems.length,
+          updatedCount: result.updatedCount,
+          totalCount: result.totalCount,
           settings,
         },
       });
 
+      return result;
+    });
+  }
+
+  async saveWorkspaceSettings(
+    input: DesktopConversationSaveWorkspaceSettingsInput,
+  ): Promise<DesktopConversationSaveWorkspaceSettingsResponse> {
+    return this.runMutation(async () => {
+      const workspaceId = normalizeRequiredWorkspaceId(input.workspaceId);
+      const response = await this.requireWorkspaceSettingsService().save({
+        workspaceId,
+        patch: input.patch,
+      });
+      let syncedSessionCount = 0;
+
+      if (input.syncExistingSessions) {
+        const sessionSettings = buildConversationSessionSettingsFromWorkspacePatch(
+          input.patch,
+          response.settings,
+        );
+        if (Object.keys(sessionSettings).length > 0) {
+          syncedSessionCount = this.applyWorkspaceConversationSessionSettings(
+            workspaceId,
+            sessionSettings,
+          ).updatedCount;
+        }
+      }
+
+      await this.logger.info("Desktop conversation workspace settings saved", {
+        context: {
+          workspaceId,
+          syncedSessionCount,
+          syncExistingSessions: input.syncExistingSessions === true,
+          warnings: response.warnings,
+        },
+      });
+
       return {
-        items: updatedItems,
-        updatedCount: updatedItems.length,
-        totalCount: workspaceItems.length,
+        ...response,
+        syncedSessionCount,
       };
     });
   }
@@ -1321,6 +1570,28 @@ export class DesktopConversationService implements DesktopConversationPort {
     return next;
   }
 
+  private applyWorkspaceConversationSessionSettings(
+    workspaceId: string,
+    settings: DesktopConversationSessionSettings,
+  ): DesktopConversationApplyWorkspaceSettingsResponse {
+    const workspaceItems = this.store.listSessions().filter((item) => item.workspaceId === workspaceId);
+    const updatedItems = workspaceItems.flatMap((item) => {
+      const updated = applyConversationSessionSettings(item, settings);
+      if (!updated) {
+        return [];
+      }
+
+      this.store.upsertSession(updated);
+      return [updated];
+    });
+
+    return {
+      items: updatedItems,
+      updatedCount: updatedItems.length,
+      totalCount: workspaceItems.length,
+    };
+  }
+
   private createLegacyConversationRuntimeFactory() {
     if (!this.options.agents || !this.options.aiRuntime || !this.options.materializer) {
       return undefined;
@@ -1335,6 +1606,14 @@ export class DesktopConversationService implements DesktopConversationPort {
         tasksQuery: input.tasksQuery ?? this.options.tasksQuery,
       }),
     } satisfies Pick<DesktopAiConversationRuntimeFactoryPort, "createConversationRuntime">;
+  }
+
+  private requireWorkspaceSettingsService() {
+    if (!this.options.workspaceSettingsService) {
+      throw new Error("Desktop conversation workspace settings service is not configured.");
+    }
+
+    return this.options.workspaceSettingsService;
   }
 
   private requireConversationRuntime() {
@@ -1384,6 +1663,12 @@ export class DesktopConversationService implements DesktopConversationPort {
         runtimeEventsPublisher: (
           update: Parameters<NonNullable<DesktopAiConversationRuntimeCreateInput["runtimeEventsPublisher"]>>[0],
         ) => this.publishRuntimeEventsUpdate(update),
+        providerTelemetryPublisher: (
+          event: Parameters<NonNullable<DesktopAiConversationRuntimeCreateInput["providerTelemetryPublisher"]>>[0],
+        ) => this.logger.debug("Desktop AI provider stage", {
+          context: event,
+          runId: event.runId,
+        }),
       });
     }
 

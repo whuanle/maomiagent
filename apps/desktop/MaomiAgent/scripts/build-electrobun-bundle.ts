@@ -1,11 +1,11 @@
-import { createHash, type Hash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  DEFAULT_DESKTOP_APP_UPDATE_PUBLIC_BASE_URL,
-  normalizeDesktopAppUpdatePublicBaseUrl,
+  createPackagedDesktopAppUpdateConfig,
+  normalizeDesktopAppUpdateChannel,
+  resolveDesktopAppUpdatePlatform,
 } from "../src/bun/desktop-app-update/config";
 
 const APP_NAME = "MaomiAgent";
@@ -15,13 +15,9 @@ const projectRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const buildFolder = process.env.MAOMI_DESKTOP_DEV_BUILD_FOLDER?.trim() || "build";
 const artifactFolder = process.env.MAOMI_DESKTOP_ARTIFACT_FOLDER?.trim() || "artifacts";
 const buildMode = process.env.MAOMI_DESKTOP_BUILD_MODE?.trim() === "release" ? "release" : "dev";
-const releaseChannel = process.env.MAOMI_RELEASE_CHANNEL?.trim() || "stable";
-const releaseBaseUrl = process.env.MAOMI_DESKTOP_UPDATE_BASE_URL?.trim() || "";
-const packagedPublicSoftwareBaseUrl = resolvePackagedPublicSoftwareBaseUrl();
 const ELECTROBUN_PACKAGE_ROOT = resolveElectrobunPackageRoot();
 const ELECTROBUN_WINDOWS_DIST = join(ELECTROBUN_PACKAGE_ROOT, "dist-win-x64");
 const ELECTROBUN_SHARED_DIST = join(ELECTROBUN_PACKAGE_ROOT, "dist");
-const ELECTROBUN_ZSTD_X64 = join(ELECTROBUN_WINDOWS_DIST, "zig-zstd.exe");
 const ELECTROBUN_ZIG_ASAR_X64 = join(
   ELECTROBUN_WINDOWS_DIST,
   "zig-asar",
@@ -36,9 +32,9 @@ const ELECTROBUN_ZIG_ASAR_ARM64 = join(
 );
 const WINDOWS_BUILD_ENVIRONMENT = "dev-win-x64";
 const WINDOWS_APP_NAME = `${APP_NAME}-dev`;
-const WINDOWS_RELEASE_ENVIRONMENT = `${releaseChannel}-win-x64`;
-const WINDOWS_RELEASE_APP_NAME = APP_NAME;
 const BUNDLED_RENDERER_DIST = join(projectRoot, "dist");
+const GENERATED_FOLDER = join(projectRoot, ".generated");
+const GENERATED_UPDATE_CONFIG_PATH = join(GENERATED_FOLDER, "update-config.json");
 
 await main().catch((error) => {
   console.error(error);
@@ -46,14 +42,16 @@ await main().catch((error) => {
 });
 
 async function main(): Promise<void> {
-  if (process.platform !== "win32") {
-    await runCommand(["bun", "x", "electrobun", "build"]);
+  if (buildMode === "release") {
+    writeGeneratedUpdateConfig(resolveReleaseChannel());
+    await runCommand(["bun", "x", "electrobun", "build", "--env=stable"], undefined, projectRoot);
+    console.log(`Prepared desktop release artifacts at ${join(projectRoot, artifactFolder)}`);
     return;
   }
 
-  if (buildMode === "release") {
-    const releaseArtifacts = await prepareWindowsReleaseArtifacts();
-    console.log(`Prepared Windows desktop release artifacts at ${releaseArtifacts.artifactDirectory}`);
+  if (process.platform !== "win32") {
+    writeGeneratedUpdateConfig("dev");
+    await runCommand(["bun", "x", "electrobun", "build"], undefined, projectRoot);
     return;
   }
 
@@ -67,63 +65,15 @@ async function prepareWindowsBundle(): Promise<string> {
     bundleRoot,
     appVersion: APP_VERSION,
     channel: "dev",
-    baseUrl: "",
-    publicSoftwareBaseUrl: packagedPublicSoftwareBaseUrl,
   });
 
   return bundleRoot;
-}
-
-async function prepareWindowsReleaseArtifacts(): Promise<{ artifactDirectory: string }> {
-  const bundleRoot = join(projectRoot, buildFolder, WINDOWS_RELEASE_ENVIRONMENT, WINDOWS_RELEASE_APP_NAME);
-  const artifactDirectory = join(projectRoot, artifactFolder);
-
-  rmSync(artifactDirectory, { force: true, recursive: true });
-  mkdirSync(artifactDirectory, { recursive: true });
-
-  await prepareWindowsBundleAt({
-    bundleRoot,
-    appVersion: APP_VERSION,
-    channel: releaseChannel,
-    baseUrl: releaseBaseUrl,
-    publicSoftwareBaseUrl: packagedPublicSoftwareBaseUrl,
-  });
-
-  const tarPath = join(projectRoot, buildFolder, WINDOWS_RELEASE_ENVIRONMENT, `${WINDOWS_RELEASE_APP_NAME}.tar`);
-  const compressedTarPath = join(artifactDirectory, `${WINDOWS_RELEASE_ENVIRONMENT}-${WINDOWS_RELEASE_APP_NAME}.tar.zst`);
-  const zipPath = join(artifactDirectory, `${WINDOWS_RELEASE_ENVIRONMENT}-${WINDOWS_RELEASE_APP_NAME}.zip`);
-  const updateInfoPath = join(artifactDirectory, `${WINDOWS_RELEASE_ENVIRONMENT}-update.json`);
-
-  createTar(tarPath, dirname(bundleRoot), [WINDOWS_RELEASE_APP_NAME]);
-  await runCommand(
-    [ELECTROBUN_ZSTD_X64, "compress", "-i", tarPath, "-o", compressedTarPath, "--threads", "max"],
-    undefined,
-    dirname(bundleRoot),
-  );
-  rmSync(tarPath, { force: true });
-
-  await createZipArchive(dirname(bundleRoot), WINDOWS_RELEASE_APP_NAME, zipPath);
-
-  const bundleHash = await computeFileSha256(compressedTarPath);
-  writeFileSync(
-    updateInfoPath,
-    `${JSON.stringify({
-      version: APP_VERSION,
-      hash: bundleHash,
-      platform: "win",
-      arch: "x64",
-    }, null, 2)}\n`,
-  );
-
-  return { artifactDirectory };
 }
 
 async function prepareWindowsBundleAt(input: {
   bundleRoot: string;
   appVersion: string;
   channel: string;
-  baseUrl: string;
-  publicSoftwareBaseUrl?: string;
 }): Promise<void> {
   const bundleRoot = input.bundleRoot;
   const bundleBinDir = join(bundleRoot, "bin");
@@ -175,7 +125,7 @@ async function prepareWindowsBundleAt(input: {
       version: input.appVersion,
       hash: "",
       channel: input.channel,
-      baseUrl: input.baseUrl,
+      baseUrl: "",
       name: basename(bundleRoot),
       identifier: APP_IDENTIFIER,
     }),
@@ -191,22 +141,38 @@ async function prepareWindowsBundleAt(input: {
   );
   writeFileSync(
     join(bundleAppDir, "update-config.json"),
-    `${JSON.stringify({
-      publicBaseUrl: input.publicSoftwareBaseUrl || "",
-      softwareCode: process.env.MAOMI_RELEASE_APP_CODE?.trim() || "maomiagent",
-      channel: input.channel,
-      os: "win",
-      arch: "x64",
-    }, null, 2)}\n`,
+    `${JSON.stringify(
+      createPackagedDesktopAppUpdateConfig({
+        channel: input.channel,
+        os: "win",
+        arch: "x64",
+      }),
+      null,
+      2,
+    )}\n`,
   );
 }
 
-function resolvePackagedPublicSoftwareBaseUrl(): string {
-  if (Object.prototype.hasOwnProperty.call(process.env, "MAOMI_DESKTOP_PUBLIC_SOFTWARE_BASE_URL")) {
-    return normalizeDesktopAppUpdatePublicBaseUrl(process.env.MAOMI_DESKTOP_PUBLIC_SOFTWARE_BASE_URL);
-  }
+function writeGeneratedUpdateConfig(channel: string): void {
+  const targetPlatform = resolveDesktopAppUpdatePlatform();
+  mkdirSync(GENERATED_FOLDER, { recursive: true });
+  writeFileSync(
+    GENERATED_UPDATE_CONFIG_PATH,
+    `${JSON.stringify(
+      createPackagedDesktopAppUpdateConfig({
+        channel,
+        os: targetPlatform.os,
+        arch: targetPlatform.arch,
+      }),
+      null,
+      2,
+    )}\n`,
+  );
+}
 
-  return DEFAULT_DESKTOP_APP_UPDATE_PUBLIC_BASE_URL;
+function resolveReleaseChannel(): string {
+  const normalized = normalizeDesktopAppUpdateChannel(process.env.MAOMI_RELEASE_CHANNEL);
+  return normalized === "preview" ? "preview" : "stable";
 }
 
 function resolveElectrobunPackageRoot(): string {
@@ -261,62 +227,6 @@ function copyBundledRenderer(bundleAppDir: string): void {
 function resolveDesktopVersion(): string {
   const version = process.env.MAOMI_DESKTOP_VERSION?.trim() || process.env.MAOMI_RELEASE_VERSION?.trim();
   return version || "0.1.0";
-}
-
-function createTar(tarPath: string, cwd: string, entries: string[]): void {
-  const resolvedTarPath = process.platform === "win32"
-    ? tarPath.replace(`${cwd}\\`, "")
-    : tarPath;
-  const result = Bun.spawnSync({
-    cmd: ["tar", "-cf", resolvedTarPath, ...entries],
-    cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-    env: { ...process.env, COPYFILE_DISABLE: "1" },
-  });
-
-  if (result.exitCode === 0) {
-    return;
-  }
-
-  throw new Error(`Failed to create tar archive: ${new TextDecoder().decode(result.stderr)}`);
-}
-
-async function createZipArchive(cwd: string, entryName: string, zipPath: string): Promise<void> {
-  await runCommand(
-    [
-      "powershell.exe",
-      "-NoProfile",
-      "-Command",
-      `Compress-Archive -Path '${entryName}' -DestinationPath '${zipPath}' -Force`,
-    ],
-    undefined,
-    cwd,
-  );
-}
-
-async function updateHashFromFile(hash: Hash, filePath: string): Promise<void> {
-  const reader = Bun.file(filePath).stream().getReader();
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        return;
-      }
-      if (value) {
-        hash.update(value);
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-}
-
-async function computeFileSha256(filePath: string): Promise<string> {
-  const hash = createHash("sha256");
-  await updateHashFromFile(hash, filePath);
-  return hash.digest("hex");
 }
 
 function resolveEmbeddedBunVersion(bunPath: string): string {

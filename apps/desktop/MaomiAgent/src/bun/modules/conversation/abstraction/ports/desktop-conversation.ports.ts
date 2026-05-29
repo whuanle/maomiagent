@@ -1,6 +1,4 @@
 import type {
-  DesktopConversationApplyWorkspaceSettingsInput,
-  DesktopConversationApplyWorkspaceSettingsResponse,
   DesktopConversationAnswerInteractionInput,
   DesktopConversationCapabilityListQuery,
   DesktopConversationCapabilityListResponse,
@@ -8,7 +6,11 @@ import type {
   DesktopConversationCreateSessionResponse,
   DesktopConversationHideSessionResponse,
   DesktopConversationInteractionReplyResponse,
+  DesktopConversationReadWorkspaceSettingsInput,
+  DesktopConversationReadWorkspaceSettingsResponse,
   DesktopConversationRejectInteractionInput,
+  DesktopConversationSaveWorkspaceSettingsInput,
+  DesktopConversationSaveWorkspaceSettingsResponse,
   DesktopConversationSendMessageInput,
   DesktopConversationSendMessageResponse,
   DesktopConversationStopMessageInput,
@@ -26,6 +28,9 @@ export interface DesktopConversationQueryPort {
   listCapabilities(
     input: DesktopConversationCapabilityListQuery,
   ): Promise<DesktopConversationCapabilityListResponse>;
+  getWorkspaceSettings(
+    input: DesktopConversationReadWorkspaceSettingsInput,
+  ): Promise<DesktopConversationReadWorkspaceSettingsResponse>;
 }
 
 export interface DesktopConversationCommandPort {
@@ -33,9 +38,9 @@ export interface DesktopConversationCommandPort {
     input: DesktopConversationCreateSessionInput,
   ): Promise<DesktopConversationCreateSessionResponse>;
   hideSession(sessionId: string): Promise<DesktopConversationHideSessionResponse>;
-  applyWorkspaceSettings(
-    input: DesktopConversationApplyWorkspaceSettingsInput,
-  ): Promise<DesktopConversationApplyWorkspaceSettingsResponse>;
+  saveWorkspaceSettings(
+    input: DesktopConversationSaveWorkspaceSettingsInput,
+  ): Promise<DesktopConversationSaveWorkspaceSettingsResponse>;
   sendMessage(
     input: DesktopConversationSendMessageInput,
   ): Promise<DesktopConversationSendMessageResponse>;

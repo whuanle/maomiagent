@@ -3,15 +3,21 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 export type DesktopAppUpdateConfig = {
-  publicBaseUrl: string;
-  softwareCode: string;
+  provider: "github";
+  owner: string;
+  repo: string;
   channel: string;
+  os: string;
+  arch: string;
+  includePrerelease: boolean;
+};
+
+type DesktopAppUpdatePlatform = {
   os: string;
   arch: string;
 };
 
-export const DEFAULT_DESKTOP_APP_UPDATE_PUBLIC_BASE_URL = "https://api.anyai.wiki";
-export const DEFAULT_DESKTOP_APP_UPDATE_SOFTWARE_CODE = "maomiagent";
+const DEFAULT_GITHUB_API_BASE_URL = "https://api.github.com";
 export const DEFAULT_DESKTOP_APP_UPDATE_CHANNEL = "stable";
 
 export function resolveDesktopAppUpdateConfig(input: {
@@ -19,24 +25,33 @@ export function resolveDesktopAppUpdateConfig(input: {
   env?: Record<string, string | undefined>;
 } = {}): DesktopAppUpdateConfig {
   const packagedConfig = isRecord(input.packagedConfig) ? input.packagedConfig : {};
-  const packagedPublicBaseUrl = readConfiguredText(packagedConfig, ["publicBaseUrl"]);
   const env = input.env ?? process.env;
+  const currentPlatform = resolveDesktopAppUpdatePlatform();
+  const channel = normalizeDesktopAppUpdateChannel(
+    readText(packagedConfig, ["channel"]) ||
+      normalizeText(env.MAOMI_RELEASE_CHANNEL),
+  );
 
   return {
-    publicBaseUrl: packagedPublicBaseUrl.found
-      ? normalizeDesktopAppUpdatePublicBaseUrl(packagedPublicBaseUrl.value)
-      : normalizeDesktopAppUpdatePublicBaseUrl(env.MAOMI_DESKTOP_PUBLIC_SOFTWARE_BASE_URL)
-        || DEFAULT_DESKTOP_APP_UPDATE_PUBLIC_BASE_URL,
-    softwareCode:
-      readText(packagedConfig, ["softwareCode"]) ||
-      normalizeText(env.MAOMI_RELEASE_APP_CODE) ||
-      DEFAULT_DESKTOP_APP_UPDATE_SOFTWARE_CODE,
-    channel:
-      readText(packagedConfig, ["channel"]) ||
-      normalizeText(env.MAOMI_RELEASE_CHANNEL) ||
-      DEFAULT_DESKTOP_APP_UPDATE_CHANNEL,
-    os: readText(packagedConfig, ["os"]) || "win",
-    arch: readText(packagedConfig, ["arch"]) || "x64",
+    provider: "github",
+    owner:
+      readText(packagedConfig, ["owner"]) ||
+      resolveDesktopAppUpdateGitHubOwner(env),
+    repo:
+      readText(packagedConfig, ["repo"]) ||
+      resolveDesktopAppUpdateGitHubRepo(env),
+    channel,
+    os:
+      normalizeDesktopAppUpdateOs(readText(packagedConfig, ["os"])) ||
+      normalizeDesktopAppUpdateOs(env.MAOMI_DESKTOP_UPDATE_OS) ||
+      currentPlatform.os,
+    arch:
+      normalizeDesktopAppUpdateArch(readText(packagedConfig, ["arch"])) ||
+      normalizeDesktopAppUpdateArch(env.MAOMI_DESKTOP_UPDATE_ARCH) ||
+      currentPlatform.arch,
+    includePrerelease:
+      readBoolean(packagedConfig, ["includePrerelease"]) ||
+      channel === "preview",
   };
 }
 
@@ -44,7 +59,10 @@ export async function loadDesktopAppUpdateConfig(
   resourcesRoot: string | undefined,
   env: Record<string, string | undefined> = process.env,
 ): Promise<DesktopAppUpdateConfig> {
-  const configPath = resourcesRoot ? path.join(resourcesRoot, "app", "update-config.json") : "";
+  const configPath = resourcesRoot
+    ? path.join(resourcesRoot, "app", "update-config.json")
+    : "";
+
   if (configPath && existsSync(configPath)) {
     const packagedConfig = JSON.parse(await readFile(configPath, "utf8")) as unknown;
     return resolveDesktopAppUpdateConfig({
@@ -56,50 +74,152 @@ export async function loadDesktopAppUpdateConfig(
   return resolveDesktopAppUpdateConfig({ env });
 }
 
-export function normalizeDesktopAppUpdatePublicBaseUrl(value: unknown): string {
-  const normalized = normalizeText(value).replace(/\/+$/u, "");
-  if (!normalized) {
-    return "";
+export function createPackagedDesktopAppUpdateConfig(input: {
+  channel?: string;
+  os?: string;
+  arch?: string;
+  includePrerelease?: boolean;
+  env?: Record<string, string | undefined>;
+} = {}): DesktopAppUpdateConfig {
+  const env = input.env ?? process.env;
+  const currentPlatform = resolveDesktopAppUpdatePlatform();
+  const channel = normalizeDesktopAppUpdateChannel(
+    input.channel || normalizeText(env.MAOMI_RELEASE_CHANNEL),
+  );
+
+  return {
+    provider: "github",
+    owner: resolveDesktopAppUpdateGitHubOwner(env),
+    repo: resolveDesktopAppUpdateGitHubRepo(env),
+    channel,
+    os: normalizeDesktopAppUpdateOs(input.os) || currentPlatform.os,
+    arch: normalizeDesktopAppUpdateArch(input.arch) || currentPlatform.arch,
+    includePrerelease:
+      typeof input.includePrerelease === "boolean"
+        ? input.includePrerelease
+        : channel === "preview",
+  };
+}
+
+export function isDesktopAppUpdateConfigured(
+  config: Pick<DesktopAppUpdateConfig, "owner" | "repo">,
+): boolean {
+  return Boolean(normalizeText(config.owner) && normalizeText(config.repo));
+}
+
+export function resolveDesktopAppUpdateGitHubOwner(
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const configuredOwner = normalizeText(env.MAOMI_DESKTOP_GITHUB_OWNER);
+  if (configuredOwner) {
+    return configuredOwner;
   }
 
-  const withScheme = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//u.test(normalized)
-    ? normalized
-    : `https://${normalized.replace(/^\/+/u, "")}`;
-
-  return withScheme.replace(/(?:\/api)?\/software$/iu, "");
+  return parseGitHubRepository(env).owner;
 }
 
-export function buildDesktopAppUpdateApiUrl(base: string, ...segments: string[]): string {
-  const normalizedBase = normalizeDesktopAppUpdatePublicBaseUrl(base);
-  return joinUrl(normalizedBase, "api", "software", ...segments);
-}
-
-export function buildDesktopLatestVersionUrl(
-  config: Pick<DesktopAppUpdateConfig, "publicBaseUrl" | "softwareCode" | "channel">,
+export function resolveDesktopAppUpdateGitHubRepo(
+  env: Record<string, string | undefined> = process.env,
 ): string {
-  const url = new URL(
-    buildDesktopAppUpdateApiUrl(
-      config.publicBaseUrl,
-      "apps",
-      config.softwareCode || DEFAULT_DESKTOP_APP_UPDATE_SOFTWARE_CODE,
-      "latest",
-    ),
-  );
-  url.searchParams.set(
-    "channel",
-    normalizeDesktopAppUpdateRequestChannel(config.channel),
-  );
-  return url.toString();
+  const configuredRepo = normalizeText(env.MAOMI_DESKTOP_GITHUB_REPO);
+  if (configuredRepo) {
+    return configuredRepo;
+  }
+
+  return parseGitHubRepository(env).repo;
 }
 
-export function buildDesktopFileDownloadUrl(publicBaseUrl: string, versionFileId: number): string {
-  return buildDesktopAppUpdateApiUrl(publicBaseUrl, "files", String(versionFileId), "download-url");
+export function normalizeDesktopAppUpdateChannel(value: unknown): string {
+  const normalized = normalizeText(value).toLowerCase();
+  if (normalized === "preview" || normalized === "canary") {
+    return "preview";
+  }
+  if (normalized === "dev") {
+    return "dev";
+  }
+  return DEFAULT_DESKTOP_APP_UPDATE_CHANNEL;
 }
 
-function normalizeDesktopAppUpdateRequestChannel(value: unknown): string {
-  return normalizeText(value).toLowerCase() === "preview"
-    ? "preview"
-    : DEFAULT_DESKTOP_APP_UPDATE_CHANNEL;
+export function normalizeDesktopAppUpdateOs(value: unknown): string {
+  const normalized = normalizeText(value).toLowerCase();
+  if (normalized === "win32" || normalized === "win" || normalized === "windows") {
+    return "win";
+  }
+  if (normalized === "darwin" || normalized === "mac" || normalized === "macos") {
+    return "macos";
+  }
+  if (normalized === "linux") {
+    return "linux";
+  }
+  return "";
+}
+
+export function normalizeDesktopAppUpdateArch(value: unknown): string {
+  const normalized = normalizeText(value).toLowerCase();
+  if (normalized === "x64" || normalized === "amd64") {
+    return "x64";
+  }
+  if (normalized === "arm64" || normalized === "aarch64") {
+    return "arm64";
+  }
+  return "";
+}
+
+export function resolveDesktopAppUpdatePlatform(
+  platform: string = process.platform,
+  arch: string = process.arch,
+): DesktopAppUpdatePlatform {
+  return {
+    os: normalizeDesktopAppUpdateOs(platform) || "win",
+    arch: normalizeDesktopAppUpdateArch(arch) || "x64",
+  };
+}
+
+export function buildDesktopGitHubApiUrl(
+  config: Pick<DesktopAppUpdateConfig, "owner" | "repo">,
+  ...segments: string[]
+): string {
+  return joinUrl(
+    DEFAULT_GITHUB_API_BASE_URL,
+    "repos",
+    config.owner,
+    config.repo,
+    ...segments,
+  );
+}
+
+export function buildDesktopLatestReleaseUrl(
+  config: Pick<DesktopAppUpdateConfig, "owner" | "repo">,
+): string {
+  return buildDesktopGitHubApiUrl(config, "releases", "latest");
+}
+
+export function buildDesktopReleasesUrl(
+  config: Pick<DesktopAppUpdateConfig, "owner" | "repo">,
+): string {
+  return buildDesktopGitHubApiUrl(config, "releases");
+}
+
+function parseGitHubRepository(env: Record<string, string | undefined>): {
+  owner: string;
+  repo: string;
+} {
+  const repository = normalizeText(env.GITHUB_REPOSITORY);
+  if (!repository.includes("/")) {
+    return {
+      owner: "",
+      repo: "",
+    };
+  }
+
+  const [owner = "", repo = ""] = repository
+    .split("/", 2)
+    .map((segment) => segment.trim());
+
+  return {
+    owner,
+    repo,
+  };
 }
 
 function joinUrl(base: string, ...segments: string[]): string {
@@ -111,33 +231,12 @@ function joinUrl(base: string, ...segments: string[]): string {
   return [normalizedBase, ...normalizedSegments].join("/");
 }
 
-type ConfiguredTextResult = {
-  found: boolean;
-  value: string;
-};
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function normalizeText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
-}
-
-function readConfiguredText(value: Record<string, unknown>, keys: string[]): ConfiguredTextResult {
-  for (const key of keys) {
-    if (Object.hasOwn(value, key) && typeof value[key] === "string") {
-      return {
-        found: true,
-        value: value[key].trim(),
-      };
-    }
-  }
-
-  return {
-    found: false,
-    value: "",
-  };
 }
 
 function readText(value: Record<string, unknown>, keys: string[]): string {
@@ -148,4 +247,13 @@ function readText(value: Record<string, unknown>, keys: string[]): string {
     }
   }
   return "";
+}
+
+function readBoolean(value: Record<string, unknown>, keys: string[]): boolean {
+  for (const key of keys) {
+    if (typeof value[key] === "boolean") {
+      return value[key] as boolean;
+    }
+  }
+  return false;
 }

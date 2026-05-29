@@ -40,6 +40,7 @@ function createRuntimeDescriptor(
             ...(input.fetchFn ? { fetchFn: input.fetchFn } : {}),
             ...(input.retryPolicy ? { retryPolicy: input.retryPolicy } : {}),
             ...(input.sleepFn ? { sleepFn: input.sleepFn } : {}),
+            ...(input.telemetrySink ? { telemetrySink: input.telemetrySink } : {}),
           });
         },
       };
@@ -52,6 +53,7 @@ function createRuntimeDescriptor(
             ...(input.fetchFn ? { fetchFn: input.fetchFn } : {}),
             ...(input.retryPolicy ? { retryPolicy: input.retryPolicy } : {}),
             ...(input.sleepFn ? { sleepFn: input.sleepFn } : {}),
+            ...(input.telemetrySink ? { telemetrySink: input.telemetrySink } : {}),
           });
         },
       };
@@ -64,6 +66,7 @@ function createRuntimeDescriptor(
             ...(input.fetchFn ? { fetchFn: input.fetchFn } : {}),
             ...(input.retryPolicy ? { retryPolicy: input.retryPolicy } : {}),
             ...(input.sleepFn ? { sleepFn: input.sleepFn } : {}),
+            ...(input.telemetrySink ? { telemetrySink: input.telemetrySink } : {}),
           });
         },
       };

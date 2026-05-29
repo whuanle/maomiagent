@@ -249,38 +249,6 @@ function createDocumentIRWithText(docId: string, title: string, markdown: string
   };
 }
 
-function createEmptyDocumentIR(docId: string, title: string, revisionId = "1"): FeishuDocIR {
-  return {
-    schemaVersion: 1,
-    document: {
-      id: docId,
-      title,
-      revisionId,
-      rootBlockId: docId,
-      pulledAt: "2026-05-25T00:00:00.000Z",
-      source: { documentIdType: "document_id" },
-    },
-    blocks: {
-      [docId]: {
-        id: docId,
-        type: "page",
-        parentId: null,
-        children: [],
-        editable: false,
-        text: [],
-        resource: null,
-        attrs: {},
-        raw: {},
-      },
-    },
-    assets: {},
-    integrity: {
-      contentHash: "sha256:empty-content",
-      rawHash: "sha256:empty-raw",
-    },
-  };
-}
-
 function createSourceSnapshot(
   requestedDocId: string,
   title: string,
@@ -1201,7 +1169,7 @@ describe("DesktopFeishuDocRuntime", () => {
     }
   });
 
-  test("pushWorkspaceDoc pushes plain markdown drafts through the official convert/delete/descendant flow", async () => {
+  test("pushWorkspaceDoc keeps plain markdown after a successful overwrite push", async () => {
     const snapshot = createSnapshot();
     const nodeToken = "node_1";
     const resolvedDocId = "doc_1";
@@ -1211,6 +1179,7 @@ describe("DesktopFeishuDocRuntime", () => {
     let convertCalls = 0;
     let deleteCalls = 0;
     let createCalls = 0;
+    let bundleReads = 0;
 
     try {
       const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
@@ -1218,18 +1187,25 @@ describe("DesktopFeishuDocRuntime", () => {
         snapshot,
         {
           readDocumentContent: async (_accessToken, docId) => createContentView(docId, "Remote Doc", remoteMarkdown),
-          readDocumentBundle: async (_accessToken, docId) => ({
-            content: createContentView(resolvedDocId, "Remote Doc", remoteMarkdown),
-            ir: createDocumentIRWithText(resolvedDocId, "Remote Doc", remoteMarkdown, remoteRevisionId),
-            source: {
-              ...createSourceSnapshot(nodeToken, "Remote Doc", resolvedDocId),
-              document: {
-                document_id: resolvedDocId,
-                title: "Remote Doc",
-                revision_id: remoteRevisionId,
-              },
-            },
-          }),
+          readDocumentBundle: async (_accessToken, docId) => {
+            bundleReads += 1;
+            if (bundleReads === 1) {
+              return {
+                content: createContentView(resolvedDocId, "Remote Doc", remoteMarkdown),
+                ir: createDocumentIRWithText(resolvedDocId, "Remote Doc", remoteMarkdown, remoteRevisionId),
+                source: {
+                  ...createSourceSnapshot(nodeToken, "Remote Doc", resolvedDocId),
+                  document: {
+                    document_id: resolvedDocId,
+                    title: "Remote Doc",
+                    revision_id: remoteRevisionId,
+                  },
+                },
+              };
+            }
+
+            throw new Error("push should not re-read remote content after a successful markdown overwrite");
+          },
         },
         workspaceQuery,
         async (url, init) => {
@@ -1350,6 +1326,7 @@ describe("DesktopFeishuDocRuntime", () => {
       expect(convertCalls).toBe(1);
       expect(deleteCalls).toBe(1);
       expect(createCalls).toBe(1);
+      expect(bundleReads).toBe(1);
       expect(pushed.pushStatus).toBe("succeeded");
       expect(pushed.item.markdown).toBe("# Edited Remote Doc\n\n- item");
       expect(pushed.item.cache?.hasLocalChanges).toBe(false);
@@ -1486,17 +1463,15 @@ describe("DesktopFeishuDocRuntime", () => {
     }
   });
 
-  test("pushWorkspaceDoc retries suspicious empty refreshes for plain markdown pushes instead of blanking the local draft", async () => {
+  test("pushWorkspaceDoc can overwrite the same markdown doc twice without an explicit pull", async () => {
     const snapshot = createSnapshot();
     const nodeToken = "node_1";
     const resolvedDocId = "doc_1";
-    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-push-refresh-retry-"));
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-push-repeat-"));
     let remoteMarkdown = "# Remote Doc";
     let remoteRevisionId = "1";
-    let convertCalls = 0;
-    let deleteCalls = 0;
-    let createCalls = 0;
-    let refreshCalls = 0;
+    let bundleReads = 0;
+    const deleteRevisionIds: string[] = [];
 
     try {
       const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
@@ -1505,144 +1480,72 @@ describe("DesktopFeishuDocRuntime", () => {
         {
           readDocumentContent: async () => createContentView(resolvedDocId, "Remote Doc", remoteMarkdown),
           readDocumentBundle: async (_accessToken, docId) => {
-            const document = {
-              document_id: resolvedDocId,
-              title: "Remote Doc",
-              revision_id: remoteRevisionId,
-            };
-
-            if (remoteRevisionId === "1") {
+            bundleReads += 1;
+            if (bundleReads === 1) {
               return {
                 content: createContentView(resolvedDocId, "Remote Doc", remoteMarkdown),
                 ir: createDocumentIRWithText(resolvedDocId, "Remote Doc", remoteMarkdown, remoteRevisionId),
                 source: {
                   ...createSourceSnapshot(docId, "Remote Doc", resolvedDocId),
-                  document,
+                  document: {
+                    document_id: resolvedDocId,
+                    title: "Remote Doc",
+                    revision_id: remoteRevisionId,
+                  },
                 },
               };
             }
 
-            refreshCalls += 1;
-            if (refreshCalls <= 2) {
-              return {
-                content: createContentView(resolvedDocId, "Remote Doc", ""),
-                ir: createEmptyDocumentIR(resolvedDocId, "Remote Doc", remoteRevisionId),
-                source: {
-                  ...createSourceSnapshot(docId, "Remote Doc", resolvedDocId),
-                  document,
-                  blocks: [{ block_id: resolvedDocId, block_type: 1, children: [] }],
-                },
-              };
-            }
-
-            return {
-              content: createContentView(resolvedDocId, "Remote Doc", remoteMarkdown),
-              ir: createDocumentIRWithText(resolvedDocId, "Remote Doc", remoteMarkdown, remoteRevisionId),
-              source: {
-                ...createSourceSnapshot(docId, "Remote Doc", resolvedDocId),
-                document,
-              },
-            };
+            throw new Error("push should not pull remote content after the initial open");
           },
         },
         workspaceQuery,
         async (url, init) => {
           const target = new URL(String(url));
           if (target.pathname === "/open-apis/docx/v1/documents/blocks/convert") {
-            convertCalls += 1;
-            expect(init?.method).toBe("POST");
-            expect(JSON.parse(String(init?.body))).toEqual({
-              content_type: "markdown",
-              content: "# Edited Remote Doc\n\n- item",
-            });
+            const content = String(JSON.parse(String(init?.body)).content);
+            const heading = content.includes("Second Push") ? "Second Push" : "First Push";
 
             return new Response(JSON.stringify({
               code: 0,
               data: {
-                first_level_block_ids: ["tmp_h1", "tmp_b1"],
-                blocks: [
-                  {
-                    block_id: "tmp_h1",
-                    block_type: 3,
-                    heading1: {
-                      elements: [{
-                        text_run: {
-                          content: "Edited Remote Doc",
-                        },
-                      }],
-                    },
-                  },
-                  {
-                    block_id: "tmp_b1",
-                    block_type: 12,
-                    bullet: {
-                      elements: [{
-                        text_run: {
-                          content: "item",
-                        },
-                      }],
-                    },
-                  },
-                ],
-              },
-            }), { status: 200, headers: { "content-type": "application/json" } });
-          }
-
-          if (target.pathname === `/open-apis/docx/v1/documents/${resolvedDocId}/blocks/${resolvedDocId}/children/batch_delete`) {
-            deleteCalls += 1;
-            expect(init?.method).toBe("DELETE");
-            expect(target.searchParams.get("document_revision_id")).toBe("1");
-            expect(JSON.parse(String(init?.body))).toEqual({
-              start_index: 0,
-              end_index: 1,
-            });
-
-            return new Response(JSON.stringify({
-              code: 0,
-              data: {
-                document_revision_id: 2,
-              },
-            }), { status: 200, headers: { "content-type": "application/json" } });
-          }
-
-          if (target.pathname === `/open-apis/docx/v1/documents/${resolvedDocId}/blocks/${resolvedDocId}/descendant`) {
-            createCalls += 1;
-            expect(init?.method).toBe("POST");
-            expect(target.searchParams.get("document_revision_id")).toBe("2");
-            expect(JSON.parse(String(init?.body))).toEqual({
-              children_id: ["tmp_h1", "tmp_b1"],
-              descendants: [
-                {
+                first_level_block_ids: ["tmp_h1"],
+                blocks: [{
                   block_id: "tmp_h1",
                   block_type: 3,
                   heading1: {
                     elements: [{
                       text_run: {
-                        content: "Edited Remote Doc",
+                        content: heading,
                       },
                     }],
                   },
-                },
-                {
-                  block_id: "tmp_b1",
-                  block_type: 12,
-                  bullet: {
-                    elements: [{
-                      text_run: {
-                        content: "item",
-                      },
-                    }],
-                  },
-                },
-              ],
-            });
-            remoteMarkdown = "# Edited Remote Doc\n\n- item";
-            remoteRevisionId = "3";
+                }],
+              },
+            }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+
+          if (target.pathname === `/open-apis/docx/v1/documents/${resolvedDocId}/blocks/${resolvedDocId}/children/batch_delete`) {
+            deleteRevisionIds.push(target.searchParams.get("document_revision_id") ?? "");
+            remoteRevisionId = String(Number(remoteRevisionId) + 1);
 
             return new Response(JSON.stringify({
               code: 0,
               data: {
-                document_revision_id: 3,
+                document_revision_id: Number(remoteRevisionId),
+              },
+            }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+
+          if (target.pathname === `/open-apis/docx/v1/documents/${resolvedDocId}/blocks/${resolvedDocId}/descendant`) {
+            const heading = JSON.parse(String(init?.body)).descendants[0].heading1.elements[0].text_run.content;
+            remoteMarkdown = `# ${heading}`;
+            remoteRevisionId = String(Number(remoteRevisionId) + 1);
+
+            return new Response(JSON.stringify({
+              code: 0,
+              data: {
+                document_revision_id: Number(remoteRevisionId),
               },
             }), { status: 200, headers: { "content-type": "application/json" } });
           }
@@ -1653,356 +1556,87 @@ describe("DesktopFeishuDocRuntime", () => {
 
       await runtime.openWorkspaceDoc({ workspaceId: "ws_1", docId: nodeToken });
 
-      const pushed = await runtime.pushWorkspaceDoc({
+      const first = await runtime.pushWorkspaceDoc({
         workspaceId: "ws_1",
         docId: nodeToken,
         title: "Remote Doc",
-        markdown: "# Edited Remote Doc\n\n- item",
+        markdown: "# First Push",
         force: true,
       });
 
-      expect(convertCalls).toBe(1);
-      expect(deleteCalls).toBe(1);
-      expect(createCalls).toBe(1);
-      expect(refreshCalls).toBe(3);
-      expect(pushed.pushStatus).toBe("succeeded");
-      expect(pushed.item.markdown).toBe("# Edited Remote Doc\n\n- item");
-      expect(pushed.item.cache?.hasLocalChanges).toBe(false);
+      const second = await runtime.pushWorkspaceDoc({
+        workspaceId: "ws_1",
+        docId: nodeToken,
+        title: "Remote Doc",
+        markdown: "# Second Push",
+        force: true,
+      });
+
+      expect(first.pushStatus).toBe("succeeded");
+      expect(second.pushStatus).toBe("succeeded");
+      expect(bundleReads).toBe(1);
+      expect(deleteRevisionIds).toEqual(["1", "-1"]);
+      expect(second.item.markdown).toBe("# Second Push");
+      expect(second.item.cache?.hasLocalChanges).toBe(false);
 
       const cached = await runtime.getWorkspaceDocLocalDraft({ workspaceId: "ws_1", docId: nodeToken });
-      expect(cached.markdown).toBe("# Edited Remote Doc\n\n- item");
+      expect(cached.markdown).toBe("# Second Push");
       expect(cached.cache?.hasLocalChanges).toBe(false);
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }
   });
 
-  test("pushWorkspaceDoc preserves the local draft when a plain markdown push refresh keeps projecting empty content", async () => {
+  test("pushWorkspaceDoc rewrites Mermaid blocks through docs v2 overwrite and keeps using that path until the next pull", async () => {
     const snapshot = createSnapshot();
     const nodeToken = "node_1";
     const resolvedDocId = "doc_1";
-    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-push-refresh-empty-"));
-    let remoteMarkdown = "# Remote Doc";
-    let remoteRevisionId = "1";
-    let convertCalls = 0;
-    let deleteCalls = 0;
-    let createCalls = 0;
-    let refreshCalls = 0;
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-push-mermaid-"));
+    let bundleReads = 0;
+    const docsAiBodies: Array<Record<string, unknown>> = [];
 
     try {
       const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
       const runtime = createRuntimeWithContentSource(
         snapshot,
         {
-          readDocumentContent: async () => createContentView(resolvedDocId, "Remote Doc", remoteMarkdown),
-          readDocumentBundle: async (_accessToken, docId) => {
-            const document = {
-              document_id: resolvedDocId,
-              title: "Remote Doc",
-              revision_id: remoteRevisionId,
-            };
-
-            if (remoteRevisionId === "1") {
-              return {
-                content: createContentView(resolvedDocId, "Remote Doc", remoteMarkdown),
-                ir: createDocumentIRWithText(resolvedDocId, "Remote Doc", remoteMarkdown, remoteRevisionId),
-                source: {
-                  ...createSourceSnapshot(docId, "Remote Doc", resolvedDocId),
-                  document,
-                },
-              };
+          readDocumentContent: async () => createContentView(resolvedDocId, "Remote Doc", "# Remote Doc"),
+          readDocumentBundle: async () => {
+            bundleReads += 1;
+            if (bundleReads > 1) {
+              throw new Error("push should not re-read remote content after docs v2 overwrite");
             }
 
-            refreshCalls += 1;
-            return {
-              content: createContentView(resolvedDocId, "Remote Doc", ""),
-              ir: createEmptyDocumentIR(resolvedDocId, "Remote Doc", remoteRevisionId),
-              source: {
-                ...createSourceSnapshot(docId, "Remote Doc", resolvedDocId),
-                document,
-                blocks: [{ block_id: resolvedDocId, block_type: 1, children: [] }],
-              },
-            };
-          },
-        },
-        workspaceQuery,
-        async (url, init) => {
-          const target = new URL(String(url));
-          if (target.pathname === "/open-apis/docx/v1/documents/blocks/convert") {
-            convertCalls += 1;
-            expect(init?.method).toBe("POST");
-            expect(JSON.parse(String(init?.body))).toEqual({
-              content_type: "markdown",
-              content: "# Edited Remote Doc\n\n- item",
-            });
-
-            return new Response(JSON.stringify({
-              code: 0,
-              data: {
-                first_level_block_ids: ["tmp_h1", "tmp_b1"],
-                blocks: [
-                  {
-                    block_id: "tmp_h1",
-                    block_type: 3,
-                    heading1: {
-                      elements: [{
-                        text_run: {
-                          content: "Edited Remote Doc",
-                        },
-                      }],
-                    },
-                  },
-                  {
-                    block_id: "tmp_b1",
-                    block_type: 12,
-                    bullet: {
-                      elements: [{
-                        text_run: {
-                          content: "item",
-                        },
-                      }],
-                    },
-                  },
-                ],
-              },
-            }), { status: 200, headers: { "content-type": "application/json" } });
-          }
-
-          if (target.pathname === `/open-apis/docx/v1/documents/${resolvedDocId}/blocks/${resolvedDocId}/children/batch_delete`) {
-            deleteCalls += 1;
-            expect(init?.method).toBe("DELETE");
-            expect(target.searchParams.get("document_revision_id")).toBe("1");
-            expect(JSON.parse(String(init?.body))).toEqual({
-              start_index: 0,
-              end_index: 1,
-            });
-
-            return new Response(JSON.stringify({
-              code: 0,
-              data: {
-                document_revision_id: 2,
-              },
-            }), { status: 200, headers: { "content-type": "application/json" } });
-          }
-
-          if (target.pathname === `/open-apis/docx/v1/documents/${resolvedDocId}/blocks/${resolvedDocId}/descendant`) {
-            createCalls += 1;
-            expect(init?.method).toBe("POST");
-            expect(target.searchParams.get("document_revision_id")).toBe("2");
-            expect(JSON.parse(String(init?.body))).toEqual({
-              children_id: ["tmp_h1", "tmp_b1"],
-              descendants: [
-                {
-                  block_id: "tmp_h1",
-                  block_type: 3,
-                  heading1: {
-                    elements: [{
-                      text_run: {
-                        content: "Edited Remote Doc",
-                      },
-                    }],
-                  },
-                },
-                {
-                  block_id: "tmp_b1",
-                  block_type: 12,
-                  bullet: {
-                    elements: [{
-                      text_run: {
-                        content: "item",
-                      },
-                    }],
-                  },
-                },
-              ],
-            });
-            remoteMarkdown = "# Edited Remote Doc\n\n- item";
-            remoteRevisionId = "3";
-
-            return new Response(JSON.stringify({
-              code: 0,
-              data: {
-                document_revision_id: 3,
-              },
-            }), { status: 200, headers: { "content-type": "application/json" } });
-          }
-
-          throw new Error(`unexpected fetch url: ${String(url)}`);
-        },
-      );
-
-      await runtime.openWorkspaceDoc({ workspaceId: "ws_1", docId: nodeToken });
-
-      const pushed = await runtime.pushWorkspaceDoc({
-        workspaceId: "ws_1",
-        docId: nodeToken,
-        title: "Remote Doc",
-        markdown: "# Edited Remote Doc\n\n- item",
-        force: true,
-      });
-
-      expect(convertCalls).toBe(1);
-      expect(deleteCalls).toBe(1);
-      expect(createCalls).toBe(1);
-      expect(refreshCalls).toBe(6);
-      expect(pushed.pushStatus).toBe("blocked");
-      expect(pushed.item.markdown).toBe("# Edited Remote Doc\n\n- item");
-      expect(pushed.message).toContain("未确认远端写入成功");
-      expect(pushed.item.cache?.hasLocalChanges).toBe(true);
-
-      const cached = await runtime.getWorkspaceDocLocalDraft({ workspaceId: "ws_1", docId: nodeToken });
-      expect(cached.markdown).toBe("# Edited Remote Doc\n\n- item");
-      expect(cached.cache?.hasLocalChanges).toBe(true);
-    } finally {
-      await rm(workspaceRoot, { recursive: true, force: true });
-    }
-  });
-
-  test("pushWorkspaceDoc blocks a plain markdown push when remote refresh stays on the previous non-empty content", async () => {
-    const snapshot = createSnapshot();
-    const nodeToken = "node_1";
-    const resolvedDocId = "doc_1";
-    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-push-refresh-stale-"));
-    let remoteMarkdown = "# Remote Doc";
-    let remoteRevisionId = "1";
-    let convertCalls = 0;
-    let deleteCalls = 0;
-    let createCalls = 0;
-    let refreshCalls = 0;
-
-    try {
-      const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
-      const runtime = createRuntimeWithContentSource(
-        snapshot,
-        {
-          readDocumentContent: async () => createContentView(resolvedDocId, "Remote Doc", remoteMarkdown),
-          readDocumentBundle: async (_accessToken, docId) => {
-            const document = {
-              document_id: resolvedDocId,
-              title: "Remote Doc",
-              revision_id: remoteRevisionId,
-            };
-
-            if (remoteRevisionId === "1") {
-              return {
-                content: createContentView(resolvedDocId, "Remote Doc", remoteMarkdown),
-                ir: createDocumentIRWithText(resolvedDocId, "Remote Doc", remoteMarkdown, remoteRevisionId),
-                source: {
-                  ...createSourceSnapshot(docId, "Remote Doc", resolvedDocId),
-                  document,
-                },
-              };
-            }
-
-            refreshCalls += 1;
             return {
               content: createContentView(resolvedDocId, "Remote Doc", "# Remote Doc"),
-              ir: createDocumentIRWithText(resolvedDocId, "Remote Doc", "# Remote Doc", remoteRevisionId),
-              source: {
-                ...createSourceSnapshot(docId, "Remote Doc", resolvedDocId),
-                document,
-              },
+              ir: createDocumentIRWithText(resolvedDocId, "Remote Doc", "# Remote Doc"),
+              source: createSourceSnapshot(nodeToken, "Remote Doc", resolvedDocId),
             };
           },
         },
         workspaceQuery,
         async (url, init) => {
           const target = new URL(String(url));
-          if (target.pathname === "/open-apis/docx/v1/documents/blocks/convert") {
-            convertCalls += 1;
-            expect(init?.method).toBe("POST");
-            expect(JSON.parse(String(init?.body))).toEqual({
-              content_type: "markdown",
-              content: "# Edited Remote Doc\n\n- item",
-            });
+          if (target.pathname === `/open-apis/docs_ai/v1/documents/${nodeToken}`) {
+            expect(init?.method).toBe("PUT");
+            const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+            docsAiBodies.push(body);
 
             return new Response(JSON.stringify({
               code: 0,
               data: {
-                first_level_block_ids: ["tmp_h1", "tmp_b1"],
-                blocks: [
-                  {
-                    block_id: "tmp_h1",
-                    block_type: 3,
-                    heading1: {
-                      elements: [{
-                        text_run: {
-                          content: "Edited Remote Doc",
-                        },
-                      }],
-                    },
-                  },
-                  {
-                    block_id: "tmp_b1",
-                    block_type: 12,
-                    bullet: {
-                      elements: [{
-                        text_run: {
-                          content: "item",
-                        },
-                      }],
-                    },
-                  },
-                ],
-              },
-            }), { status: 200, headers: { "content-type": "application/json" } });
-          }
-
-          if (target.pathname === `/open-apis/docx/v1/documents/${resolvedDocId}/blocks/${resolvedDocId}/children/batch_delete`) {
-            deleteCalls += 1;
-            expect(init?.method).toBe("DELETE");
-            expect(target.searchParams.get("document_revision_id")).toBe("1");
-            expect(JSON.parse(String(init?.body))).toEqual({
-              start_index: 0,
-              end_index: 1,
-            });
-
-            return new Response(JSON.stringify({
-              code: 0,
-              data: {
-                document_revision_id: 2,
-              },
-            }), { status: 200, headers: { "content-type": "application/json" } });
-          }
-
-          if (target.pathname === `/open-apis/docx/v1/documents/${resolvedDocId}/blocks/${resolvedDocId}/descendant`) {
-            createCalls += 1;
-            expect(init?.method).toBe("POST");
-            expect(target.searchParams.get("document_revision_id")).toBe("2");
-            expect(JSON.parse(String(init?.body))).toEqual({
-              children_id: ["tmp_h1", "tmp_b1"],
-              descendants: [
-                {
-                  block_id: "tmp_h1",
-                  block_type: 3,
-                  heading1: {
-                    elements: [{
-                      text_run: {
-                        content: "Edited Remote Doc",
-                      },
-                    }],
-                  },
+                document: {
+                  revision_id: docsAiBodies.length + 1,
+                  new_blocks: docsAiBodies.length === 1
+                    ? [{
+                        block_id: "blk_board_1",
+                        block_type: "whiteboard",
+                        block_token: "wb_1",
+                      }]
+                    : [],
                 },
-                {
-                  block_id: "tmp_b1",
-                  block_type: 12,
-                  bullet: {
-                    elements: [{
-                      text_run: {
-                        content: "item",
-                      },
-                    }],
-                  },
-                },
-              ],
-            });
-            remoteMarkdown = "# Edited Remote Doc\n\n- item";
-            remoteRevisionId = "3";
-
-            return new Response(JSON.stringify({
-              code: 0,
-              data: {
-                document_revision_id: 3,
+                result: "success",
+                warnings: [],
               },
             }), { status: 200, headers: { "content-type": "application/json" } });
           }
@@ -2013,22 +1647,41 @@ describe("DesktopFeishuDocRuntime", () => {
 
       await runtime.openWorkspaceDoc({ workspaceId: "ws_1", docId: nodeToken });
 
-      const pushed = await runtime.pushWorkspaceDoc({
+      const first = await runtime.pushWorkspaceDoc({
         workspaceId: "ws_1",
         docId: nodeToken,
         title: "Remote Doc",
-        markdown: "# Edited Remote Doc\n\n- item",
+        markdown: "# Edited Remote Doc\n\n```\nflowchart TD\nA --> B\n```",
         force: true,
       });
 
-      expect(convertCalls).toBe(1);
-      expect(deleteCalls).toBe(1);
-      expect(createCalls).toBe(1);
-      expect(refreshCalls).toBe(6);
-      expect(pushed.pushStatus).toBe("blocked");
-      expect(pushed.message).toContain("未确认远端写入成功");
-      expect(pushed.item.markdown).toBe("# Edited Remote Doc\n\n- item");
-      expect(pushed.item.cache?.hasLocalChanges).toBe(true);
+      const second = await runtime.pushWorkspaceDoc({
+        workspaceId: "ws_1",
+        docId: nodeToken,
+        title: "Remote Doc",
+        markdown: "# Plain Remote Doc",
+        force: true,
+      });
+
+      expect(first.pushStatus).toBe("succeeded");
+      expect(second.pushStatus).toBe("succeeded");
+      expect(bundleReads).toBe(1);
+      expect(docsAiBodies).toEqual([
+        {
+          command: "overwrite",
+          content: "# Edited Remote Doc\n\n<whiteboard type=\"mermaid\">\nflowchart TD\nA --> B\n</whiteboard>",
+          format: "markdown",
+          revision_id: -1,
+        },
+        {
+          command: "overwrite",
+          content: "# Plain Remote Doc",
+          format: "markdown",
+          revision_id: -1,
+        },
+      ]);
+      expect(second.item.markdown).toBe("# Plain Remote Doc");
+      expect(second.item.cache?.hasLocalChanges).toBe(false);
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }

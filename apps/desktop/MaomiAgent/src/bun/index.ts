@@ -85,6 +85,7 @@ import type {
 
 const APP_IDENTIFIER = "com.maomiagent.desktop";
 const DEFAULT_MAIN_VIEW_URL = "views://mainview/index.html";
+const DEFAULT_DESKTOP_PAGE_ZOOM = 1;
 let activeDevServerUrl = process.env.MAOMI_DESKTOP_DEV_SERVER_URL?.trim() ?? "";
 
 function resolveSingleInstanceAppKey(channel: string): string {
@@ -114,6 +115,14 @@ async function resolveMainViewUrl(channel: string): Promise<string> {
 function appendReloadToken(url: string): string {
   const separator = url.includes("?") ? "&" : "?";
   return `${url}${separator}reload=${Date.now()}`;
+}
+
+function resetDesktopPageZoom(window: BrowserWindow | null): void {
+  if (!window) {
+    return;
+  }
+
+  window.setPageZoom(DEFAULT_DESKTOP_PAGE_ZOOM);
 }
 
 async function runProjectCommand(command: string[]): Promise<void> {
@@ -697,12 +706,14 @@ try {
               resolveDesktopConversationQueryPort(host).getSessionDetail(sessionId),
             listDesktopConversationCapabilities: (query) =>
               resolveDesktopConversationQueryPort(host).listCapabilities(query),
+            getDesktopConversationWorkspaceSettings: (input) =>
+              resolveDesktopConversationQueryPort(host).getWorkspaceSettings(input),
             createDesktopConversationSession: (input) =>
               resolveDesktopConversationCommandPort(host).createSession(input),
             hideDesktopConversationSession: ({ sessionId }) =>
               resolveDesktopConversationCommandPort(host).hideSession(sessionId),
-            applyDesktopConversationWorkspaceSettings: (input) =>
-              resolveDesktopConversationCommandPort(host).applyWorkspaceSettings(input),
+            saveDesktopConversationWorkspaceSettings: (input) =>
+              resolveDesktopConversationCommandPort(host).saveWorkspaceSettings(input),
             sendDesktopConversationMessage: (input) =>
               resolveDesktopConversationCommandPort(host).sendMessage(input),
             stopDesktopConversationMessage: (input) =>
@@ -1078,7 +1089,7 @@ try {
         rpc.send("desktopConversationRuntimeEventsUpdated", update);
       });
 
-      window = new BrowserWindow({
+      const createdWindow = new BrowserWindow({
         ...options,
         rpc,
         titleBarStyle: "hidden",
@@ -1090,7 +1101,12 @@ try {
         // into the window behind the app. Keep transparency on other platforms.
         transparent: process.platform === "win32" ? false : true,
       });
-      return window;
+      resetDesktopPageZoom(createdWindow);
+      createdWindow.webview.on("dom-ready", () => {
+        resetDesktopPageZoom(createdWindow);
+      });
+      window = createdWindow;
+      return createdWindow;
     },
   });
 } catch (error) {

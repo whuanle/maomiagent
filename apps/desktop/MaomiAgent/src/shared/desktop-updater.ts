@@ -7,11 +7,13 @@ export type DesktopAppUpdateAsset = {
   os?: string;
   arch?: string;
   fileHash?: string;
+  downloadUrl?: string;
 };
 
 export type DesktopAppUpdateCheckResult = {
   configured: boolean;
   supported: boolean;
+  installSupported: boolean;
   hasUpdate: boolean;
   currentVersion: string;
   currentVersionCode: number;
@@ -27,15 +29,18 @@ export type DesktopAppUpdateCheckResult = {
   bundleAsset?: DesktopAppUpdateAsset;
   installerAsset?: DesktopAppUpdateAsset;
   updateInfoAsset?: DesktopAppUpdateAsset;
+  downloadAsset?: DesktopAppUpdateAsset;
 };
 
 export type DesktopAppUpdateInstallInput = {
   releaseId: number;
   bundleAssetId: number;
   bundleFileSize: number;
+  bundleDownloadUrl: string;
   targetVersion: string;
   targetVersionCode: number;
   updateInfoAssetId?: number;
+  updateInfoDownloadUrl?: string;
 };
 
 export type DesktopAppUpdateInstallResult = {

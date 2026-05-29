@@ -6,18 +6,22 @@ import { createFeishuDocPreviewIR } from "../../../../../feishu/components/feish
 import { useFeishuDocPreviewState } from "./feishu-doc-preview-state";
 
 type Props = {
+  conversationWorkspaceId?: string;
   workspaceId: string;
   docId: string;
   title: string;
   path: string;
+  fallbackPath?: string;
 };
 
 const noop = () => {};
 
 export function FeishuDocPreviewRouter(props: Props) {
   const preview = useFeishuDocPreviewState({
+    conversationWorkspaceId: props.conversationWorkspaceId,
     workspaceId: props.workspaceId,
     path: props.path,
+    fallbackPath: props.fallbackPath,
   });
 
   const previewIr = useMemo(() => createFeishuDocPreviewIR({
@@ -37,7 +41,7 @@ export function FeishuDocPreviewRouter(props: Props) {
   if (preview.error || !preview.result) {
     return (
       <div className="chat-inspector-pane-empty">
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={preview.error || "无法读取飞书原文预览"} />
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={preview.error || "无法读取飞书文档预览"} />
       </div>
     );
   }

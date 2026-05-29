@@ -14,7 +14,8 @@ describe("attached tab feishu preview support", () => {
       source: {
         kind: "feishu-doc",
         docId: " doc-token ",
-        path: ".maomi\\feishu-docs\\doc-token.md",
+        path: ".maomi\\feishu-docs\\drafts\\doc-token.draft.md",
+        fallbackPath: ".maomi\\feishu-docs\\doc-token.md",
         targetWorkspaceId: " workspace-b ",
         requestId: " req-1 ",
       },
@@ -25,7 +26,8 @@ describe("attached tab feishu preview support", () => {
       source: {
         kind: "feishu-doc",
         docId: "doc-token",
-        path: ".maomi/feishu-docs/doc-token.md",
+        path: ".maomi/feishu-docs/drafts/doc-token.draft.md",
+        fallbackPath: ".maomi/feishu-docs/doc-token.md",
         targetWorkspaceId: "workspace-b",
         requestId: "req-1",
       },
@@ -40,8 +42,9 @@ describe("attached tab feishu preview support", () => {
       source: {
         kind: "feishu-doc",
         docId: "doc-token",
-        path: ".maomi/feishu-docs/doc-token.md",
+        path: ".maomi/feishu-docs/drafts/doc-token.draft.md",
+        fallbackPath: ".maomi/feishu-docs/doc-token.md",
       },
-    })).toBe("attached::feishu-doc:workspace-a:default:doc-token:.maomi/feishu-docs/doc-token.md");
+    })).toBe("attached::feishu-doc:workspace-a:default:doc-token:.maomi/feishu-docs/drafts/doc-token.draft.md");
   });
 });

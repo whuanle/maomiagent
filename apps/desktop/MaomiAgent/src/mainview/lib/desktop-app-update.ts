@@ -1,4 +1,5 @@
 import type {
+  DesktopAppUpdateAsset,
   DesktopAppUpdateCheckResult,
   DesktopAppUpdateInstallInput,
   DesktopAppUpdateInstallResult,
@@ -10,6 +11,7 @@ type DesktopAppUpdateBridge = {
 };
 
 type InstallableDesktopAppUpdateResult = DesktopAppUpdateCheckResult & {
+  installSupported: true;
   releaseId: number;
   releaseVersion: string;
   releaseVersionCode: number;
@@ -40,6 +42,7 @@ export function canInstallDesktopAppUpdate(
 ): result is InstallableDesktopAppUpdateResult {
   return Boolean(
     result?.hasUpdate
+      && result.installSupported
       && isPositiveInteger(result.releaseId)
       && result.releaseVersion
       && isPositiveInteger(result.releaseVersionCode)
@@ -47,6 +50,21 @@ export function canInstallDesktopAppUpdate(
       && isPositiveInteger(result.bundleAsset.assetId)
       && isPositiveInteger(result.bundleAsset.fileSize),
   );
+}
+
+export function resolveDesktopAppUpdateDownloadAsset(
+  result: DesktopAppUpdateCheckResult | null | undefined,
+): DesktopAppUpdateAsset | undefined {
+  if (!result?.hasUpdate) {
+    return undefined;
+  }
+
+  const candidate = result.downloadAsset || result.installerAsset || result.bundleAsset;
+  if (!candidate?.downloadUrl) {
+    return undefined;
+  }
+
+  return candidate;
 }
 
 export async function checkDesktopAppUpdate(): Promise<DesktopAppUpdateCheckResult> {

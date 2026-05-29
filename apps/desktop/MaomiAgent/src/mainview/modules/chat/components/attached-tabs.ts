@@ -32,10 +32,13 @@ function normalizeWorkspaceFilePreviewSource(
 function normalizeFeishuDocPreviewSource(
   input: Extract<ChatPreviewSource, { kind: "feishu-doc" }>,
 ): Extract<ChatPreviewSource, { kind: "feishu-doc" }> {
+  const path = input.path.trim().replaceAll("\\", "/");
+  const fallbackPath = input.fallbackPath?.trim().replaceAll("\\", "/") || undefined;
   return {
     kind: input.kind,
     docId: input.docId.trim(),
-    path: input.path.trim().replaceAll("\\", "/"),
+    path,
+    ...(fallbackPath && fallbackPath !== path ? { fallbackPath } : {}),
     targetWorkspaceId: input.targetWorkspaceId?.trim() || undefined,
     requestId: input.requestId?.trim() || undefined,
   };

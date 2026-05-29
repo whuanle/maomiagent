@@ -5,6 +5,8 @@ import {
   isNativeMainviewRoute,
   parseRouteFromHash,
   resolveVisibleMainviewRoute,
+  shouldKeepMainviewRouteMounted,
+  shouldMountMainviewRoute,
 } from "./app-route";
 import { TITLEBAR_MENU_ITEMS } from "../config/titlebar";
 
@@ -38,5 +40,13 @@ describe("desktop route ownership", () => {
     expect(resolveVisibleMainviewRoute("shell")).toBe("chat");
     expect(resolveVisibleMainviewRoute("tasks")).toBe("tasks");
     expect(TITLEBAR_MENU_ITEMS.some((item) => item.key === "shell")).toBe(false);
+  });
+
+  test("keeps chat mounted while other menu pages remain on-demand", () => {
+    expect(shouldKeepMainviewRouteMounted("chat")).toBe(true);
+    expect(shouldKeepMainviewRouteMounted("workspace")).toBe(false);
+    expect(shouldMountMainviewRoute("chat", "workspace")).toBe(true);
+    expect(shouldMountMainviewRoute("workspace", "workspace")).toBe(true);
+    expect(shouldMountMainviewRoute("logs", "workspace")).toBe(false);
   });
 });

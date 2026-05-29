@@ -5,13 +5,14 @@ import path from "node:path";
 import { describe, expect, test } from "bun:test";
 
 import {
-  buildDesktopAppUpdateApiUrl,
-  buildDesktopLatestVersionUrl,
+  buildDesktopGitHubApiUrl,
+  buildDesktopLatestReleaseUrl,
+  buildDesktopReleasesUrl,
   DEFAULT_DESKTOP_APP_UPDATE_CHANNEL,
-  DEFAULT_DESKTOP_APP_UPDATE_PUBLIC_BASE_URL,
-  DEFAULT_DESKTOP_APP_UPDATE_SOFTWARE_CODE,
   loadDesktopAppUpdateConfig,
-  normalizeDesktopAppUpdatePublicBaseUrl,
+  normalizeDesktopAppUpdateArch,
+  normalizeDesktopAppUpdateChannel,
+  normalizeDesktopAppUpdateOs,
   resolveDesktopAppUpdateConfig,
 } from "./desktop-app-update/config";
 import {
@@ -24,21 +25,30 @@ import {
 } from "./desktop-app-update/platform-executor";
 
 describe("desktop app update config support", () => {
-  test("falls back to the configured public software api defaults when the packaged config is missing", () => {
+  test("loads packaged GitHub repository update config", () => {
     const config = resolveDesktopAppUpdateConfig({
+      packagedConfig: {
+        owner: "octo-org",
+        repo: "MaomiAgent",
+        channel: "stable",
+        os: "macos",
+        arch: "arm64",
+      },
       env: {},
     });
 
     expect(config).toEqual({
-      publicBaseUrl: DEFAULT_DESKTOP_APP_UPDATE_PUBLIC_BASE_URL,
-      softwareCode: DEFAULT_DESKTOP_APP_UPDATE_SOFTWARE_CODE,
+      provider: "github",
+      owner: "octo-org",
+      repo: "MaomiAgent",
       channel: DEFAULT_DESKTOP_APP_UPDATE_CHANNEL,
-      os: "win",
-      arch: "x64",
+      os: "macos",
+      arch: "arm64",
+      includePrerelease: false,
     });
   });
 
-  test("preserves an explicit empty packaged publicBaseUrl when loading update-config.json", async () => {
+  test("loads packaged preview config from update-config.json", async () => {
     const resourcesRoot = await mkdtemp(path.join(os.tmpdir(), "maomi-desktop-update-config-"));
 
     try {
@@ -47,9 +57,9 @@ describe("desktop app update config support", () => {
       await writeFile(
         path.join(appRoot, "update-config.json"),
         JSON.stringify({
-          publicBaseUrl: "",
-          softwareCode: "maomiagent",
-          channel: "stable",
+          owner: "octo-org",
+          repo: "MaomiAgent",
+          channel: "preview",
           os: "win",
           arch: "x64",
         }),
@@ -58,9 +68,10 @@ describe("desktop app update config support", () => {
 
       const config = await loadDesktopAppUpdateConfig(resourcesRoot, {});
 
-      expect(config.publicBaseUrl).toBe("");
-      expect(config.softwareCode).toBe("maomiagent");
-      expect(config.channel).toBe("stable");
+      expect(config.owner).toBe("octo-org");
+      expect(config.repo).toBe("MaomiAgent");
+      expect(config.channel).toBe("preview");
+      expect(config.includePrerelease).toBe(true);
       expect(config.os).toBe("win");
       expect(config.arch).toBe("x64");
     } finally {
@@ -68,102 +79,95 @@ describe("desktop app update config support", () => {
     }
   });
 
-  test("normalizes a bare host into an https public software api base url", () => {
-    expect(normalizeDesktopAppUpdatePublicBaseUrl(" api.anyai.wiki/ ")).toBe("https://api.anyai.wiki");
-    expect(normalizeDesktopAppUpdatePublicBaseUrl("https://api.anyai.wiki/software/")).toBe(
-      "https://api.anyai.wiki",
+  test("builds documented GitHub release api routes", () => {
+    expect(buildDesktopGitHubApiUrl({
+      owner: "octo-org",
+      repo: "MaomiAgent",
+    }, "releases", "latest")).toBe(
+      "https://api.github.com/repos/octo-org/MaomiAgent/releases/latest",
     );
-    expect(normalizeDesktopAppUpdatePublicBaseUrl("https://api.anyai.wiki/api/software/")).toBe(
-      "https://api.anyai.wiki",
-    );
+    expect(buildDesktopLatestReleaseUrl({
+      owner: "octo-org",
+      repo: "MaomiAgent",
+    })).toBe("https://api.github.com/repos/octo-org/MaomiAgent/releases/latest");
+    expect(buildDesktopReleasesUrl({
+      owner: "octo-org",
+      repo: "MaomiAgent",
+    })).toBe("https://api.github.com/repos/octo-org/MaomiAgent/releases");
   });
 
-  test("builds documented WoAI API routes for latest-version and file download requests", () => {
-    expect(buildDesktopAppUpdateApiUrl("https://api.anyai.wiki", "files", "42", "download-url")).toBe(
-      "https://api.anyai.wiki/api/software/files/42/download-url",
-    );
-    expect(buildDesktopLatestVersionUrl({
-      publicBaseUrl: "https://api.anyai.wiki/software",
-      softwareCode: "maomiagent",
-      channel: "preview",
-    })).toBe("https://api.anyai.wiki/api/software/apps/maomiagent/latest?channel=preview");
-    expect(buildDesktopLatestVersionUrl({
-      publicBaseUrl: "https://api.anyai.wiki/api/software",
-      softwareCode: "maomiagent",
-      channel: "stable",
-    })).toBe("https://api.anyai.wiki/api/software/apps/maomiagent/latest?channel=stable");
+  test("normalizes preview aliases and platform identifiers", () => {
+    expect(normalizeDesktopAppUpdateChannel("canary")).toBe("preview");
+    expect(normalizeDesktopAppUpdateChannel("stable")).toBe("stable");
+    expect(normalizeDesktopAppUpdateOs("win32")).toBe("win");
+    expect(normalizeDesktopAppUpdateOs("darwin")).toBe("macos");
+    expect(normalizeDesktopAppUpdateArch("amd64")).toBe("x64");
+    expect(normalizeDesktopAppUpdateArch("aarch64")).toBe("arm64");
   });
 });
 
 describe("desktop app public contract support", () => {
-  test("extracts the current platform assets from the WoAI public latest payload", () => {
+  test("extracts the current platform assets from a GitHub release payload", () => {
     const payload = parseDesktopAppPublicLatestRelease({
-      VersionId: 42,
-      Version: "1.2.3",
-      VersionCode: 1002003900,
-      Files: [
+      id: 42,
+      tag_name: "v1.2.3",
+      name: "MaomiAgent 1.2.3",
+      body: "Release notes",
+      assets: [
         {
-          VersionFileId: 11,
-          Os: "win",
-          Arch: "x64",
-          PackageType: "installer",
-          FileExtension: "exe",
-          FileName: "MaomiAgentSetup.exe",
-          FileSize: 1,
+          id: 11,
+          name: "stable-macos-arm64-MaomiAgent.dmg",
+          size: 1,
+          browser_download_url: "https://example.test/maomi.dmg",
         },
         {
-          VersionFileId: 12,
-          Os: "linux",
-          Arch: "x64",
-          PackageType: "bundle",
-          FileExtension: "tar.zst",
-          FileName: "stable-linux-x64-MaomiAgent.tar.zst",
-          FileSize: 2,
+          id: 12,
+          name: "stable-linux-x64-MaomiAgent.tar.zst",
+          size: 2,
+          browser_download_url: "https://example.test/linux.tar.zst",
         },
         {
-          VersionFileId: 13,
-          Os: "win",
-          Arch: "x64",
-          PackageType: "bundle",
-          FileExtension: "tar.zst",
-          FileName: "stable-win-x64-MaomiAgent.tar.zst",
-          FileSize: 3,
+          id: 13,
+          name: "stable-macos-arm64-MaomiAgent.app.tar.zst",
+          size: 3,
+          browser_download_url: "https://example.test/macos.tar.zst",
         },
         {
-          VersionFileId: 14,
-          Os: "win",
-          Arch: "x64",
-          PackageType: "update-info",
-          FileExtension: "json",
-          FileName: "stable-win-x64-update.json",
-          FileSize: 4,
+          id: 14,
+          name: "stable-macos-arm64-update.json",
+          size: 4,
+          browser_download_url: "https://example.test/update.json",
         },
       ],
     });
 
     const assets = selectDesktopAppPublicReleaseAssets(payload.assets, {
-      os: "win",
-      arch: "x64",
+      os: "macos",
+      arch: "arm64",
     });
 
     expect(payload.versionId).toBe(42);
-    expect(payload.version).toBe("1.2.3");
-    expect(payload.versionCode).toBe(1002003900);
+    expect(payload.version).toBe("1.2.3.0");
+    expect(payload.versionCode).toBe(10203000);
+    expect(payload.title).toBe("MaomiAgent 1.2.3");
+    expect(payload.releaseNotes).toBe("Release notes");
     expect(assets.bundleAsset?.assetId).toBe(13);
-    expect(assets.bundleAsset?.os).toBe("win");
-    expect(assets.bundleAsset?.arch).toBe("x64");
+    expect(assets.bundleAsset?.downloadUrl).toBe("https://example.test/macos.tar.zst");
+    expect(assets.bundleAsset?.os).toBe("macos");
+    expect(assets.bundleAsset?.arch).toBe("arm64");
     expect(assets.updateInfoAsset?.assetId).toBe(14);
     expect(assets.installerAsset?.assetId).toBe(11);
   });
 
-  test("infers preview payloads from the WoAI _preview suffix", () => {
+  test("infers preview payloads from the GitHub prerelease flag", () => {
     const payload = parseDesktopAppPublicLatestRelease({
-      VersionId: 99,
-      Version: "1.2.3.4_preview",
-      VersionCode: 10203039,
-      Files: [],
+      id: 99,
+      tag_name: "v1.2.3_preview",
+      prerelease: true,
+      assets: [],
     });
 
+    expect(payload.version).toBe("1.2.3.0_preview");
     expect(payload.isPrerelease).toBe(true);
   });
 });

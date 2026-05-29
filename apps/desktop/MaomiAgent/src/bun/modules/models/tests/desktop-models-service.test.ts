@@ -127,6 +127,24 @@ const TEST_CATALOG = {
       },
     },
   },
+  google: {
+    name: "Google Gemini",
+    api: "https://generativelanguage.googleapis.com/v1beta",
+    package: "@ai-sdk/google",
+    env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
+    models: {
+      "gemini-2.5-pro": {
+        name: "Gemini 2.5 Pro",
+        reasoning: true,
+        tool_call: true,
+        structured_output: true,
+        modalities: {
+          input: ["text", "image"],
+          output: ["text"],
+        },
+      },
+    },
+  },
   ollama: {
     name: "Ollama",
     api: "http://localhost:11434/api",
@@ -276,6 +294,16 @@ describe("DesktopModelsService", () => {
           status: "catalog-only",
         },
         supportsRemoteModelDiscovery: true,
+      });
+      expect(providers.find((item) => item.providerType === "google")).toMatchObject({
+        protocolFamily: "google",
+        apiStyle: "generate-content",
+        deploymentKind: "direct",
+        discoveryKind: "manual",
+        runtimeSupport: {
+          status: "catalog-only",
+        },
+        supportsRemoteModelDiscovery: false,
       });
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
@@ -536,12 +564,13 @@ describe("DesktopModelsService", () => {
         selectedModelId: "gpt-5.4",
       });
 
-      expect(target).toEqual({
+      expect(target).toMatchObject({
         providerType: "openai",
         channelId: "kimi",
         modelId: "gpt-5.4",
         protocolFamily: "openai",
         apiStyle: "responses",
+        supportsFunctionCall: true,
         serviceConfig: {
           apiKey: "test-kimi-key",
           baseUrl: "https://api.moonshot.example/v1",
@@ -612,12 +641,13 @@ describe("DesktopModelsService", () => {
         selectedModelId: "gpt-5.4",
       });
 
-      expect(target).toEqual({
+      expect(target).toMatchObject({
         providerType: "azure",
         channelId: "azure-main",
         modelId: "gpt-5.4",
         protocolFamily: "openai",
         apiStyle: "chat-completions",
+        supportsFunctionCall: true,
         serviceConfig: {
           apiKey: "azure-test-key",
           baseUrl: "https://maomi-azure-resource.openai.azure.com/openai/v1",

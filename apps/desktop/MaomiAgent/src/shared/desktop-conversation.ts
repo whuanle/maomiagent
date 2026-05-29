@@ -9,6 +9,7 @@ import type {
 import type { PermissionInteractionRequest, RunBoundary, RunRecord } from "#maomiagent/kernel/core";
 
 import type { DesktopModelRuntimeSelectionQuery } from "./desktop-models";
+import type { DesktopTerminalShellKind } from "./desktop-terminals";
 
 export const DESKTOP_CONVERSATION_ASSET_BASE_URL = "http://127.0.0.1:39091";
 
@@ -103,6 +104,92 @@ export function buildDesktopConversationPermissionRuleScope(
 }
 
 export type DesktopConversationCapabilityPreferences = Record<string, boolean>;
+
+export type DesktopConversationWorkspaceFilePreviewMode = "preview" | "source";
+
+export const DESKTOP_CONVERSATION_CONTEXT_COMPRESSION_THRESHOLD_PERCENT_DEFAULT = 80;
+export const DESKTOP_CONVERSATION_CONTEXT_COMPRESSION_THRESHOLD_PERCENT_MIN = 50;
+export const DESKTOP_CONVERSATION_CONTEXT_COMPRESSION_THRESHOLD_PERCENT_MAX = 90;
+
+export type DesktopConversationWorkspaceSettings = {
+  approvalAutoEnabled: boolean;
+  contextCompressionThresholdPercent: number;
+  defaultFilePreviewMode: DesktopConversationWorkspaceFilePreviewMode;
+  defaultTerminalShellKind?: DesktopTerminalShellKind;
+  selectedChannelId?: string;
+  selectedModelId?: string;
+  thinkingEnabled: boolean;
+  managedExecutionEnabled: boolean;
+  permissionRules?: DesktopConversationPermissionRule[];
+  memoryEnabled: boolean;
+  sandboxEnabled: boolean;
+  feishuSmartAssistantEnabled: boolean;
+  capabilityPreferences: DesktopConversationCapabilityPreferences;
+};
+
+export function clampDesktopConversationContextCompressionThresholdPercent(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DESKTOP_CONVERSATION_CONTEXT_COMPRESSION_THRESHOLD_PERCENT_DEFAULT;
+  }
+
+  const normalized = Math.round(value / 5) * 5;
+  if (normalized < DESKTOP_CONVERSATION_CONTEXT_COMPRESSION_THRESHOLD_PERCENT_MIN) {
+    return DESKTOP_CONVERSATION_CONTEXT_COMPRESSION_THRESHOLD_PERCENT_MIN;
+  }
+  if (normalized > DESKTOP_CONVERSATION_CONTEXT_COMPRESSION_THRESHOLD_PERCENT_MAX) {
+    return DESKTOP_CONVERSATION_CONTEXT_COMPRESSION_THRESHOLD_PERCENT_MAX;
+  }
+  return normalized;
+}
+
+export function createDefaultDesktopConversationWorkspaceSettings(): DesktopConversationWorkspaceSettings {
+  return {
+    approvalAutoEnabled: true,
+    contextCompressionThresholdPercent: DESKTOP_CONVERSATION_CONTEXT_COMPRESSION_THRESHOLD_PERCENT_DEFAULT,
+    defaultFilePreviewMode: "preview",
+    thinkingEnabled: true,
+    managedExecutionEnabled: false,
+    memoryEnabled: true,
+    sandboxEnabled: false,
+    feishuSmartAssistantEnabled: false,
+    capabilityPreferences: {
+      "memory.runtime": true,
+      "mcp.runtime": true,
+      "skills.runtime": true,
+      "feishu.smartAssistant": false,
+    },
+  };
+}
+
+export type DesktopConversationReadWorkspaceSettingsInput = {
+  workspaceId: string;
+};
+
+export type DesktopConversationReadWorkspaceSettingsResponse = {
+  workspaceId: string;
+  version: 1;
+  path: string;
+  exists: boolean;
+  updatedAt?: string;
+  settings: DesktopConversationWorkspaceSettings;
+  warnings: string[];
+};
+
+export type DesktopConversationSaveWorkspaceSettingsInput = {
+  workspaceId: string;
+  patch: Partial<DesktopConversationWorkspaceSettings>;
+  syncExistingSessions?: boolean;
+};
+
+export type DesktopConversationSaveWorkspaceSettingsResponse = {
+  workspaceId: string;
+  version: 1;
+  path: string;
+  updatedAt: string;
+  settings: DesktopConversationWorkspaceSettings;
+  warnings: string[];
+  syncedSessionCount: number;
+};
 
 export type DesktopConversationSessionSettings = {
   approvalMode?: DesktopConversationApprovalMode;

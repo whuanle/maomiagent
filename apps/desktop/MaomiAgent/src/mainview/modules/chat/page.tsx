@@ -112,6 +112,7 @@ function createChatCopy(language: ChatPageProps["language"]): ChatCopy {
       loadSessionsFailed: "Failed to load sessions",
       loadSessionDetailFailed: "Failed to load session detail",
       createSessionFailed: "Failed to create session",
+      saveWorkspaceSettingsFailed: "Failed to save workspace settings",
       hideSessionFailed: "Failed to hide session",
       attachFilesFailed: "Failed to prepare attachment",
       sendMessageFailed: "Failed to send message",
@@ -170,6 +171,7 @@ function createChatCopy(language: ChatPageProps["language"]): ChatCopy {
     loadSessionsFailed: "加载会话失败",
     loadSessionDetailFailed: "加载会话详情失败",
     createSessionFailed: "创建会话失败",
+    saveWorkspaceSettingsFailed: "保存工作区设置失败",
     hideSessionFailed: "隐藏会话失败",
     attachFilesFailed: "准备附件失败",
     sendMessageFailed: "发送消息失败",
@@ -194,12 +196,14 @@ function notifyActionError(
       : action === "loadSessionDetail"
         ? copy.loadSessionDetailFailed
         : action === "createSession"
-        ? copy.createSessionFailed
-        : action === "hideSession"
-          ? copy.hideSessionFailed
-          : action === "sendMessage"
-            ? copy.sendMessageFailed
-            : copy.replyInteractionFailed;
+          ? copy.createSessionFailed
+          : action === "saveWorkspaceSettings"
+            ? copy.saveWorkspaceSettingsFailed
+            : action === "hideSession"
+              ? copy.hideSessionFailed
+              : action === "sendMessage"
+                ? copy.sendMessageFailed
+                : copy.replyInteractionFailed;
   message.error(`${prefix}: ${getErrorMessage(error)}`);
 }
 

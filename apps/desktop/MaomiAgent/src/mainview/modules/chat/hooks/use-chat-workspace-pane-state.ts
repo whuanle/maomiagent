@@ -45,9 +45,8 @@ import {
   resolveSessionDetailProjectionMode,
 } from "../components/direct-session/direct-session-session-detail-projection";
 import {
-  readConversationGlobalSettings,
-  readConversationWorkspaceSettings,
-  writeConversationWorkspaceSettings,
+  useConversationWorkspaceSettings,
+  waitForConversationWorkspaceSettingsSaves,
 } from "../components/conversation-workspace-settings-storage";
 import {
   mergeDesktopConversationRuntimeEvents,
@@ -89,49 +88,6 @@ function filterVisibleSessions(
 
   // Hidden sessions are archived on the backend; keep them out of the default rail view.
   return items.filter((item) => item.status !== "archived");
-}
-
-export function buildConversationSessionDefaultMetadata(workspaceId: string): Record<string, unknown> {
-  const globalSettings = readConversationGlobalSettings();
-  const workspaceSettings = readConversationWorkspaceSettings(workspaceId);
-  const selectedChannelId = normalizeOptionalText(workspaceSettings.selectedChannelId);
-  const selectedModelId = normalizeOptionalText(workspaceSettings.selectedModelId);
-
-  return {
-    ...(selectedChannelId && selectedModelId
-      ? {
-        selectedChannelId,
-        selectedModelId,
-      }
-      : {}),
-    interactionGovernance: {
-      approvalMode: globalSettings.approvalAutoEnabled ? "auto" : "manual",
-      ...(workspaceSettings.permissionRules && workspaceSettings.permissionRules.length > 0
-        ? { permissionRules: workspaceSettings.permissionRules }
-        : {}),
-    },
-    conversationSettings: {
-      contextCompressionThresholdPercent: globalSettings.contextCompressionThresholdPercent,
-      ...(workspaceSettings.managedExecutionEnabled !== undefined
-        ? { managedExecutionEnabled: workspaceSettings.managedExecutionEnabled }
-        : {}),
-      ...(workspaceSettings.thinkingEnabled !== undefined
-        ? { thinkingEnabled: workspaceSettings.thinkingEnabled }
-        : {}),
-      ...(workspaceSettings.memoryEnabled !== undefined
-        ? { memoryEnabled: workspaceSettings.memoryEnabled }
-        : {}),
-      ...(workspaceSettings.sandboxEnabled !== undefined
-        ? { sandboxEnabled: workspaceSettings.sandboxEnabled }
-        : {}),
-      ...(workspaceSettings.feishuSmartAssistantEnabled !== undefined
-        ? { feishuSmartAssistantEnabled: workspaceSettings.feishuSmartAssistantEnabled }
-        : {}),
-      ...(workspaceSettings.capabilityPreferences
-        ? { capabilityPreferences: workspaceSettings.capabilityPreferences }
-        : {}),
-    },
-  };
 }
 
 function resolveSessionUpdatedAt(detail: DesktopConversationSessionDetail) {
@@ -383,6 +339,9 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
     agentsBridgeAvailable,
     onError,
   } = input;
+  const { settings: workspaceSettings, saveSettings: saveWorkspaceSettings } = useConversationWorkspaceSettings(
+    workspaceId,
+  );
   const [sessions, setSessions] = useState<DesktopConversationSessionItem[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string>();
   const [sessionDetailsById, setSessionDetailsById] = useState<Record<string, DesktopConversationSessionDetail>>({});
@@ -408,6 +367,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
   const deferredSearchText = useDeferredValue(searchText);
   const runtimeEventActivityBySessionIdRef = useRef<Record<string, number>>({});
   const managedTakeoverAttemptKeysRef = useRef<Record<string, true>>({});
+  const sessionDetailsByIdRef = useRef<Record<string, DesktopConversationSessionDetail>>({});
   const stoppingSessionIdRef = useRef<string | null>(null);
   const selectedSessionIdRef = useRef<string | undefined>(undefined);
   const expandedSessionDetailSessionIdRef = useRef<string | undefined>(undefined);
@@ -440,6 +400,24 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
     composerAttachmentsRef.current = composerAttachments;
   }, [composerAttachments]);
 
+  const updateSessionDetailsById = useCallback((
+    updater: Parameters<typeof setSessionDetailsById>[0],
+  ) => {
+    if (typeof updater === "function") {
+      const compute = updater as (current: Record<string, DesktopConversationSessionDetail>) => Record<string, DesktopConversationSessionDetail>;
+      sessionDetailsByIdRef.current = compute(sessionDetailsByIdRef.current);
+      setSessionDetailsById((current) => {
+        const next = compute(current);
+        sessionDetailsByIdRef.current = next;
+        return next;
+      });
+      return;
+    }
+
+    sessionDetailsByIdRef.current = updater;
+    setSessionDetailsById(updater);
+  }, []);
+
   useEffect(() => () => {
     composerAttachmentsRef.current.forEach((attachment) => revokeComposerAttachmentPreviewUrl(attachment));
   }, []);
@@ -462,7 +440,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
       setExpandedSessionDetailSessionId(undefined);
     }
 
-    setSessionDetailsById((current) => {
+    updateSessionDetailsById((current) => {
       let changed = false;
       const nextDetails: Record<string, DesktopConversationSessionDetail> = {};
 
@@ -481,7 +459,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
 
       return changed ? nextDetails : current;
     });
-  }, [selectedSessionId]);
+  }, [selectedSessionId, updateSessionDetailsById]);
 
   const clearExpandedSessionDetailState = useCallback(() => {
     expandedSessionDetailSessionIdRef.current = undefined;
@@ -510,7 +488,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
     const projectedDetail = projectConversationSessionDetail(detail, projectionMode);
 
     setSessions((current) => mergeSessionSummary(current, projectedDetail));
-    setSessionDetailsById((current) => current[detail.sessionId] === projectedDetail
+    updateSessionDetailsById((current) => current[detail.sessionId] === projectedDetail
       ? current
       : {
           ...current,
@@ -532,7 +510,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
     ) {
       setStoppingSessionId((current) => current === options.clearStoppingForSessionId ? null : current);
     }
-  }, []);
+  }, [updateSessionDetailsById]);
 
   const startSessionDetailFallbackPolling = useCallback((
     sessionId: string,
@@ -634,7 +612,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
 
     clearExpandedSessionDetailState();
 
-    setSessionDetailsById((current) => {
+    updateSessionDetailsById((current) => {
       const detail = current[normalizedSessionId];
       if (!detail) {
         return current;
@@ -655,7 +633,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
         [normalizedSessionId]: projectedDetail,
       };
     });
-  }, [clearExpandedSessionDetailState, selectedSessionId]);
+  }, [clearExpandedSessionDetailState, selectedSessionId, updateSessionDetailsById]);
 
   const reloadComposerModels = useCallback(async (detail?: DesktopConversationSessionDetail) => {
     if (!modelsBridgeAvailable || !selectedSessionId) {
@@ -672,9 +650,8 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
       const resolvedDetailModelId = detail?.sessionId === selectedSessionId
         ? normalizeOptionalText(detail.metadata?.selectedModelId)
         : undefined;
-      const storedWorkspaceSettings = readConversationWorkspaceSettings(workspaceId);
-      const storedSelectedChannelId = normalizeOptionalText(storedWorkspaceSettings.selectedChannelId);
-      const storedSelectedModelId = normalizeOptionalText(storedWorkspaceSettings.selectedModelId);
+      const storedSelectedChannelId = normalizeOptionalText(workspaceSettings.selectedChannelId);
+      const storedSelectedModelId = normalizeOptionalText(workspaceSettings.selectedModelId);
       const selectedChannelId = resolvedDetailChannelId
         ?? selectedSessionDetailChannelId
         ?? selectedSessionSummaryChannelId
@@ -736,6 +713,8 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
     selectedSessionDetailModelId,
     selectedSessionSummaryChannelId,
     selectedSessionSummaryModelId,
+    workspaceSettings.selectedChannelId,
+    workspaceSettings.selectedModelId,
     workspaceId,
   ]);
 
@@ -807,11 +786,11 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
 
     setSessions([]);
     setSelectedSessionId(undefined);
-    setSessionDetailsById({});
+    updateSessionDetailsById({});
     clearExpandedSessionDetailState();
     setDraftMessage("");
     clearComposerAttachments();
-  }, [bridgeAvailable, clearComposerAttachments, clearExpandedSessionDetailState]);
+  }, [bridgeAvailable, clearComposerAttachments, clearExpandedSessionDetailState, updateSessionDetailsById]);
 
   useEffect(() => {
     if (modelsBridgeAvailable) {
@@ -824,32 +803,55 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
   }, [modelsBridgeAvailable]);
 
   const setSelectedComposerModelValue = useCallback((value: string | undefined) => {
+    const restorePersistedWorkspaceSelection = () => {
+      const persistedValue = composerModelOptions.find((item) =>
+        item.channelId === workspaceSettings.selectedChannelId
+        && item.modelId === workspaceSettings.selectedModelId)
+        ?.value;
+      setSelectedComposerModelValueState((current) => current === persistedValue ? current : persistedValue);
+    };
+
     setSelectedComposerModelValueState((current) => current === value ? current : value);
 
     const selectedModel = composerModelOptions.find((item) => item.value === value);
-    const currentWorkspaceSettings = readConversationWorkspaceSettings(workspaceId);
     if (!selectedModel) {
-      if (currentWorkspaceSettings.selectedChannelId || currentWorkspaceSettings.selectedModelId) {
-        writeConversationWorkspaceSettings(workspaceId, {
+      if (workspaceSettings.selectedChannelId || workspaceSettings.selectedModelId) {
+        void saveWorkspaceSettings({
           selectedChannelId: undefined,
           selectedModelId: undefined,
+        }, {
+          syncExistingSessions: false,
+        }).catch((error) => {
+          restorePersistedWorkspaceSelection();
+          onError("saveWorkspaceSettings", error);
         });
       }
       return;
     }
 
     if (
-      currentWorkspaceSettings.selectedChannelId === selectedModel.channelId
-      && currentWorkspaceSettings.selectedModelId === selectedModel.modelId
+      workspaceSettings.selectedChannelId === selectedModel.channelId
+      && workspaceSettings.selectedModelId === selectedModel.modelId
     ) {
       return;
     }
 
-    writeConversationWorkspaceSettings(workspaceId, {
+    void saveWorkspaceSettings({
       selectedChannelId: selectedModel.channelId,
       selectedModelId: selectedModel.modelId,
+    }, {
+      syncExistingSessions: false,
+    }).catch((error) => {
+      restorePersistedWorkspaceSelection();
+      onError("saveWorkspaceSettings", error);
     });
-  }, [composerModelOptions, workspaceId]);
+  }, [
+    composerModelOptions,
+    onError,
+    saveWorkspaceSettings,
+    workspaceSettings.selectedChannelId,
+    workspaceSettings.selectedModelId,
+  ]);
 
   useEffect(() => {
     if (agentsBridgeAvailable) {
@@ -977,7 +979,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
       }
 
       if (matchesSelectedSession) {
-        const currentDetail = sessionDetailsById[runtimeUpdate.sessionId];
+        const currentDetail = sessionDetailsByIdRef.current[runtimeUpdate.sessionId];
         if (currentDetail) {
           const merged = mergeDesktopConversationRuntimeEvents(currentDetail, runtimeUpdate.events);
           if (!merged.requiresReload) {
@@ -1013,7 +1015,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
         handleConversationRuntimeEventsUpdated,
       );
     };
-  }, [active, applySessionDetail, bridgeAvailable, reloadSessionDetail, reloadSessions, selectedSessionId, sessionDetailsById, workspaceId]);
+  }, [active, applySessionDetail, bridgeAvailable, reloadSessionDetail, reloadSessions, selectedSessionId, workspaceId]);
 
   useEffect(() => {
     setSendingMessage(false);
@@ -1061,10 +1063,10 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
   const createSession = useCallback(async () => {
     setCreatingSession(true);
     try {
+      await waitForConversationWorkspaceSettingsSaves(workspaceId);
       const response = await createDesktopConversationSession({
         workspaceId,
         selectedAgentId: selectedComposerAgentId,
-        metadata: buildConversationSessionDefaultMetadata(workspaceId),
       });
       await reloadSessions(response.item.sessionId);
       await reloadSessionDetail(response.item.sessionId);
@@ -1187,7 +1189,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
       if (response.hidden) {
         const nextVisibleSessions = sessions.filter((item) => item.sessionId !== sessionId);
         setSessions(nextVisibleSessions);
-        setSessionDetailsById((current) => {
+        updateSessionDetailsById((current) => {
           const next = { ...current };
           delete next[sessionId];
           return next;
@@ -1209,7 +1211,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
         currentSessionId === sessionId ? null : currentSessionId,
       );
     }
-  }, [onError, sessions]);
+  }, [onError, sessions, updateSessionDetailsById]);
 
   const sendMessage = useCallback(async () => {
     if (!selectedSessionId || sendingMessage) {

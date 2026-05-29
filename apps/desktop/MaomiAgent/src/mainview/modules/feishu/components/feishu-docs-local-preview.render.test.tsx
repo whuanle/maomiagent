@@ -79,4 +79,19 @@ describe("FeishuDocsLocalPreview", () => {
     expect(previewSource).toContain("preferredWidth={FEISHU_DOCS_BOARD_PREVIEW_MAX_WIDTH}")
     expect(previewSource).toContain("preferredHeight={FEISHU_DOCS_BOARD_PREVIEW_MAX_HEIGHT}")
   })
+
+  test("renders mermaid diagrams inline, recognizes flowchart sources and falls back from broken preview images", async () => {
+    const previewSource = await source()
+
+    expect(previewSource).toContain("const FEISHU_DOCS_DIAGRAM_PREVIEW_MAX_WIDTH = 700")
+    expect(previewSource).toContain("const FEISHU_DOCS_DIAGRAM_PREVIEW_MAX_HEIGHT = 700")
+    expect(previewSource).toContain('import mermaid from "mermaid"')
+    expect(previewSource).toContain("shouldRenderFeishuDocsMermaidBlock")
+    expect(previewSource).toContain('ADD_TAGS: ["style"]')
+    expect(previewSource).toContain('dangerouslySetInnerHTML={{ __html: svg }}')
+    expect(previewSource).toContain("maxWidth: `${FEISHU_DOCS_DIAGRAM_PREVIEW_MAX_WIDTH}px`")
+    expect(previewSource).toContain("maxHeight: `${FEISHU_DOCS_DIAGRAM_PREVIEW_MAX_HEIGHT}px`")
+    expect(previewSource).toContain("onError={() => setImageFailed(true)}")
+    expect(previewSource).toContain('feishu-docs-local-preview-image-placeholder${input.plain ? " is-plain" : ""}')
+  })
 })

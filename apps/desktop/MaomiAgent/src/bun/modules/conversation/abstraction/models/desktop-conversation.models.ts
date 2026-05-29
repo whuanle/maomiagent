@@ -12,6 +12,10 @@ export type {
   DesktopConversationCapabilityListQuery,
   DesktopConversationCapabilityListResponse,
   DesktopConversationCapabilityPreferences,
+  DesktopConversationReadWorkspaceSettingsInput,
+  DesktopConversationReadWorkspaceSettingsResponse,
+  DesktopConversationSaveWorkspaceSettingsInput,
+  DesktopConversationSaveWorkspaceSettingsResponse,
   DesktopConversationCapabilityScope,
   DesktopConversationCreateSessionInput,
   DesktopConversationCreateSessionResponse,
@@ -32,5 +36,7 @@ export type {
   DesktopConversationSessionListResponse,
   DesktopConversationSessionSettings,
   DesktopConversationSessionStatus,
+  DesktopConversationWorkspaceFilePreviewMode,
+  DesktopConversationWorkspaceSettings,
   DesktopConversationToggleCapabilityDescriptor,
 } from "../../../../../shared/desktop-conversation";

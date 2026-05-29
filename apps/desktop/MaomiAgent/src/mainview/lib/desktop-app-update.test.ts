@@ -9,6 +9,7 @@ import {
   canInstallDesktopAppUpdate,
   checkDesktopAppUpdate,
   installDesktopAppUpdate,
+  resolveDesktopAppUpdateDownloadAsset,
 } from "./desktop-app-update";
 
 const originalWindow = globalThis.window;
@@ -40,6 +41,7 @@ describe("desktop app update bridge", () => {
   const installableResult: DesktopAppUpdateCheckResult = {
     configured: true,
     supported: true,
+    installSupported: true,
     hasUpdate: true,
     currentVersion: "1.0.0",
     currentVersionCode: 100,
@@ -53,6 +55,28 @@ describe("desktop app update bridge", () => {
       packageFormat: "zip",
       fileName: "maomi-bundle.zip",
       fileSize: 2048,
+      downloadUrl: "https://example.test/bundle.zip",
+    },
+  };
+
+  const downloadableResult: DesktopAppUpdateCheckResult = {
+    configured: true,
+    supported: true,
+    installSupported: false,
+    hasUpdate: true,
+    currentVersion: "1.0.0",
+    currentVersionCode: 100,
+    currentChannel: "stable",
+    releaseId: 42,
+    releaseVersion: "1.1.0",
+    releaseVersionCode: 110,
+    downloadAsset: {
+      assetId: 9,
+      packageType: "installer",
+      packageFormat: "dmg",
+      fileName: "stable-macos-arm64-MaomiAgent.dmg",
+      fileSize: 1024,
+      downloadUrl: "https://example.test/maomi.dmg",
     },
   };
 
@@ -60,9 +84,11 @@ describe("desktop app update bridge", () => {
     releaseId: 42,
     bundleAssetId: 7,
     bundleFileSize: 2048,
+    bundleDownloadUrl: "https://example.test/bundle.zip",
     targetVersion: "1.1.0",
     targetVersionCode: 110,
     updateInfoAssetId: 9,
+    updateInfoDownloadUrl: "https://example.test/update.json",
   };
 
   const installResult: DesktopAppUpdateInstallResult = {
@@ -88,6 +114,7 @@ describe("desktop app update bridge", () => {
     expect(canInstallDesktopAppUpdate(installableResult)).toBe(true);
     expect(canInstallDesktopAppUpdate(null)).toBe(false);
     expect(canInstallDesktopAppUpdate({ ...installableResult, hasUpdate: false })).toBe(false);
+    expect(canInstallDesktopAppUpdate({ ...installableResult, installSupported: false })).toBe(false);
     expect(canInstallDesktopAppUpdate({ ...installableResult, releaseId: undefined })).toBe(false);
     expect(canInstallDesktopAppUpdate({ ...installableResult, releaseVersion: undefined })).toBe(false);
     expect(canInstallDesktopAppUpdate({ ...installableResult, releaseVersionCode: undefined })).toBe(false);
@@ -113,6 +140,22 @@ describe("desktop app update bridge", () => {
         },
       }),
     ).toBe(false);
+  });
+
+  test("prefers the resolved download asset only when it includes a download url", () => {
+    expect(resolveDesktopAppUpdateDownloadAsset(installableResult)?.downloadUrl).toBe(
+      "https://example.test/bundle.zip",
+    );
+    expect(resolveDesktopAppUpdateDownloadAsset(downloadableResult)?.fileName).toBe(
+      "stable-macos-arm64-MaomiAgent.dmg",
+    );
+    expect(resolveDesktopAppUpdateDownloadAsset({
+      ...downloadableResult,
+      downloadAsset: {
+        ...downloadableResult.downloadAsset!,
+        downloadUrl: "",
+      },
+    })).toBeUndefined();
   });
 
   test("forwards check results through the desktop update bridge", async () => {

@@ -14,7 +14,12 @@ import { WorkspacePage } from "./components/workspace-page/page";
 import { RoutePlaceholder } from "./components/window-shell/RoutePlaceholder";
 import { WindowTitlebar } from "./components/window-shell/WindowTitlebar";
 import { createTranslator } from "./i18n";
-import { parseRouteFromHash, readInitialRoute, resolveVisibleMainviewRoute } from "./lib/app-route";
+import {
+  parseRouteFromHash,
+  readInitialRoute,
+  resolveVisibleMainviewRoute,
+  shouldMountMainviewRoute,
+} from "./lib/app-route";
 import { bindNotificationApis } from "./lib/notifications";
 import { readShellPreferences, writeShellPreferences } from "./lib/shell-preferences";
 import type { ChatPageHandle } from "./modules/chat";
@@ -241,135 +246,140 @@ export default function App() {
   }, [menuSettings.collapsedMenuKeys, menuSettings.orderedMenuKeys]);
 
   const routeTabItems = useMemo<NonNullable<TabsProps["items"]>>(() => {
-    return NATIVE_ROUTE_ITEMS.map((route) => ({
-      key: route.key,
-      label: route.key,
-      destroyOnHidden: false,
-      children: route.key === visibleRoute
-        ? renderRouteTabPane(
-            route.key,
-            route.key === "chat" ? (
-              <ChatPage
-                ref={handleChatPageRef}
-                active={route.key === visibleRoute}
-                language={language}
-                revealTerminalToken={chatTerminalRevealToken}
-              />
-            ) : route.key === "browser" ? (
-              <BrowserPage
-                active={route.key === visibleRoute}
-                language={language}
-              />
-            ) : route.key === "workspace" ? (
-              <WorkspacePage
-                active={route.key === visibleRoute}
-                language={language}
-                t={t}
-              />
-            ) : route.key === "git" ? (
-              <GitPage
-                active={route.key === visibleRoute}
-                language={language}
-              />
-            ) : route.key === "tasks" ? (
-              <TasksPage
-                active={route.key === visibleRoute}
-                language={language}
-              />
-            ) : route.key === "memory" ? (
-              <MemoryPage
-                active={route.key === visibleRoute}
-                language={language}
-              />
-            ) : route.key === "models" ? (
-              <ModelsPage
-                active={route.key === visibleRoute}
-                language={language}
-                t={t}
-              />
-            ) : route.key === "agents" ? (
-              <AgentsPage
-                active={route.key === visibleRoute}
-                language={language}
-                t={t}
-              />
-            ) : route.key === "mcp" ? (
-              <McpPage
-                active={route.key === visibleRoute}
-                t={t}
-              />
-            ) : route.key === "skills" ? (
-              <SkillsPage
-                active={route.key === visibleRoute}
-                language={language}
-                t={t}
-              />
-            ) : route.key === "feishu" ? (
-              <FeishuPage
-                active={route.key === visibleRoute}
-                t={t as unknown as (key: string, params?: Record<string, string | number>) => string}
-              />
-            ) : route.key === "settings" ? (
-              <SettingsPage
-                status={status}
-                language={language}
-                themeMode={themeMode}
-                t={t}
-                orderedMenuItems={orderedMenuItems}
-                collapsedMenuKeys={menuSettings.collapsedMenuKeys}
-                onSelectTheme={setThemeMode}
-                onSelectLanguage={setLanguage}
-                onMenuCollapsedChange={(key, collapsed) => {
-                  setMenuSettings((current) => normalizeTitlebarMenuSettings({
-                    ...current,
-                    collapsedMenuKeys: collapsed
-                      ? [...current.collapsedMenuKeys, key]
-                      : current.collapsedMenuKeys.filter((item) => item !== key),
-                  }, TITLEBAR_MENU_ITEMS));
-                }}
-                onMoveMenuItem={(key, direction) => {
-                  setMenuSettings((current) => normalizeTitlebarMenuSettings({
-                    ...current,
-                    orderedMenuKeys: moveTitlebarMenuKey(current.orderedMenuKeys, key, direction),
-                  }, TITLEBAR_MENU_ITEMS));
-                }}
-                onReorderMenuItems={(sourceKey, targetKey, position) => {
-                  setMenuSettings((current) => normalizeTitlebarMenuSettings({
-                    ...current,
-                    orderedMenuKeys: reorderTitlebarMenuKeys(
-                      current.orderedMenuKeys,
-                      sourceKey,
-                      targetKey,
-                      position,
-                    ),
-                  }, TITLEBAR_MENU_ITEMS));
-                }}
-                onResetMenuSettings={() => {
-                  setMenuSettings(normalizeTitlebarMenuSettings(undefined, TITLEBAR_MENU_ITEMS));
-                }}
-              />
-            ) : route.key === "logs" ? (
-              <LogsPage
-                active={route.key === visibleRoute}
-                language={language}
-                t={t}
-              />
-            ) : route.key === "wechat" ? (
-              <WechatPage
-                active={route.key === visibleRoute}
-                language={language}
-              />
-            ) : (
-              <RoutePlaceholder
-                route={route}
-                status={status}
-                language={language}
-                t={t}
-              />
-            ),
-          )
-        : null,
-    }));
+    return NATIVE_ROUTE_ITEMS.map((route) => {
+      const routeActive = route.key === visibleRoute;
+      const routeMounted = shouldMountMainviewRoute(route.key, visibleRoute);
+
+      return {
+        key: route.key,
+        label: route.key,
+        destroyOnHidden: false,
+        children: routeMounted
+          ? renderRouteTabPane(
+              route.key,
+              route.key === "chat" ? (
+                <ChatPage
+                  ref={handleChatPageRef}
+                  active={routeActive}
+                  language={language}
+                  revealTerminalToken={chatTerminalRevealToken}
+                />
+              ) : route.key === "browser" ? (
+                <BrowserPage
+                  active={routeActive}
+                  language={language}
+                />
+              ) : route.key === "workspace" ? (
+                <WorkspacePage
+                  active={routeActive}
+                  language={language}
+                  t={t}
+                />
+              ) : route.key === "git" ? (
+                <GitPage
+                  active={routeActive}
+                  language={language}
+                />
+              ) : route.key === "tasks" ? (
+                <TasksPage
+                  active={routeActive}
+                  language={language}
+                />
+              ) : route.key === "memory" ? (
+                <MemoryPage
+                  active={routeActive}
+                  language={language}
+                />
+              ) : route.key === "models" ? (
+                <ModelsPage
+                  active={routeActive}
+                  language={language}
+                  t={t}
+                />
+              ) : route.key === "agents" ? (
+                <AgentsPage
+                  active={routeActive}
+                  language={language}
+                  t={t}
+                />
+              ) : route.key === "mcp" ? (
+                <McpPage
+                  active={routeActive}
+                  t={t}
+                />
+              ) : route.key === "skills" ? (
+                <SkillsPage
+                  active={routeActive}
+                  language={language}
+                  t={t}
+                />
+              ) : route.key === "feishu" ? (
+                <FeishuPage
+                  active={routeActive}
+                  t={t as unknown as (key: string, params?: Record<string, string | number>) => string}
+                />
+              ) : route.key === "settings" ? (
+                <SettingsPage
+                  status={status}
+                  language={language}
+                  themeMode={themeMode}
+                  t={t}
+                  orderedMenuItems={orderedMenuItems}
+                  collapsedMenuKeys={menuSettings.collapsedMenuKeys}
+                  onSelectTheme={setThemeMode}
+                  onSelectLanguage={setLanguage}
+                  onMenuCollapsedChange={(key, collapsed) => {
+                    setMenuSettings((current) => normalizeTitlebarMenuSettings({
+                      ...current,
+                      collapsedMenuKeys: collapsed
+                        ? [...current.collapsedMenuKeys, key]
+                        : current.collapsedMenuKeys.filter((item) => item !== key),
+                    }, TITLEBAR_MENU_ITEMS));
+                  }}
+                  onMoveMenuItem={(key, direction) => {
+                    setMenuSettings((current) => normalizeTitlebarMenuSettings({
+                      ...current,
+                      orderedMenuKeys: moveTitlebarMenuKey(current.orderedMenuKeys, key, direction),
+                    }, TITLEBAR_MENU_ITEMS));
+                  }}
+                  onReorderMenuItems={(sourceKey, targetKey, position) => {
+                    setMenuSettings((current) => normalizeTitlebarMenuSettings({
+                      ...current,
+                      orderedMenuKeys: reorderTitlebarMenuKeys(
+                        current.orderedMenuKeys,
+                        sourceKey,
+                        targetKey,
+                        position,
+                      ),
+                    }, TITLEBAR_MENU_ITEMS));
+                  }}
+                  onResetMenuSettings={() => {
+                    setMenuSettings(normalizeTitlebarMenuSettings(undefined, TITLEBAR_MENU_ITEMS));
+                  }}
+                />
+              ) : route.key === "logs" ? (
+                <LogsPage
+                  active={routeActive}
+                  language={language}
+                  t={t}
+                />
+              ) : route.key === "wechat" ? (
+                <WechatPage
+                  active={routeActive}
+                  language={language}
+                />
+              ) : (
+                <RoutePlaceholder
+                  route={route}
+                  status={status}
+                  language={language}
+                  t={t}
+                />
+              ),
+            )
+          : null,
+      };
+    });
   }, [chatTerminalRevealToken, handleChatPageRef, language, menuSettings.collapsedMenuKeys, orderedMenuItems, status, t, themeMode, visibleRoute]);
 
   return (

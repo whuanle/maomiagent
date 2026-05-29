@@ -1,6 +1,4 @@
 import type {
-  DesktopConversationApplyWorkspaceSettingsInput,
-  DesktopConversationApplyWorkspaceSettingsResponse,
   DesktopConversationAnswerInteractionInput,
   DesktopConversationCapabilityListQuery,
   DesktopConversationCapabilityListResponse,
@@ -9,7 +7,11 @@ import type {
   DesktopConversationHideSessionResponse,
   DesktopConversationInteractionReplyResponse,
   DesktopConversationRejectInteractionInput,
+  DesktopConversationReadWorkspaceSettingsInput,
+  DesktopConversationReadWorkspaceSettingsResponse,
   DesktopConversationRuntimeEventsUpdateEvent,
+  DesktopConversationSaveWorkspaceSettingsInput,
+  DesktopConversationSaveWorkspaceSettingsResponse,
   DesktopConversationSendMessageInput,
   DesktopConversationSendMessageResponse,
   DesktopConversationStopMessageInput,
@@ -31,13 +33,16 @@ type DesktopConversationBridge = {
   listDesktopConversationCapabilities: (
     query: DesktopConversationCapabilityListQuery,
   ) => Promise<DesktopConversationCapabilityListResponse>;
+  getDesktopConversationWorkspaceSettings: (
+    input: DesktopConversationReadWorkspaceSettingsInput,
+  ) => Promise<DesktopConversationReadWorkspaceSettingsResponse>;
   createDesktopConversationSession: (
     input: DesktopConversationCreateSessionInput,
   ) => Promise<DesktopConversationCreateSessionResponse>;
   hideDesktopConversationSession: (sessionId: string) => Promise<DesktopConversationHideSessionResponse>;
-  applyDesktopConversationWorkspaceSettings: (
-    input: DesktopConversationApplyWorkspaceSettingsInput,
-  ) => Promise<DesktopConversationApplyWorkspaceSettingsResponse>;
+  saveDesktopConversationWorkspaceSettings: (
+    input: DesktopConversationSaveWorkspaceSettingsInput,
+  ) => Promise<DesktopConversationSaveWorkspaceSettingsResponse>;
   sendDesktopConversationMessage: (
     input: DesktopConversationSendMessageInput,
   ) => Promise<DesktopConversationSendMessageResponse>;
@@ -130,6 +135,12 @@ export function listDesktopConversationCapabilities(
   return getDesktopConversationBridge().listDesktopConversationCapabilities(query);
 }
 
+export function getDesktopConversationWorkspaceSettings(
+  input: DesktopConversationReadWorkspaceSettingsInput,
+): Promise<DesktopConversationReadWorkspaceSettingsResponse> {
+  return getDesktopConversationBridge().getDesktopConversationWorkspaceSettings(input);
+}
+
 export async function createDesktopConversationSession(
   input: DesktopConversationCreateSessionInput,
 ): Promise<DesktopConversationCreateSessionResponse> {
@@ -148,14 +159,14 @@ export async function hideDesktopConversationSession(
   return response;
 }
 
-export async function applyDesktopConversationWorkspaceSettings(
-  input: DesktopConversationApplyWorkspaceSettingsInput,
-): Promise<DesktopConversationApplyWorkspaceSettingsResponse> {
-  const response = await getDesktopConversationBridge().applyDesktopConversationWorkspaceSettings(input);
-  if (response.updatedCount > 0) {
+export async function saveDesktopConversationWorkspaceSettings(
+  input: DesktopConversationSaveWorkspaceSettingsInput,
+): Promise<DesktopConversationSaveWorkspaceSettingsResponse> {
+  const response = await getDesktopConversationBridge().saveDesktopConversationWorkspaceSettings(input);
+  if (response.syncedSessionCount > 0) {
     emitDesktopConversationInvalidated(
       "session.updated",
-      response.items[0]?.sessionId ?? `workspace:${input.workspaceId}`,
+      `workspace:${input.workspaceId}`,
     );
   }
   return response;

@@ -2058,11 +2058,13 @@
   display: block;
   width: auto;
   max-width: 100%;
+  height: auto;
   margin: 0 auto;
   flex: none;
 }
 
 .feishu-docs-local-preview-mermaid-rendered svg text,
+.feishu-docs-local-preview-mermaid-rendered svg tspan,
 .feishu-docs-local-preview-mermaid-rendered svg .nodeLabel,
 .feishu-docs-local-preview-mermaid-rendered svg .edgeLabel {
   fill: var(--app-text);

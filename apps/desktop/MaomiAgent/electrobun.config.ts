@@ -4,11 +4,9 @@ const resolvedBuildFolder =
   process.env.MAOMI_DESKTOP_DEV_BUILD_FOLDER?.trim() || "build";
 const resolvedArtifactFolder =
   process.env.MAOMI_DESKTOP_ARTIFACT_FOLDER?.trim() || "artifacts";
-const resolvedReleaseBaseUrl =
-  process.env.MAOMI_DESKTOP_UPDATE_BASE_URL?.trim() || "";
 const resolvedDesktopVersion =
   process.env.MAOMI_DESKTOP_VERSION?.trim() || "0.1.0";
-const shouldGeneratePatch = process.env.MAOMI_DESKTOP_GENERATE_PATCH?.trim() !== "false";
+const shouldGeneratePatch = process.env.MAOMI_DESKTOP_GENERATE_PATCH?.trim() === "true";
 
 export default {
   app: {
@@ -25,6 +23,7 @@ export default {
       "dist/index.html": "views/mainview/index.html",
       "dist/assets": "views/mainview/assets",
       "dist/branding": "views/mainview/branding",
+      ".generated/update-config.json": "update-config.json",
     },
     watchIgnore: ["dist/**"],
     mac: {
@@ -40,7 +39,7 @@ export default {
     },
   },
   release: {
-    baseUrl: resolvedReleaseBaseUrl,
+    baseUrl: "",
     generatePatch: shouldGeneratePatch,
   },
 } satisfies ElectrobunConfig;

@@ -17,6 +17,7 @@ describe("desktop ai one-shot services", () => {
           modelId: "gpt-4.1",
           protocolFamily: "openai",
           apiStyle: "responses",
+          supportsFunctionCall: true,
           serviceConfig: {
             apiKey: "sk-test",
             baseUrl: "https://api.openai.com/v1",
@@ -37,11 +38,21 @@ describe("desktop ai one-shot services", () => {
       protocolFamily: "openai",
       apiStyle: "responses",
     });
+    expect(result.protocolIdentity).toEqual({
+      protocolFamily: "openai",
+      apiStyle: "responses",
+    });
+    expect(result.capabilities).toEqual({
+      supportsFunctionCall: true,
+    });
     expect(result.executionProfile.modelId).toBe("gpt-4.1");
     expect(result.executionProfile.metadata).toMatchObject({
       providerType: "openai",
       channelId: "main",
       modelId: "gpt-4.1",
+      protocolFamily: "openai",
+      apiStyle: "responses",
+      supportsFunctionCall: true,
       scope: "workspace",
       workspaceId: "workspace-1",
     });
@@ -91,6 +102,13 @@ describe("desktop ai one-shot services", () => {
             protocolFamily: "openai" as const,
             apiStyle: "responses" as const,
           },
+          protocolIdentity: {
+            protocolFamily: "openai" as const,
+            apiStyle: "responses" as const,
+          },
+          capabilities: {
+            supportsFunctionCall: true,
+          },
           resolveServiceConfig: async () => ({
             apiKey: "sk-test",
           }),
@@ -100,6 +118,7 @@ describe("desktop ai one-shot services", () => {
             modelId: "gpt-4.1",
             protocolFamily: "openai" as const,
             apiStyle: "responses" as const,
+            supportsFunctionCall: true,
           },
         };
       },
@@ -135,6 +154,7 @@ describe("desktop ai one-shot services", () => {
       modelId: "gpt-4.1",
       protocolFamily: "openai",
       apiStyle: "responses",
+      supportsFunctionCall: true,
     });
   });
 });

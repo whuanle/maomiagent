@@ -4,9 +4,12 @@ import {
   SendOutlined,
 } from "@ant-design/icons";
 import { Input, Select, Switch, type SelectProps } from "antd";
-import { useRef, type ClipboardEventHandler } from "react";
+import type { TextAreaRef } from "antd/es/input/TextArea";
+import { useEffect, useRef, type ClipboardEventHandler } from "react";
 
 import { WorkspaceFileIcon } from "../workspace-file-icon";
+import { shouldFocusPrefilledDraft } from "./direct-session-composer-prefill";
+import { resolveDirectSessionComposerPopupContainer } from "./direct-session-composer-popup";
 import { resolveDirectSessionComposerSubmitState } from "./direct-session-composer-submit-state";
 import type { DirectSessionComposerViewModel } from "./types";
 
@@ -19,8 +22,10 @@ type Props = DirectSessionComposerViewModel;
 export function DirectSessionComposer(props: Props) {
   const isEn = props.language === "en-US";
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const textAreaRef = useRef<TextAreaRef | null>(null);
+  const previousDraftRef = useRef(props.draft);
   const resolvePopupContainer: SelectProps["getPopupContainer"] = (triggerNode) => (
-    triggerNode.parentElement ?? document.body
+    resolveDirectSessionComposerPopupContainer(triggerNode)
   );
   const filterAgentOption: SelectProps["filterOption"] = (input, option) => {
     if (!option) {
@@ -117,6 +122,23 @@ export function DirectSessionComposer(props: Props) {
     props.stopping ? "is-stopping" : "",
   ].filter(Boolean).join(" ");
 
+  useEffect(() => {
+    const previousDraft = previousDraftRef.current;
+    previousDraftRef.current = props.draft;
+
+    if (!shouldFocusPrefilledDraft(previousDraft, props.draft)) {
+      return;
+    }
+
+    const schedule = typeof globalThis.requestAnimationFrame === "function"
+      ? globalThis.requestAnimationFrame
+      : (callback: FrameRequestCallback) => globalThis.setTimeout(() => callback(Date.now()), 0);
+
+    schedule(() => {
+      textAreaRef.current?.focus({ cursor: "start" });
+    });
+  }, [props.draft]);
+
   return (
     <div className="chat-direct-composer">
         <input
@@ -174,6 +196,7 @@ export function DirectSessionComposer(props: Props) {
           ) : null}
           <div className="chat-direct-composer-input-stage">
             <Input.TextArea
+              ref={textAreaRef}
               className="chat-direct-composer-input"
               variant="borderless"
               autoSize={{ minRows: 3, maxRows: 10 }}

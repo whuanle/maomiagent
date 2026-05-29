@@ -6,8 +6,9 @@ import {
   canInstallDesktopAppUpdate,
   checkDesktopAppUpdate,
   installDesktopAppUpdate,
+  resolveDesktopAppUpdateDownloadAsset,
 } from "../../../lib/desktop-app-update";
-import { runDesktopWindowAction } from "../../../lib/desktop-window";
+import { openDesktopExternalUrl, runDesktopWindowAction } from "../../../lib/desktop-window";
 import type { RuntimeStatus } from "../../../types/status";
 import type { DesktopAppUpdateCheckResult } from "../../../../shared/desktop-updater";
 
@@ -37,7 +38,10 @@ export function AppUpdatePanel(props: Props) {
   const [installing, setInstalling] = useState(false);
 
   const installableResult = canInstallDesktopAppUpdate(result) ? result : null;
+  const downloadAsset = resolveDesktopAppUpdateDownloadAsset(result);
   const canInstall = Boolean(installableResult) && !checking;
+  const canDownload = Boolean(downloadAsset) && !checking && !installing;
+  const displayedAsset = installableResult?.bundleAsset || downloadAsset || result?.bundleAsset || result?.installerAsset;
 
   async function handleCheck() {
     setChecking(true);
@@ -68,9 +72,11 @@ export function AppUpdatePanel(props: Props) {
         releaseId: installableResult.releaseId,
         bundleAssetId: installableResult.bundleAsset.assetId,
         bundleFileSize: installableResult.bundleAsset.fileSize,
+        bundleDownloadUrl: installableResult.bundleAsset.downloadUrl || "",
         targetVersion: installableResult.releaseVersion,
         targetVersionCode: installableResult.releaseVersionCode,
         updateInfoAssetId: installableResult.updateInfoAsset?.assetId,
+        updateInfoDownloadUrl: installableResult.updateInfoAsset?.downloadUrl,
       });
       message.success(installResult.message);
       if (installResult.closeRequested) {
@@ -80,6 +86,22 @@ export function AppUpdatePanel(props: Props) {
       }
     } catch (error) {
       message.error(`${props.t("设置页.更新.反馈.安装失败")}: ${normalizeError(error)}`);
+    } finally {
+      setInstalling(false);
+    }
+  }
+
+  async function handleDownload() {
+    if (!downloadAsset?.downloadUrl) {
+      return;
+    }
+
+    setInstalling(true);
+    try {
+      await openDesktopExternalUrl(downloadAsset.downloadUrl);
+      message.success(props.t("设置页.更新.反馈.已打开下载链接"));
+    } catch (error) {
+      message.error(`${props.t("设置页.更新.反馈.打开下载失败")}: ${normalizeError(error)}`);
     } finally {
       setInstalling(false);
     }
@@ -106,7 +128,9 @@ export function AppUpdatePanel(props: Props) {
         <Descriptions.Item label={props.t("设置页.更新.字段.当前版本")}>{currentVersion}</Descriptions.Item>
         <Descriptions.Item label={props.t("设置页.更新.字段.当前通道")}>{currentChannel}</Descriptions.Item>
         <Descriptions.Item label={props.t("设置页.更新.字段.目标版本")}>{result?.releaseVersion || "-"}</Descriptions.Item>
-        <Descriptions.Item label={props.t("设置页.更新.字段.安装包")}>{result?.bundleAsset?.fileName || result?.installerAsset?.fileName || "-"}</Descriptions.Item>
+        <Descriptions.Item label={props.t("设置页.更新.字段.安装包")}>
+          {displayedAsset?.fileName || "-"}
+        </Descriptions.Item>
         <Descriptions.Item label={props.t("设置页.更新.字段.说明")} span={2}>
           <Typography.Paragraph className="settings-page-update-notes">
             {result?.releaseNotes || "-"}
@@ -118,8 +142,13 @@ export function AppUpdatePanel(props: Props) {
         <Button type="default" loading={checking} onClick={() => void handleCheck()}>
           {props.t("设置页.更新.按钮.检查更新")}
         </Button>
-        <Button type="primary" loading={installing} disabled={!canInstall} onClick={() => void handleInstall()}>
-          {props.t("设置页.更新.按钮.下载安装")}
+        <Button
+          type="primary"
+          loading={installing}
+          disabled={!canInstall && !canDownload}
+          onClick={() => void (canInstall ? handleInstall() : handleDownload())}
+        >
+          {canInstall ? props.t("设置页.更新.按钮.下载安装") : props.t("设置页.更新.按钮.下载更新")}
         </Button>
       </div>
     </section>

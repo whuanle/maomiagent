@@ -100,7 +100,10 @@ import type {
   DesktopAiExecutionMaterialization,
   DesktopAiExecutionProfileMaterializationInput,
 } from "../../abstraction/models/desktop-ai-one-shot.models";
-import type { DesktopAiProviderServiceConfig } from "../../abstraction/models/desktop-ai-runtime.models";
+import type {
+  DesktopAiProviderServiceConfig,
+  DesktopAiProviderTelemetryEvent,
+} from "../../abstraction/models/desktop-ai-runtime.models";
 import type {
   DesktopAiConversationRuntimeCreateInput,
   DesktopAiConversationContinueTurnInput,
@@ -127,6 +130,11 @@ import {
   filterConversationMessagesForCheckpoint,
   resolveActiveConversationCheckpoint,
 } from "../../../../../shared/desktop-conversation";
+import {
+  applyConversationFunctionCallPreferenceToTurnRequest,
+  applyConversationHistoryPruningToTurnRequest,
+  normalizeProviderFacingTurnRequest,
+} from "../shared/turn-request-normalizers";
 
 type DesktopAiConversationRuntimeOptions = {
   conversationDbPath: string;
@@ -140,6 +148,9 @@ type DesktopAiConversationRuntimeOptions = {
   toolContributionResolver?: DesktopAiConversationRuntimeCreateInput["toolContributionResolver"];
   runtimeEventsPublisher?: (
     update: import("../../../../../shared/desktop-conversation").DesktopConversationRuntimeEventsUpdateEvent,
+  ) => void | Promise<void>;
+  providerTelemetryPublisher?: (
+    event: DesktopAiProviderTelemetryEvent,
   ) => void | Promise<void>;
 };
 
@@ -163,6 +174,12 @@ const CONTEXT_TOKEN_ESTIMATOR = new RoughTokenEstimator();
 const DEFAULT_CONTEXT_COMPRESSION_THRESHOLD_PERCENT = 80;
 const CONTEXT_COMPRESSION_THRESHOLD_PERCENT_MIN = 50;
 const CONTEXT_COMPRESSION_THRESHOLD_PERCENT_MAX = 90;
+const MEDIUM_PROMPT_TURN_NO_ACTIVITY_TIMEOUT_MS = 120_000;
+const LARGE_PROMPT_TURN_NO_ACTIVITY_TIMEOUT_MS = 150_000;
+const EXTRA_LARGE_PROMPT_TURN_NO_ACTIVITY_TIMEOUT_MS = 180_000;
+const MEDIUM_PROMPT_TOKEN_THRESHOLD = 6_000;
+const LARGE_PROMPT_TOKEN_THRESHOLD = 12_000;
+const EXTRA_LARGE_PROMPT_TOKEN_THRESHOLD = 20_000;
 
 function normalizeOptionalPositiveFiniteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
@@ -235,45 +252,36 @@ export function applyConversationThinkingPreferenceToServiceConfig(input: {
     reasoning: undefined,
   };
 }
+export {
+  applyConversationFunctionCallPreferenceToTurnRequest,
+  applyConversationHistoryPruningToTurnRequest,
+  normalizeProviderFacingTurnRequest,
+};
 
-export function applyConversationFunctionCallPreferenceToTurnRequest(input: {
-  executionProfile: AiExecutionProfileRef;
-  request: AiTurnRequest;
-}): AiTurnRequest {
-  if (readExecutionProfileBooleanMetadata(input.executionProfile, "supportsFunctionCall") !== false) {
-    return input.request;
+export function resolveConversationTurnNoActivityTimeoutMs(input: {
+  baseTimeoutMs: number;
+  estimatedPromptTokens?: number;
+}): number {
+  const baseTimeoutMs = normalizeTimeoutMs(input.baseTimeoutMs, DEFAULT_TURN_NO_ACTIVITY_TIMEOUT_MS);
+  const estimatedPromptTokens = normalizeOptionalPositiveFiniteNumber(input.estimatedPromptTokens);
+
+  if (!estimatedPromptTokens) {
+    return baseTimeoutMs;
   }
 
-  const sanitizedMessages = input.request.prompt.messages
-    .filter((message) => message.message.role !== "tool")
-    .map((message) => ({
-      ...message,
-      parts: message.parts.filter((part) =>
-        part.type !== "tool_call_ref" && part.type !== "tool_result_ref"
-      ),
-    }))
-    .filter((message) => message.message.role !== "assistant" || message.parts.length > 0);
-
-  const toolsAlreadyDisabled = input.request.prompt.tools.length === 0
-    && input.request.settings.toolChoice === "none";
-  const historyAlreadySanitized = sanitizedMessages.length === input.request.prompt.messages.length
-    && sanitizedMessages.every((message, index) => message.parts.length === input.request.prompt.messages[index]?.parts.length);
-  if (toolsAlreadyDisabled && historyAlreadySanitized) {
-    return input.request;
+  if (estimatedPromptTokens >= EXTRA_LARGE_PROMPT_TOKEN_THRESHOLD) {
+    return Math.max(baseTimeoutMs, EXTRA_LARGE_PROMPT_TURN_NO_ACTIVITY_TIMEOUT_MS);
   }
 
-  return {
-    ...input.request,
-    prompt: {
-      ...input.request.prompt,
-      messages: sanitizedMessages,
-      tools: [],
-    },
-    settings: {
-      ...input.request.settings,
-      toolChoice: "none",
-    },
-  };
+  if (estimatedPromptTokens >= LARGE_PROMPT_TOKEN_THRESHOLD) {
+    return Math.max(baseTimeoutMs, LARGE_PROMPT_TURN_NO_ACTIVITY_TIMEOUT_MS);
+  }
+
+  if (estimatedPromptTokens >= MEDIUM_PROMPT_TOKEN_THRESHOLD) {
+    return Math.max(baseTimeoutMs, MEDIUM_PROMPT_TURN_NO_ACTIVITY_TIMEOUT_MS);
+  }
+
+  return baseTimeoutMs;
 }
 
 export function mergeConversationExecutionProfile(input: {
@@ -2733,13 +2741,20 @@ class DesktopConversationRuntimeContextContributor implements ContextContributor
 
 class DesktopConversationTurnPort implements AiTurnPort {
   private readonly noActivityTimeoutMs: number;
+  private readonly providerTelemetryPublisher?: (
+    event: DesktopAiProviderTelemetryEvent,
+  ) => void | Promise<void>;
 
   constructor(
     private readonly aiRuntime: Pick<DesktopAiRuntimePort, "createTurnPort">,
     private readonly materializer: Pick<DesktopAiExecutionProfileMaterializerPort, "materialize">,
     private readonly materializationCache: Map<string, DesktopAiExecutionMaterialization>,
+    providerTelemetryPublisher?: (
+      event: DesktopAiProviderTelemetryEvent,
+    ) => void | Promise<void>,
     timeoutMs?: number,
   ) {
+    this.providerTelemetryPublisher = providerTelemetryPublisher;
     this.noActivityTimeoutMs = normalizeTimeoutMs(
       timeoutMs,
       DEFAULT_TURN_NO_ACTIVITY_TIMEOUT_MS,
@@ -2771,7 +2786,7 @@ class DesktopConversationTurnPort implements AiTurnPort {
         executionProfile: effectiveExecutionProfile,
       };
 
-      const normalizedInput = applyConversationFunctionCallPreferenceToTurnRequest({
+      const normalizedInput = normalizeProviderFacingTurnRequest({
         executionProfile: effectiveExecutionProfile,
         request: requestWithEffectiveExecutionProfile,
       });
@@ -2791,6 +2806,10 @@ class DesktopConversationTurnPort implements AiTurnPort {
           ?? readExecutionProfileNumericMetadata(normalizedInput.executionProfile, "maxOutputTokens")
           ?? materialized.target.maxOutputTokens,
         compressionThresholdPercent: readExecutionProfileCompressionThresholdPercent(normalizedInput.executionProfile),
+      });
+      const turnNoActivityTimeoutMs = resolveConversationTurnNoActivityTimeoutMs({
+        baseTimeoutMs: this.noActivityTimeoutMs,
+        estimatedPromptTokens: contextBudget.estimatedPromptTokens,
       });
 
       if (contextBudget.shouldAutoCompress
@@ -2828,6 +2847,7 @@ class DesktopConversationTurnPort implements AiTurnPort {
               serviceConfig: base,
             });
           },
+          telemetrySink: this.providerTelemetryPublisher,
         },
       );
 
@@ -2856,10 +2876,10 @@ class DesktopConversationTurnPort implements AiTurnPort {
         while (true) {
           const step = await raceAsyncIteratorNext(
             iterator,
-            this.noActivityTimeoutMs,
+            turnNoActivityTimeoutMs,
             () => ({
               code: "provider_runtime_timeout",
-              message: `Desktop AI runtime produced no activity for ${this.noActivityTimeoutMs}ms.`,
+              message: `Desktop AI runtime produced no activity for ${turnNoActivityTimeoutMs}ms.`,
               retryable: true,
               metadata: {
                 channelId: materialized.target.channelId,
@@ -2867,7 +2887,7 @@ class DesktopConversationTurnPort implements AiTurnPort {
                 providerType: materialized.target.providerType,
                 protocolFamily: materialized.target.protocolFamily,
                 apiStyle: materialized.target.apiStyle,
-                timeoutMs: this.noActivityTimeoutMs,
+                timeoutMs: turnNoActivityTimeoutMs,
               },
             }),
           );
@@ -3794,6 +3814,7 @@ export class DesktopAiConversationRuntime {
       options.aiRuntime,
       options.materializer,
       this.executionMaterializations,
+      options.providerTelemetryPublisher,
       options.turnNoActivityTimeoutMs,
     );
     const contextViewBuilder = new DefaultContextViewBuilder();

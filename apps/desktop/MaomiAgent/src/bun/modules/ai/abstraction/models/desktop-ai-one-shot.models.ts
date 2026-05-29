@@ -10,6 +10,7 @@ import type {
 } from "../../../../../shared/desktop-models";
 import type {
   DesktopAiProviderRuntimeLookupInput,
+  DesktopAiRuntimeCapabilities,
   DesktopAiProviderServiceConfigResolver,
 } from "./desktop-ai-runtime.models";
 
@@ -34,9 +35,16 @@ export type DesktopAiOneShotTarget = {
   maxOutputTokens?: number;
 };
 
+export type DesktopAiProtocolIdentity = {
+  protocolFamily: DesktopModelProviderProtocolFamily;
+  apiStyle: DesktopModelProviderApiStyle;
+};
+
 export type DesktopAiExecutionMaterialization = {
   executionProfile: AiExecutionProfileRef;
   runtimeSelector: DesktopAiProviderRuntimeLookupInput;
+  protocolIdentity?: DesktopAiProtocolIdentity;
+  capabilities?: DesktopAiRuntimeCapabilities;
   resolveServiceConfig: DesktopAiProviderServiceConfigResolver;
   target: DesktopAiOneShotTarget;
 };

@@ -7,8 +7,6 @@ import type { DesktopConfigurationPort } from "../../../configuration";
 import type { RuntimeLogExtra, RuntimeLogLevel, RuntimeLogRecord, RuntimeLogger } from "../../../logs";
 import type { DesktopModelsQueryPort } from "../../../models";
 import type {
-  DesktopConversationApplyWorkspaceSettingsInput,
-  DesktopConversationApplyWorkspaceSettingsResponse,
   DesktopConversationAnswerInteractionInput,
   DesktopConversationCommandPort,
   DesktopConversationCreateSessionInput,
@@ -16,6 +14,8 @@ import type {
   DesktopConversationHideSessionResponse,
   DesktopConversationInteractionReplyResponse,
   DesktopConversationRejectInteractionInput,
+  DesktopConversationSaveWorkspaceSettingsInput,
+  DesktopConversationSaveWorkspaceSettingsResponse,
   DesktopConversationSendMessageInput,
   DesktopConversationSendMessageResponse,
   DesktopConversationSessionDetail,
@@ -24,6 +24,7 @@ import type {
 } from "../../../conversation";
 import type { DesktopWorkspaceItem, DesktopWorkspaceQueryPort } from "../../../workspace";
 import { WECHAT_AGENT_ID } from "../../../../../shared/conversation/managed-execution";
+import { createDefaultDesktopConversationWorkspaceSettings } from "../../../../../shared/desktop-conversation";
 import { DesktopWechatService } from "./desktop-wechat-service";
 import type { WechatInboundMessage } from "./wechat-api-client";
 
@@ -126,12 +127,16 @@ function createMockConversationCommand(calls: DesktopConversationCreateSessionIn
       sessionId: detail.sessionId,
       hidden: true,
     }),
-    applyWorkspaceSettings: async (
-      _input: DesktopConversationApplyWorkspaceSettingsInput,
-    ): Promise<DesktopConversationApplyWorkspaceSettingsResponse> => ({
-      items: [],
-      updatedCount: 0,
-      totalCount: 0,
+    saveWorkspaceSettings: async (
+      input: DesktopConversationSaveWorkspaceSettingsInput,
+    ): Promise<DesktopConversationSaveWorkspaceSettingsResponse> => ({
+      workspaceId: input.workspaceId,
+      version: 1,
+      path: "",
+      updatedAt: new Date(0).toISOString(),
+      settings: createDefaultDesktopConversationWorkspaceSettings(),
+      warnings: [],
+      syncedSessionCount: 0,
     }),
     sendMessage: async (
       _input: DesktopConversationSendMessageInput,
@@ -188,12 +193,16 @@ function createTrackingConversationCommand(input: {
       sessionId: detail.sessionId,
       hidden: true,
     }),
-    applyWorkspaceSettings: async (
-      _input: DesktopConversationApplyWorkspaceSettingsInput,
-    ): Promise<DesktopConversationApplyWorkspaceSettingsResponse> => ({
-      items: [],
-      updatedCount: 0,
-      totalCount: 0,
+    saveWorkspaceSettings: async (
+      input: DesktopConversationSaveWorkspaceSettingsInput,
+    ): Promise<DesktopConversationSaveWorkspaceSettingsResponse> => ({
+      workspaceId: input.workspaceId,
+      version: 1,
+      path: "",
+      updatedAt: new Date(0).toISOString(),
+      settings: createDefaultDesktopConversationWorkspaceSettings(),
+      warnings: [],
+      syncedSessionCount: 0,
     }),
     sendMessage: async (
       sendInput: DesktopConversationSendMessageInput,

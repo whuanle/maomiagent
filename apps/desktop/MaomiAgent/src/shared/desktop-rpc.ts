@@ -13,8 +13,6 @@ export type DesktopMainViewRefreshResult = {
 };
 
 import type {
-  DesktopConversationApplyWorkspaceSettingsInput,
-  DesktopConversationApplyWorkspaceSettingsResponse,
   DesktopConversationAnswerInteractionInput,
   DesktopConversationCapabilityListQuery,
   DesktopConversationCapabilityListResponse,
@@ -23,7 +21,11 @@ import type {
   DesktopConversationHideSessionResponse,
   DesktopConversationInteractionReplyResponse,
   DesktopConversationRejectInteractionInput,
+  DesktopConversationReadWorkspaceSettingsInput,
+  DesktopConversationReadWorkspaceSettingsResponse,
   DesktopConversationRuntimeEventsUpdateEvent,
+  DesktopConversationSaveWorkspaceSettingsInput,
+  DesktopConversationSaveWorkspaceSettingsResponse,
   DesktopConversationSendMessageInput,
   DesktopConversationSendMessageResponse,
   DesktopConversationStopMessageInput,
@@ -329,6 +331,10 @@ export type DesktopRendererRPC = {
         params: DesktopConversationCapabilityListQuery;
         response: DesktopConversationCapabilityListResponse;
       };
+      getDesktopConversationWorkspaceSettings: {
+        params: DesktopConversationReadWorkspaceSettingsInput;
+        response: DesktopConversationReadWorkspaceSettingsResponse;
+      };
       createDesktopConversationSession: {
         params: DesktopConversationCreateSessionInput;
         response: DesktopConversationCreateSessionResponse;
@@ -339,9 +345,9 @@ export type DesktopRendererRPC = {
         };
         response: DesktopConversationHideSessionResponse;
       };
-      applyDesktopConversationWorkspaceSettings: {
-        params: DesktopConversationApplyWorkspaceSettingsInput;
-        response: DesktopConversationApplyWorkspaceSettingsResponse;
+      saveDesktopConversationWorkspaceSettings: {
+        params: DesktopConversationSaveWorkspaceSettingsInput;
+        response: DesktopConversationSaveWorkspaceSettingsResponse;
       };
       sendDesktopConversationMessage: {
         params: DesktopConversationSendMessageInput;

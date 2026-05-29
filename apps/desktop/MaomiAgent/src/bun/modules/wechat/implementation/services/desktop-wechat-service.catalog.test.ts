@@ -6,8 +6,6 @@ import type { DesktopConfigurationPort } from "../../../configuration";
 import type { RuntimeLogExtra, RuntimeLogLevel, RuntimeLogRecord, RuntimeLogger } from "../../../logs";
 import type { DesktopModelsQueryPort } from "../../../models";
 import type {
-  DesktopConversationApplyWorkspaceSettingsInput,
-  DesktopConversationApplyWorkspaceSettingsResponse,
   DesktopConversationCommandPort,
   DesktopConversationCreateSessionInput,
   DesktopConversationCreateSessionResponse,
@@ -19,9 +17,12 @@ import type {
   DesktopConversationAnswerInteractionInput,
   DesktopConversationRejectInteractionInput,
   DesktopConversationInteractionReplyResponse,
+  DesktopConversationSaveWorkspaceSettingsInput,
+  DesktopConversationSaveWorkspaceSettingsResponse,
   DesktopConversationSessionDetail,
 } from "../../../conversation";
 import type { DesktopWorkspaceQueryPort } from "../../../workspace";
+import { createDefaultDesktopConversationWorkspaceSettings } from "../../../../../shared/desktop-conversation";
 import { DesktopWechatService } from "./desktop-wechat-service";
 
 function createMockModelsQuery(): Pick<DesktopModelsQueryPort, "getRuntimeSelectionSnapshot"> {
@@ -118,12 +119,16 @@ function createMockConversationCommand(): DesktopConversationCommandPort {
       sessionId: detail.sessionId,
       hidden: true,
     }),
-    applyWorkspaceSettings: async (
-      _input: DesktopConversationApplyWorkspaceSettingsInput,
-    ): Promise<DesktopConversationApplyWorkspaceSettingsResponse> => ({
-      items: [],
-      updatedCount: 0,
-      totalCount: 0,
+    saveWorkspaceSettings: async (
+      input: DesktopConversationSaveWorkspaceSettingsInput,
+    ): Promise<DesktopConversationSaveWorkspaceSettingsResponse> => ({
+      workspaceId: input.workspaceId,
+      version: 1,
+      path: "",
+      updatedAt: new Date(0).toISOString(),
+      settings: createDefaultDesktopConversationWorkspaceSettings(),
+      warnings: [],
+      syncedSessionCount: 0,
     }),
     sendMessage: async (
       _input: DesktopConversationSendMessageInput,

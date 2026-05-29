@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
+import type { DesktopAiProviderTelemetryStage } from "../abstraction/models/desktop-ai-runtime.models";
 import {
   AnthropicMessagesAiTurnPortAdapter,
 } from "../implementation/anthropic";
@@ -114,6 +115,7 @@ describe("AnthropicMessagesAiTurnPortAdapter", () => {
     expect(capturedUrl).toBe("https://api.kimi.com/coding/v1/messages");
     expect(capturedHeaders).toEqual(expect.objectContaining({
       "Content-Type": "application/json",
+      Accept: "text/event-stream",
       "x-api-key": "kimi-test-key",
       "anthropic-version": "2023-06-01",
       "anthropic-beta": "interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14",
@@ -141,5 +143,110 @@ describe("AnthropicMessagesAiTurnPortAdapter", () => {
         providerReason: "end_turn",
       },
     });
+  });
+
+  test("treats SSE payloads as streaming even when the provider omits the event-stream content type", async () => {
+    globalThis.fetch = (async () => new Response([
+      'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_stream_1","usage":{"input_tokens":12,"output_tokens":0}}}\n\n',
+      'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"先看一下问题。"}}\n\n',
+      'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"先定位流式返回。"}}\n\n',
+      'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+      'event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":"已经开始输出"}}\n\n',
+      'event: content_block_delta\ndata: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"，现在继续流式显示。"}}\n\n',
+      'event: content_block_stop\ndata: {"type":"content_block_stop","index":1}\n\n',
+      'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":8}}\n\n',
+      'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+    ].join(""), {
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+      },
+    })) as typeof fetch;
+
+    const adapter = new AnthropicMessagesAiTurnPortAdapter({
+      resolveConfig: () => ({
+        apiKey: "kimi-test-key",
+        baseUrl: "https://api.kimi.com/coding/v1",
+      }),
+    });
+
+    const events = await collectEvents(adapter.stream(createTurnRequest()));
+
+    expect(events).toEqual([{
+      type: "reasoning.start",
+    }, {
+      type: "reasoning.delta",
+      delta: "先看一下问题。",
+    }, {
+      type: "reasoning.delta",
+      delta: "先定位流式返回。",
+    }, {
+      type: "reasoning.end",
+    }, {
+      type: "text.start",
+    }, {
+      type: "text.delta",
+      delta: "已经开始输出",
+    }, {
+      type: "text.delta",
+      delta: "，现在继续流式显示。",
+    }, {
+      type: "text.end",
+    }, {
+      type: "usage",
+      usage: {
+        inputTokens: 12,
+        outputTokens: 8,
+      },
+    }, {
+      type: "finish",
+      reason: "stop",
+      metadata: {
+        providerResponseId: "msg_stream_1",
+        providerReason: "end_turn",
+      },
+    }]);
+  });
+
+  test("publishes shared protocol runner telemetry stages during streaming turns", async () => {
+    const telemetry: DesktopAiProviderTelemetryStage[] = [];
+
+    globalThis.fetch = (async () => new Response([
+      'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_stream_telemetry","usage":{"input_tokens":9,"output_tokens":0}}}\n\n',
+      'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"telemetry"}}\n\n',
+      'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" works"}}\n\n',
+      'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+      'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}\n\n',
+      'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+    ].join(""), {
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+      },
+    })) as typeof fetch;
+
+    const adapter = new AnthropicMessagesAiTurnPortAdapter({
+      resolveConfig: () => ({
+        apiKey: "kimi-test-key",
+        baseUrl: "https://api.kimi.com/coding/v1",
+      }),
+      telemetrySink: async (entry) => {
+        telemetry.push(entry.stage);
+      },
+    });
+
+    const events = await collectEvents(adapter.stream(createTurnRequest()));
+
+    expect(events).toEqual(expect.arrayContaining([{
+      type: "text.delta",
+      delta: " works",
+    }]));
+    expect(telemetry).toEqual([
+      "request_built",
+      "request_sent",
+      "response_headers",
+      "first_byte",
+      "first_protocol_frame",
+      "first_ai_event",
+      "stream_finished",
+    ]);
   });
 });

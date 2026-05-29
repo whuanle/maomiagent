@@ -1,70 +1,75 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
   DesktopConversationCapabilityPreferences,
   DesktopConversationPermissionRule,
   DesktopConversationPermissionRuleDecision,
+  DesktopConversationWorkspaceSettings,
 } from "../../../../shared/desktop-conversation";
+import {
+  DESKTOP_CONVERSATION_CONTEXT_COMPRESSION_THRESHOLD_PERCENT_DEFAULT as DEFAULT_CONTEXT_COMPRESSION_THRESHOLD_PERCENT,
+  DESKTOP_CONVERSATION_CONTEXT_COMPRESSION_THRESHOLD_PERCENT_MAX as CONTEXT_COMPRESSION_THRESHOLD_PERCENT_MAX,
+  DESKTOP_CONVERSATION_CONTEXT_COMPRESSION_THRESHOLD_PERCENT_MIN as CONTEXT_COMPRESSION_THRESHOLD_PERCENT_MIN,
+  clampDesktopConversationContextCompressionThresholdPercent,
+  createDefaultDesktopConversationWorkspaceSettings,
+} from "../../../../shared/desktop-conversation";
+import type { DesktopConversationSaveWorkspaceSettingsResponse } from "../../../../shared/desktop-conversation";
 import type { DesktopTerminalShellKind } from "../../../../shared/desktop-terminals";
 import {
-  clampContextCompressionThresholdPercent,
-  readConversationGlobalSettings,
-  writeConversationGlobalSettings,
-} from "./conversation-global-settings";
-import type { ConversationGlobalSettings } from "./conversation-global-settings";
+  DESKTOP_CONVERSATION_BRIDGE_READY_EVENT,
+  getDesktopConversationWorkspaceSettings,
+  hasDesktopConversationBridge,
+  saveDesktopConversationWorkspaceSettings,
+} from "../../../lib/desktop-conversation";
 
 export {
-  clampContextCompressionThresholdPercent,
-  readConversationGlobalSettings,
-  writeConversationGlobalSettings,
   DEFAULT_CONTEXT_COMPRESSION_THRESHOLD_PERCENT,
   CONTEXT_COMPRESSION_THRESHOLD_PERCENT_MIN,
   CONTEXT_COMPRESSION_THRESHOLD_PERCENT_MAX,
-} from "./conversation-global-settings";
-export type { ConversationGlobalSettings } from "./conversation-global-settings";
-
-export type ConversationWorkspaceFilePreviewMode = "preview" | "source";
-
-export type ConversationWorkspaceSettings = {
-  defaultFilePreviewMode: ConversationWorkspaceFilePreviewMode;
-  defaultTerminalShellKind?: DesktopTerminalShellKind;
-  selectedChannelId?: string;
-  selectedModelId?: string;
-  managedExecutionEnabled?: boolean;
-  thinkingEnabled?: boolean;
-  permissionRules?: DesktopConversationPermissionRule[];
-  memoryEnabled?: boolean;
-  sandboxEnabled?: boolean;
-  feishuSmartAssistantEnabled?: boolean;
-  capabilityPreferences?: DesktopConversationCapabilityPreferences;
 };
+
+export type ConversationWorkspaceSettings = DesktopConversationWorkspaceSettings;
 
 type ConversationWorkspaceSettingsChangedDetail = {
   workspaceId: string;
   settings: ConversationWorkspaceSettings;
+  warnings: string[];
 };
 
-const STORAGE_KEY_PREFIX = "maomiagent.chat.workspace.settings.v1:";
+type SaveConversationWorkspaceSettingsOptions = {
+  syncExistingSessions?: boolean;
+};
+
 export const CHAT_WORKSPACE_SETTINGS_CHANGED_EVENT = "maomi:chat-workspace-settings-changed";
+
+const workspaceSettingsSaveQueueById = new Map<string, Promise<void>>();
+
+function getConversationWorkspaceSettingsSaveQueue(workspaceId: string) {
+  return workspaceSettingsSaveQueueById.get(workspaceId) ?? Promise.resolve();
+}
+
+function queueConversationWorkspaceSettingsSave<T>(
+  workspaceId: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const previous = getConversationWorkspaceSettingsSaveQueue(workspaceId);
+  const queued = previous
+    .catch(() => undefined)
+    .then(operation);
+  const settled = queued.then(() => undefined, () => undefined);
+  workspaceSettingsSaveQueueById.set(workspaceId, settled);
+  void settled.finally(() => {
+    if (workspaceSettingsSaveQueueById.get(workspaceId) === settled) {
+      workspaceSettingsSaveQueueById.delete(workspaceId);
+    }
+  });
+  return queued;
+}
 
 const TERMINAL_SHELL_KINDS = new Set<DesktopTerminalShellKind>(["powershell", "cmd", "bash", "sh"]);
 
 function normalizeWorkspaceId(workspaceId?: string) {
   return workspaceId?.trim() ?? "";
-}
-
-function resolveStorageKey(workspaceId: string) {
-  return `${STORAGE_KEY_PREFIX}${workspaceId}`;
-}
-
-function normalizeFilePreviewMode(value: unknown): ConversationWorkspaceFilePreviewMode {
-  return value === "source" ? "source" : "preview";
-}
-
-function normalizeTerminalShellKind(value: unknown): DesktopTerminalShellKind | undefined {
-  return typeof value === "string" && TERMINAL_SHELL_KINDS.has(value as DesktopTerminalShellKind)
-    ? value as DesktopTerminalShellKind
-    : undefined;
 }
 
 function normalizeOptionalText(value: unknown): string | undefined {
@@ -75,8 +80,59 @@ function normalizeBooleanSetting(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
 }
 
+function normalizeFilePreviewMode(
+  value: unknown,
+): ConversationWorkspaceSettings["defaultFilePreviewMode"] {
+  return value === "source" ? "source" : "preview";
+}
+
+function normalizeTerminalShellKind(value: unknown): DesktopTerminalShellKind | undefined {
+  return typeof value === "string" && TERMINAL_SHELL_KINDS.has(value as DesktopTerminalShellKind)
+    ? value as DesktopTerminalShellKind
+    : undefined;
+}
+
 function normalizePermissionRuleDecision(value: unknown): DesktopConversationPermissionRuleDecision | undefined {
   return value === "approve_always" || value === "reject" ? value : undefined;
+}
+
+function normalizePermissionRule(value: unknown): DesktopConversationPermissionRule | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const permission = normalizeOptionalText(record.permission);
+  const scope = normalizeOptionalText(record.scope);
+  const decision = normalizePermissionRuleDecision(record.decision);
+  if (!permission || !scope || !decision) {
+    return undefined;
+  }
+
+  return {
+    permission,
+    scope,
+    decision,
+    ...(typeof record.updatedAt === "number" && Number.isFinite(record.updatedAt)
+      ? { updatedAt: Math.trunc(record.updatedAt) }
+      : {}),
+    ...(typeof record.note === "string" && record.note.trim() ? { note: record.note.trim() } : {}),
+    ...(typeof record.title === "string" && record.title.trim() ? { title: record.title.trim() } : {}),
+    ...(typeof record.resourceSummary === "string" && record.resourceSummary.trim()
+      ? { resourceSummary: record.resourceSummary.trim() }
+      : {}),
+  };
+}
+
+function normalizePermissionRules(value: unknown): DesktopConversationPermissionRule[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  return value.flatMap((entry) => {
+    const normalized = normalizePermissionRule(entry);
+    return normalized ? [normalized] : [];
+  });
 }
 
 function normalizeCapabilityPreferences(
@@ -102,91 +158,62 @@ function normalizeCapabilityPreferences(
   return Object.fromEntries(normalizedEntries);
 }
 
-function normalizePermissionRule(
-  value: unknown,
-): DesktopConversationPermissionRule | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-
-  const record = value as Record<string, unknown>;
-  const permission = typeof record.permission === "string" && record.permission.trim()
-    ? record.permission.trim()
-    : undefined;
-  const scope = typeof record.scope === "string" && record.scope.trim()
-    ? record.scope.trim()
-    : undefined;
-  const decision = normalizePermissionRuleDecision(record.decision);
-  if (!permission || !scope || !decision) {
-    return undefined;
-  }
-
-  return {
-    permission,
-    scope,
-    decision,
-    ...(typeof record.updatedAt === "number" && Number.isFinite(record.updatedAt)
-      ? { updatedAt: Math.trunc(record.updatedAt) }
-      : {}),
-    ...(typeof record.note === "string" && record.note.trim() ? { note: record.note.trim() } : {}),
-    ...(typeof record.title === "string" && record.title.trim() ? { title: record.title.trim() } : {}),
-    ...(typeof record.resourceSummary === "string" && record.resourceSummary.trim()
-      ? { resourceSummary: record.resourceSummary.trim() }
-      : {}),
-  };
-}
-
-function normalizePermissionRules(
-  value: unknown,
-): DesktopConversationPermissionRule[] | undefined {
+function normalizeWarnings(value: unknown): string[] {
   if (!Array.isArray(value)) {
-    return undefined;
+    return [];
   }
 
   return value.flatMap((entry) => {
-    const normalized = normalizePermissionRule(entry);
-    return normalized ? [normalized] : [];
+    const warning = normalizeOptionalText(entry);
+    return warning ? [warning] : [];
   });
-}
-
-export function useConversationGlobalSettings() {
-  const [settings, setSettings] = useState<ConversationGlobalSettings>(() => readConversationGlobalSettings());
-
-  const updateSettings = useCallback((input: Partial<ConversationGlobalSettings>) => {
-    const nextSettings = writeConversationGlobalSettings(input);
-    setSettings(nextSettings);
-    return nextSettings;
-  }, []);
-
-  return {
-    settings,
-    updateSettings,
-  };
 }
 
 function normalizeConversationWorkspaceSettings(
   value?: Partial<ConversationWorkspaceSettings> | null,
 ): ConversationWorkspaceSettings {
+  const defaults = createDefaultDesktopConversationWorkspaceSettings();
   const selectedChannelId = normalizeOptionalText(value?.selectedChannelId);
   const selectedModelId = normalizeOptionalText(value?.selectedModelId);
 
   return {
+    approvalAutoEnabled: normalizeBooleanSetting(value?.approvalAutoEnabled) ?? defaults.approvalAutoEnabled,
+    contextCompressionThresholdPercent: clampDesktopConversationContextCompressionThresholdPercent(
+      value?.contextCompressionThresholdPercent ?? defaults.contextCompressionThresholdPercent,
+    ),
     defaultFilePreviewMode: normalizeFilePreviewMode(value?.defaultFilePreviewMode),
-    defaultTerminalShellKind: normalizeTerminalShellKind(value?.defaultTerminalShellKind),
-    selectedChannelId: selectedChannelId && selectedModelId ? selectedChannelId : undefined,
-    selectedModelId: selectedChannelId && selectedModelId ? selectedModelId : undefined,
-    managedExecutionEnabled: normalizeBooleanSetting(value?.managedExecutionEnabled),
-    thinkingEnabled: normalizeBooleanSetting(value?.thinkingEnabled),
-    permissionRules: normalizePermissionRules(value?.permissionRules),
-    memoryEnabled: normalizeBooleanSetting(value?.memoryEnabled),
-    sandboxEnabled: normalizeBooleanSetting(value?.sandboxEnabled),
-    feishuSmartAssistantEnabled: normalizeBooleanSetting(value?.feishuSmartAssistantEnabled),
-    capabilityPreferences: normalizeCapabilityPreferences(value?.capabilityPreferences),
+    ...(normalizeTerminalShellKind(value?.defaultTerminalShellKind)
+      ? { defaultTerminalShellKind: normalizeTerminalShellKind(value?.defaultTerminalShellKind) }
+      : {}),
+    ...(selectedChannelId && selectedModelId
+      ? {
+          selectedChannelId,
+          selectedModelId,
+        }
+      : {}),
+    thinkingEnabled: normalizeBooleanSetting(value?.thinkingEnabled) ?? defaults.thinkingEnabled,
+    managedExecutionEnabled: normalizeBooleanSetting(value?.managedExecutionEnabled)
+      ?? defaults.managedExecutionEnabled,
+    ...(normalizePermissionRules(value?.permissionRules) !== undefined
+      ? { permissionRules: normalizePermissionRules(value?.permissionRules) }
+      : {}),
+    memoryEnabled: normalizeBooleanSetting(value?.memoryEnabled) ?? defaults.memoryEnabled,
+    sandboxEnabled: normalizeBooleanSetting(value?.sandboxEnabled) ?? defaults.sandboxEnabled,
+    feishuSmartAssistantEnabled: normalizeBooleanSetting(value?.feishuSmartAssistantEnabled)
+      ?? defaults.feishuSmartAssistantEnabled,
+    capabilityPreferences: {
+      ...defaults.capabilityPreferences,
+      ...(normalizeCapabilityPreferences(value?.capabilityPreferences) ?? {}),
+    },
   };
 }
 
 function serializeConversationWorkspaceSettings(settings: ConversationWorkspaceSettings) {
   return JSON.stringify(settings);
+}
+
+function serializeWarnings(warnings: string[]) {
+  return JSON.stringify(warnings);
 }
 
 function areConversationWorkspaceSettingsEqual(
@@ -196,65 +223,140 @@ function areConversationWorkspaceSettingsEqual(
   return serializeConversationWorkspaceSettings(left) === serializeConversationWorkspaceSettings(right);
 }
 
-export function readConversationWorkspaceSettings(workspaceId?: string): ConversationWorkspaceSettings {
-  const normalizedWorkspaceId = normalizeWorkspaceId(workspaceId);
-  if (!normalizedWorkspaceId || typeof window === "undefined") {
-    return normalizeConversationWorkspaceSettings();
-  }
-
-  try {
-    const raw = window.localStorage.getItem(resolveStorageKey(normalizedWorkspaceId));
-    if (!raw) {
-      return normalizeConversationWorkspaceSettings();
-    }
-
-    return normalizeConversationWorkspaceSettings(JSON.parse(raw) as Partial<ConversationWorkspaceSettings>);
-  } catch {
-    return normalizeConversationWorkspaceSettings();
-  }
+function areWarningsEqual(left: string[], right: string[]) {
+  return serializeWarnings(left) === serializeWarnings(right);
 }
 
-export function writeConversationWorkspaceSettings(
-  workspaceId: string,
-  input: Partial<ConversationWorkspaceSettings>,
-): ConversationWorkspaceSettings {
+export function clampContextCompressionThresholdPercent(value: unknown) {
+  return clampDesktopConversationContextCompressionThresholdPercent(value);
+}
+
+export function waitForConversationWorkspaceSettingsSaves(workspaceId?: string): Promise<void> {
   const normalizedWorkspaceId = normalizeWorkspaceId(workspaceId);
-  if (!normalizedWorkspaceId || typeof window === "undefined") {
-    return normalizeConversationWorkspaceSettings(input);
+  if (!normalizedWorkspaceId) {
+    return Promise.resolve();
   }
 
-  const previousSettings = readConversationWorkspaceSettings(normalizedWorkspaceId);
-  const nextSettings = normalizeConversationWorkspaceSettings({
-    ...previousSettings,
-    ...input,
-  });
-  if (areConversationWorkspaceSettingsEqual(previousSettings, nextSettings)) {
-    return previousSettings;
+  return getConversationWorkspaceSettingsSaveQueue(normalizedWorkspaceId)
+    .catch(() => undefined);
+}
+
+function emitConversationWorkspaceSettingsChanged(detail: ConversationWorkspaceSettingsChangedDetail) {
+  if (typeof window === "undefined") {
+    return;
   }
 
-  window.localStorage.setItem(resolveStorageKey(normalizedWorkspaceId), JSON.stringify(nextSettings));
   window.dispatchEvent(new CustomEvent<ConversationWorkspaceSettingsChangedDetail>(
     CHAT_WORKSPACE_SETTINGS_CHANGED_EVENT,
-    {
-      detail: {
-        workspaceId: normalizedWorkspaceId,
-        settings: nextSettings,
-      },
-    },
+    { detail },
   ));
-  return nextSettings;
+}
+
+function resolveRuntimeSettingsErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+  if (typeof error === "string" && error.trim()) {
+    return error;
+  }
+
+  return "未知错误";
 }
 
 export function useConversationWorkspaceSettings(workspaceId?: string) {
   const normalizedWorkspaceId = normalizeWorkspaceId(workspaceId);
-  const [settings, setSettings] = useState<ConversationWorkspaceSettings>(() => readConversationWorkspaceSettings(normalizedWorkspaceId));
+  const [bridgeRevision, setBridgeRevision] = useState(0);
+  const defaultSettingsRef = useRef<ConversationWorkspaceSettings>(normalizeConversationWorkspaceSettings());
+  const settingsRef = useRef<ConversationWorkspaceSettings>(defaultSettingsRef.current);
+  const warningsRef = useRef<string[]>([]);
+  const loadRequestIdRef = useRef(0);
+  const [settings, setSettings] = useState<ConversationWorkspaceSettings>(
+    () => defaultSettingsRef.current,
+  );
+  const [warnings, setWarnings] = useState<string[]>(() => warningsRef.current);
+  const [loadingCount, setLoadingCount] = useState(0);
+  const [savingCount, setSavingCount] = useState(0);
+  const [error, setError] = useState("");
 
-  useEffect(() => {
-    const nextSettings = readConversationWorkspaceSettings(normalizedWorkspaceId);
+  const applySettingsState = useCallback((nextSettings: ConversationWorkspaceSettings, nextWarnings: string[]) => {
+    settingsRef.current = nextSettings;
+    warningsRef.current = nextWarnings;
     setSettings((current) => areConversationWorkspaceSettingsEqual(current, nextSettings)
       ? current
       : nextSettings);
-  }, [normalizedWorkspaceId]);
+    setWarnings((current) => areWarningsEqual(current, nextWarnings)
+      ? current
+      : nextWarnings);
+  }, []);
+
+  const invalidatePendingLoads = useCallback(() => {
+    loadRequestIdRef.current += 1;
+  }, []);
+
+  const loadSettings = useCallback(async () => {
+    if (!normalizedWorkspaceId) {
+      const defaults = normalizeConversationWorkspaceSettings();
+      applySettingsState(defaults, []);
+      setError("");
+      setLoadingCount(0);
+      return defaults;
+    }
+
+    if (!hasDesktopConversationBridge()) {
+      setLoadingCount(0);
+      return settingsRef.current;
+    }
+
+    const requestId = loadRequestIdRef.current + 1;
+    loadRequestIdRef.current = requestId;
+    setLoadingCount((current) => current + 1);
+
+    try {
+      await waitForConversationWorkspaceSettingsSaves(normalizedWorkspaceId);
+      const response = await getDesktopConversationWorkspaceSettings({
+        workspaceId: normalizedWorkspaceId,
+      });
+      if (requestId !== loadRequestIdRef.current) {
+        return settingsRef.current;
+      }
+
+      const nextSettings = normalizeConversationWorkspaceSettings(response.settings);
+      const nextWarnings = normalizeWarnings(response.warnings);
+      applySettingsState(nextSettings, nextWarnings);
+      setError("");
+      return nextSettings;
+    } catch (loadError) {
+      if (requestId === loadRequestIdRef.current) {
+        setError(resolveRuntimeSettingsErrorMessage(loadError));
+      }
+      return settingsRef.current;
+    } finally {
+      setLoadingCount((current) => Math.max(0, current - 1));
+    }
+  }, [applySettingsState, normalizedWorkspaceId]);
+
+  const refreshSettings = useCallback(async () => {
+    return loadSettings();
+  }, [loadSettings]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    const handleBridgeReady = () => {
+      setBridgeRevision((current) => current + 1);
+    };
+
+    window.addEventListener(DESKTOP_CONVERSATION_BRIDGE_READY_EVENT, handleBridgeReady as EventListener);
+    return () => {
+      window.removeEventListener(DESKTOP_CONVERSATION_BRIDGE_READY_EVENT, handleBridgeReady as EventListener);
+    };
+  }, []);
+
+  useEffect(() => {
+    void loadSettings();
+  }, [bridgeRevision, loadSettings]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -263,40 +365,74 @@ export function useConversationWorkspaceSettings(workspaceId?: string) {
 
     const handleSettingsChanged = (event: Event) => {
       const detail = (event as CustomEvent<ConversationWorkspaceSettingsChangedDetail>).detail;
-      if (!detail) {
-        const nextSettings = readConversationWorkspaceSettings(normalizedWorkspaceId);
-        setSettings((current) => areConversationWorkspaceSettingsEqual(current, nextSettings)
-          ? current
-          : nextSettings);
+      if (!detail || detail.workspaceId !== normalizedWorkspaceId) {
         return;
       }
 
-      if (!normalizedWorkspaceId || detail.workspaceId === normalizedWorkspaceId) {
-        setSettings((current) => areConversationWorkspaceSettingsEqual(current, detail.settings)
-          ? current
-          : detail.settings);
-      }
+      invalidatePendingLoads();
+      applySettingsState(
+        normalizeConversationWorkspaceSettings(detail.settings),
+        normalizeWarnings(detail.warnings),
+      );
+      setError("");
     };
 
     window.addEventListener(CHAT_WORKSPACE_SETTINGS_CHANGED_EVENT, handleSettingsChanged as EventListener);
-    return () => window.removeEventListener(CHAT_WORKSPACE_SETTINGS_CHANGED_EVENT, handleSettingsChanged as EventListener);
-  }, [normalizedWorkspaceId]);
+    return () => {
+      window.removeEventListener(CHAT_WORKSPACE_SETTINGS_CHANGED_EVENT, handleSettingsChanged as EventListener);
+    };
+  }, [applySettingsState, invalidatePendingLoads, normalizedWorkspaceId]);
 
-  const updateSettings = useCallback((input: Partial<ConversationWorkspaceSettings>) => {
+  const saveSettings = useCallback(async (
+    patch: Partial<ConversationWorkspaceSettings>,
+    options: SaveConversationWorkspaceSettingsOptions = {},
+  ): Promise<DesktopConversationSaveWorkspaceSettingsResponse | null> => {
     if (!normalizedWorkspaceId) {
-      return normalizeConversationWorkspaceSettings(input);
+      return null;
     }
 
-    const nextSettings = writeConversationWorkspaceSettings(normalizedWorkspaceId, input);
-    setSettings((current) => areConversationWorkspaceSettingsEqual(current, nextSettings)
-      ? current
-      : nextSettings);
-    return nextSettings;
-  }, [normalizedWorkspaceId]);
+    if (!hasDesktopConversationBridge()) {
+      throw new Error("Desktop chat settings are unavailable in the current runtime.");
+    }
+
+    invalidatePendingLoads();
+    setSavingCount((current) => current + 1);
+    try {
+      const response = await queueConversationWorkspaceSettingsSave(normalizedWorkspaceId, () =>
+        saveDesktopConversationWorkspaceSettings({
+          workspaceId: normalizedWorkspaceId,
+          patch,
+          syncExistingSessions: options.syncExistingSessions,
+        }));
+      const nextSettings = normalizeConversationWorkspaceSettings(response.settings);
+      const nextWarnings = normalizeWarnings(response.warnings);
+      applySettingsState(nextSettings, nextWarnings);
+      setError("");
+      emitConversationWorkspaceSettingsChanged({
+        workspaceId: normalizedWorkspaceId,
+        settings: nextSettings,
+        warnings: nextWarnings,
+      });
+      return response;
+    } catch (saveError) {
+      setError(resolveRuntimeSettingsErrorMessage(saveError));
+      throw saveError;
+    } finally {
+      setSavingCount((current) => Math.max(0, current - 1));
+    }
+  }, [applySettingsState, invalidatePendingLoads, normalizedWorkspaceId]);
+
+  const loading = loadingCount > 0;
+  const saving = savingCount > 0;
 
   return {
     workspaceId: normalizedWorkspaceId,
     settings,
-    updateSettings,
+    warnings,
+    loading,
+    saving,
+    error,
+    refreshSettings,
+    saveSettings,
   };
 }

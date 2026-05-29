@@ -10,6 +10,7 @@ import type {
   DesktopConversationSessionDetail,
   DesktopConversationSessionItem,
 } from "../../../../../shared/desktop-conversation";
+import type { DesktopAiProviderTelemetryEvent } from "./desktop-ai-runtime.models";
 
 import type { DesktopAiExecutionProfileMaterializationInput } from "./desktop-ai-one-shot.models";
 
@@ -30,6 +31,9 @@ export type DesktopAiConversationRuntimeCreateInput = {
   } | undefined>;
   runtimeEventsPublisher?: (
     update: DesktopConversationRuntimeEventsUpdateEvent,
+  ) => void | Promise<void>;
+  providerTelemetryPublisher?: (
+    event: DesktopAiProviderTelemetryEvent,
   ) => void | Promise<void>;
 };
 

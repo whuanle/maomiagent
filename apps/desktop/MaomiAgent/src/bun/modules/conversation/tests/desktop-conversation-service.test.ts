@@ -28,7 +28,10 @@ import {
   FULLY_MANAGED_AGENT_ID,
   WECHAT_AGENT_ID,
 } from "../../../../shared/conversation/managed-execution";
-import type { DesktopConversationRuntimeEventsUpdateEvent } from "../../../../shared/desktop-conversation";
+import {
+  createDefaultDesktopConversationWorkspaceSettings,
+  type DesktopConversationRuntimeEventsUpdateEvent,
+} from "../../../../shared/desktop-conversation";
 import { createDesktopConversationBuiltinToolBundle } from "../implementation/services/desktop-conversation-builtin-tools";
 import { DesktopConversationService } from "../implementation/services/desktop-conversation-service";
 import { DesktopConversationStore } from "../implementation/stores/desktop-conversation-store";
@@ -727,6 +730,206 @@ describe("DesktopConversationService", () => {
       const stored = await service.getSession(created.item.sessionId);
       expect(stored?.metadata).toMatchObject({
         selectedAgentId: DEFAULT_DESKTOP_PRIMARY_AGENT_ID,
+      });
+    } finally {
+      service.dispose();
+      database.dispose();
+      cleanupTempRoot(tempRoot);
+    }
+  });
+
+  test("injects workspace settings defaults into new sessions and preserves explicit metadata overrides", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "maomi-desktop-conversation-workspace-defaults-"));
+    const configuration = new DesktopConfigurationService(createRuntimeContext(tempRoot));
+    const database = new DesktopDatabaseService(configuration);
+    const logger = new RuntimeLogsService(
+      new RuntimeLogsStore(database.getConnection("runtimeLogs")),
+    ).createLogger({
+      source: "desktop",
+      module: "desktop.conversation.workspace-defaults-test",
+    });
+    const defaults = createDefaultDesktopConversationWorkspaceSettings();
+    const service = new DesktopConversationService(
+      new DesktopConversationStore(database.getConnection("conversation")),
+      logger,
+      {
+        workspaceSettingsService: {
+          async read({ workspaceId }) {
+            return {
+              workspaceId,
+              version: 1,
+              path: join(tempRoot, workspaceId, ".maomi", "chat", "settings.json"),
+              exists: true,
+              updatedAt: "2026-05-29T10:00:00.000Z",
+              settings: {
+                ...defaults,
+                approvalAutoEnabled: false,
+                contextCompressionThresholdPercent: 85,
+                selectedChannelId: "openai",
+                selectedModelId: "gpt-5",
+                thinkingEnabled: false,
+                managedExecutionEnabled: true,
+                capabilityPreferences: {
+                  ...defaults.capabilityPreferences,
+                  "mcp.runtime": false,
+                },
+                permissionRules: [{
+                  permission: "terminal.execute",
+                  scope: "workspace",
+                  decision: "approve_always",
+                }],
+              },
+              warnings: [],
+            };
+          },
+          async save() {
+            throw new Error("not used");
+          },
+        },
+      },
+    );
+
+    try {
+      const created = await service.createSession({
+        workspaceId: "workspace-1",
+        title: "Workspace defaults",
+        metadata: {
+          selectedChannelId: "anthropic",
+          selectedModelId: "claude-sonnet-4",
+          conversationSettings: {
+            thinkingEnabled: true,
+            capabilityPreferences: {
+              "skills.runtime": false,
+            },
+          },
+        },
+      });
+
+      expect(created.item.metadata).toMatchObject({
+        selectedAgentId: DEFAULT_DESKTOP_PRIMARY_AGENT_ID,
+        selectedChannelId: "anthropic",
+        selectedModelId: "claude-sonnet-4",
+        interactionGovernance: {
+          approvalMode: "manual",
+          permissionRules: [{
+            permission: "terminal.execute",
+            scope: "workspace",
+            decision: "approve_always",
+          }],
+        },
+        conversationSettings: {
+          contextCompressionThresholdPercent: 85,
+          managedExecutionEnabled: true,
+          thinkingEnabled: true,
+          memoryEnabled: true,
+          sandboxEnabled: false,
+          feishuSmartAssistantEnabled: false,
+          capabilityPreferences: {
+            "memory.runtime": true,
+            "mcp.runtime": false,
+            "skills.runtime": false,
+            "feishu.smartAssistant": false,
+          },
+        },
+      });
+    } finally {
+      service.dispose();
+      database.dispose();
+      cleanupTempRoot(tempRoot);
+    }
+  });
+
+  test("saves workspace settings and syncs existing sessions without rewriting historical model defaults", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "maomi-desktop-conversation-workspace-save-"));
+    const configuration = new DesktopConfigurationService(createRuntimeContext(tempRoot));
+    const database = new DesktopDatabaseService(configuration);
+    const logger = new RuntimeLogsService(
+      new RuntimeLogsStore(database.getConnection("runtimeLogs")),
+    ).createLogger({
+      source: "desktop",
+      module: "desktop.conversation.workspace-save-test",
+    });
+    const defaults = createDefaultDesktopConversationWorkspaceSettings();
+    let persistedSettings = {
+      ...defaults,
+      selectedChannelId: "openai",
+      selectedModelId: "gpt-5",
+    };
+    const service = new DesktopConversationService(
+      new DesktopConversationStore(database.getConnection("conversation")),
+      logger,
+      {
+        workspaceSettingsService: {
+          async read({ workspaceId }) {
+            return {
+              workspaceId,
+              version: 1,
+              path: join(tempRoot, workspaceId, ".maomi", "chat", "settings.json"),
+              exists: true,
+              updatedAt: "2026-05-29T10:15:00.000Z",
+              settings: persistedSettings,
+              warnings: [],
+            };
+          },
+          async save({ workspaceId, patch }) {
+            persistedSettings = {
+              ...persistedSettings,
+              ...patch,
+              capabilityPreferences: {
+                ...persistedSettings.capabilityPreferences,
+                ...(patch.capabilityPreferences ?? {}),
+              },
+            };
+            return {
+              workspaceId,
+              version: 1,
+              path: join(tempRoot, workspaceId, ".maomi", "chat", "settings.json"),
+              updatedAt: "2026-05-29T10:30:00.000Z",
+              settings: persistedSettings,
+              warnings: [],
+              syncedSessionCount: 0,
+            };
+          },
+        },
+      },
+    );
+
+    try {
+      const created = await service.createSession({
+        workspaceId: "workspace-1",
+        title: "Persisted defaults",
+      });
+
+      const saved = await service.saveWorkspaceSettings({
+        workspaceId: "workspace-1",
+        patch: {
+          selectedChannelId: "anthropic",
+          selectedModelId: "claude-sonnet-4",
+          thinkingEnabled: false,
+          capabilityPreferences: {
+            "skills.runtime": false,
+          },
+        },
+        syncExistingSessions: true,
+      });
+
+      const stored = await service.getSession(created.item.sessionId);
+
+      expect(saved.syncedSessionCount).toBe(1);
+      expect(saved.settings.selectedChannelId).toBe("anthropic");
+      expect(saved.settings.selectedModelId).toBe("claude-sonnet-4");
+      expect(stored?.metadata).toMatchObject({
+        selectedChannelId: "openai",
+        selectedModelId: "gpt-5",
+        conversationSettings: {
+          thinkingEnabled: false,
+          capabilityPreferences: {
+            "memory.runtime": true,
+            "mcp.runtime": true,
+            "skills.runtime": false,
+            "feishu.smartAssistant": false,
+          },
+        },
       });
     } finally {
       service.dispose();
@@ -5411,6 +5614,119 @@ describe("DesktopConversationService", () => {
       expect(runtimeUpdates.flatMap((update) => update.eventTypes).filter((type) => type === "message.parts.appended")).toHaveLength(2);
     } finally {
       releaseStream?.();
+      service.dispose();
+      database.dispose();
+      cleanupTempRoot(tempRoot);
+    }
+  });
+
+  test("publishes provider telemetry stages into the runtime logger", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "maomi-desktop-conversation-provider-telemetry-"));
+    const configuration = new DesktopConfigurationService(createRuntimeContext(tempRoot));
+    const database = new DesktopDatabaseService(configuration);
+    const logs = new RuntimeLogsService(
+      new RuntimeLogsStore(database.getConnection("runtimeLogs")),
+    );
+    const logger = logs.createLogger({
+      source: "desktop",
+      module: "desktop.conversation.provider-telemetry-test",
+    });
+    const service = new DesktopConversationService(
+      new DesktopConversationStore(database.getConnection("conversation")),
+      logger,
+      {
+        conversationDbPath: database.getConnection("conversation").path,
+        agents: {
+          async list() {
+            return {
+              items: [],
+              meta: {
+                total: 0,
+                limit: 0,
+                offset: 0,
+                hasMore: false,
+              },
+            };
+          },
+        },
+        materializer: {
+          async materialize(input) {
+            return {
+              executionProfile: {
+                id: "desktop.openai.kimi.moonshot-v1-8k" as never,
+                modelId: input.selectedModelId ?? "moonshot-v1-8k",
+                metadata: {
+                  providerType: "openai",
+                  channelId: input.selectedChannelId ?? "kimi",
+                  modelId: input.selectedModelId ?? "moonshot-v1-8k",
+                  protocolFamily: "openai",
+                  apiStyle: "responses",
+                  ...(input.scope ? { scope: input.scope } : {}),
+                  ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+                },
+              },
+              runtimeSelector: {
+                protocolFamily: "openai",
+                apiStyle: "responses",
+              },
+              resolveServiceConfig: async () => ({
+                apiKey: "sk-test",
+                baseUrl: "https://moonshot.example/v1",
+              }),
+              target: {
+                providerType: "openai",
+                channelId: input.selectedChannelId ?? "kimi",
+                modelId: input.selectedModelId ?? "moonshot-v1-8k",
+                protocolFamily: "openai",
+                apiStyle: "responses",
+              },
+            };
+          },
+        },
+        aiRuntime: {
+          createTurnPort(_selector, input) {
+            return {
+              async *stream() {
+                await input.telemetrySink?.({
+                  stage: "request_sent",
+                  modelId: "moonshot-v1-8k",
+                  runId: "run-provider-telemetry",
+                  turnId: "turn-provider-telemetry",
+                });
+                yield { type: "text.start" };
+                yield { type: "text.delta", delta: "telemetry wired" };
+                yield { type: "text.end" };
+                yield { type: "finish", reason: "stop" };
+              },
+            };
+          },
+        },
+      },
+    );
+
+    try {
+      const created = await service.createSession({
+        workspaceId: "workspace-1",
+        title: "Provider telemetry session",
+      });
+
+      const result = await service.sendMessage({
+        sessionId: created.item.sessionId,
+        text: "Run the provider telemetry probe",
+        scope: "workspace",
+        selectedChannelId: "kimi",
+        selectedModelId: "moonshot-v1-8k",
+      });
+
+      expect(result.detail.status).toBe("idle");
+      const debugLog = logs.query({ level: "debug" }).items.find((item) => item.message === "Desktop AI provider stage");
+      expect(debugLog?.context).toEqual(expect.objectContaining({
+        stage: "request_sent",
+        modelId: "moonshot-v1-8k",
+        runId: "run-provider-telemetry",
+        turnId: "turn-provider-telemetry",
+      }));
+    } finally {
       service.dispose();
       database.dispose();
       cleanupTempRoot(tempRoot);

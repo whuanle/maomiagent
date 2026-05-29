@@ -8,6 +8,7 @@ const APP_ROUTE_KEY_SET = new Set<AppRouteKey>(APP_ROUTE_ITEMS.map((route) => ro
 const APP_ROUTE_OWNER_MAP = new Map<AppRouteKey, AppRouteOwner>(
   APP_ROUTE_ITEMS.map((route) => [route.key, route.owner]),
 );
+const PERSISTENT_MAINVIEW_ROUTE_SET = new Set<AppRouteKey>(["chat"]);
 
 export function parseRouteFromHash(hash: string): AppRouteKey | null {
   const normalized = hash.replace(/^#/, "").trim();
@@ -30,6 +31,14 @@ export function readInitialRoute(): AppRouteKey {
 
 export function resolveVisibleMainviewRoute(route: AppRouteKey): AppRouteKey {
   return route === "shell" ? "chat" : route;
+}
+
+export function shouldKeepMainviewRouteMounted(route: AppRouteKey): boolean {
+  return PERSISTENT_MAINVIEW_ROUTE_SET.has(route);
+}
+
+export function shouldMountMainviewRoute(route: AppRouteKey, visibleRoute: AppRouteKey): boolean {
+  return route === visibleRoute || shouldKeepMainviewRouteMounted(route);
 }
 
 export function getMainviewRouteOwner(route: AppRouteKey): AppRouteOwner {

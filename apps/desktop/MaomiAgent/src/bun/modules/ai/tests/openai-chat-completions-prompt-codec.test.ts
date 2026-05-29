@@ -199,6 +199,49 @@ describe("OpenAIChatCompletionsPromptCodec", () => {
     });
   });
 
+  test("preserves assistant reasoning content alongside tool call history", () => {
+    const codec = new OpenAIChatCompletionsPromptCodec();
+    const request = createBaseTurnRequest();
+
+    request.prompt.messages = [{
+      message: {
+        id: "message_assistant_reasoning_1" as PromptMessageId,
+        sessionId: "session_1" as PromptEnvelope["sessionId"],
+        role: "assistant",
+        createdAt: 2,
+      },
+      parts: [{
+        id: "message_assistant_reasoning_1_part_1" as PromptMessagePartId,
+        type: "reasoning",
+        text: "Need to inspect the workspace before editing.",
+      }, {
+        id: "message_assistant_reasoning_1_part_2" as PromptMessagePartId,
+        type: "tool_call_ref",
+        toolCallId: asToolCallId("tool_call_workspace_check"),
+        toolName: "workspace-check",
+        input: {
+          path: ".",
+        },
+      }],
+    }];
+
+    const payload = codec.encode(request);
+
+    expect(payload.messages).toEqual([{
+      role: "assistant",
+      content: null,
+      reasoning_content: "Need to inspect the workspace before editing.",
+      tool_calls: [{
+        id: "tool_call_workspace_check",
+        type: "function",
+        function: {
+          name: "workspace-check",
+          arguments: '{"path":"."}',
+        },
+      }],
+    }]);
+  });
+
   test("uses explicit system role and structured output config when schema output is requested", () => {
     const codec = new OpenAIChatCompletionsPromptCodec({
       systemMessageRole: "system",

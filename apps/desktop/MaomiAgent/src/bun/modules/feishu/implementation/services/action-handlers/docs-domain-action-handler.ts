@@ -49,13 +49,11 @@ function resolvePushHeadline(pushStatus: string): string {
 }
 
 function resolvePushRecommendationDetail(recommendation: unknown): string | null {
-  return recommendation === "publish_new"
-    ? "推荐发布方式：发布新文档"
-    : recommendation === "pull_required"
-      ? "推荐发布方式：先重新拉取远端基线"
-      : recommendation === "update_existing"
-        ? "推荐发布方式：覆盖原文"
-        : null;
+  return recommendation === "pull_required"
+    ? "推荐发布方式：先重新拉取远端基线"
+    : recommendation === "update_existing"
+      ? "推荐发布方式：覆盖原文"
+      : null;
 }
 
 function normalizeDocNodes(tree: unknown): SearchableDocNode[] {
@@ -505,7 +503,7 @@ export class DocsDomainActionHandler implements DesktopFeishuDomainActionHandler
         details.push("远端基线已变化，请先重新拉取。");
       }
       if (pushResult.item.cache?.hasBlockedChanges) {
-        details.push("当前改动不适合直接覆盖原文。");
+        details.push("当前改动包含暂不支持的结构变更。");
       }
       if (pushResult.item.cache?.unknownBlockCount) {
         details.push(`未知块保留：${pushResult.item.cache.unknownBlockCount}`);
