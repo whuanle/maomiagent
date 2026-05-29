@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -238,7 +238,9 @@ function copyPlatformRuntimeFiles(
 
   for (const executableName of executableNames) {
     const fileName = resolveExecutableName(executableName, targetPlatform.os);
-    copyRequiredFile(join(platformDist, fileName), join(layout.bundleBinDir, fileName));
+    const destinationPath = join(layout.bundleBinDir, fileName);
+    copyRequiredFile(join(platformDist, fileName), destinationPath);
+    ensureExecutableFile(destinationPath, targetPlatform.os);
   }
 
   const libraryExtension = resolveLibraryExtension(targetPlatform.os);
@@ -449,6 +451,14 @@ function resolveLibraryExtension(os: string): string {
   }
 
   throw new Error(`Unsupported desktop library target: ${os}`);
+}
+
+function ensureExecutableFile(filePath: string, os: string): void {
+  if (os === "win") {
+    return;
+  }
+
+  chmodSync(filePath, 0o755);
 }
 
 function formatPlatformPrefix(channel: string, os: string, arch: string): string {
