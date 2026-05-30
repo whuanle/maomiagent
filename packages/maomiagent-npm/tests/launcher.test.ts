@@ -43,6 +43,13 @@ describe("resolveTargetPlatform", () => {
       arch: "arm64",
     });
   });
+
+  test("maps darwin/x64 to macos/x64", () => {
+    expect(resolveTargetPlatform("darwin", "x64")).toEqual({
+      os: "macos",
+      arch: "x64",
+    });
+  });
 });
 
 describe("resolveRuntimeBundleName", () => {
