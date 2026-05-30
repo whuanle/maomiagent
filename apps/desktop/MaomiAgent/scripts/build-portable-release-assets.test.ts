@@ -12,6 +12,7 @@ import {
   resolvePortableArchiveCommand,
   resolvePortableMacosDmgSourcePath,
   resolvePortableReleaseAssetName,
+  resolvePortableWindowsExecutableCommand,
 } from "./build-portable-release-assets";
 import { resolvePortableExportAfterNativePackagingFailure } from "./build-electrobun-bundle";
 
@@ -49,6 +50,36 @@ describe("build-portable-release-assets", () => {
     expect(createPortableWindowsLaunchEntry("bin\\launcher.exe")).toContain(
       'start "" "%~dp0bin\\launcher.exe"',
     );
+  });
+
+  test("resolves the Windows portable executable compile command", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "maomi-portable-windows-exe-command-"));
+
+    try {
+      const bundleRoot = join(tempRoot, "build", "stable-win-x64", "MaomiAgent");
+      mkdirSync(join(bundleRoot, "Resources"), { recursive: true });
+      writeFileSync(
+        join(bundleRoot, "Resources", "version.json"),
+        JSON.stringify({ version: "0.0.2.0" }),
+      );
+
+      const command = resolvePortableWindowsExecutableCommand({
+        bundleRoot,
+        hostPlatform: "win32",
+      });
+
+      expect(command.cwd).toContain(join("apps", "desktop", "MaomiAgent"));
+      expect(command.command).toContain("bun");
+      expect(command.command).toContain("--compile");
+      expect(command.command).toContain("--windows-hide-console");
+      expect(command.command).toContain("--windows-title");
+      expect(command.command).toContain("MaomiAgent");
+      expect(command.command).toContain("--windows-version");
+      expect(command.command).toContain("0.0.2.0");
+      expect(command.command).toContain(join(bundleRoot, "MaomiAgent.exe"));
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 
   test("creates the Linux portable launcher wrapper", () => {
@@ -91,7 +122,7 @@ describe("build-portable-release-assets", () => {
           arch: "x64",
         },
         createArchive: async (input) => {
-          writeFileSync(input.destinationPath, `archive:${input.sourceEntryName}`);
+          writeFileSync(input.destinationPath, `archive:${input.sourceEntries.join(",")}`);
         },
       });
 
@@ -109,6 +140,48 @@ describe("build-portable-release-assets", () => {
       expect(readFileSync(launchEntryPath, "utf8")).toContain(
         'exec "$DIR/bin/launcher" "$@"',
       );
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("exports windows portable assets with both cmd and exe launchers", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "maomi-portable-windows-assets-"));
+
+    try {
+      const artifactRoot = join(tempRoot, "artifacts");
+      const bundleRoot = join(tempRoot, "build", "stable-win-x64", "MaomiAgent");
+
+      mkdirSync(join(bundleRoot, "bin"), { recursive: true });
+      mkdirSync(join(bundleRoot, "Resources"), { recursive: true });
+      writeFileSync(join(bundleRoot, "bin", "launcher.exe"), "launcher");
+      writeFileSync(
+        join(bundleRoot, "Resources", "version.json"),
+        JSON.stringify({ version: "0.0.2.0" }),
+      );
+
+      const exportedAssets = await exportPortableAssets({
+        artifactRoot,
+        bundleRoot,
+        channel: "stable",
+        targetPlatform: {
+          os: "win",
+          arch: "x64",
+        },
+        createArchive: async (input) => {
+          writeFileSync(input.destinationPath, `archive:${input.sourceEntries.join(",")}`);
+        },
+        createWindowsExecutable: async ({ bundleRoot: targetBundleRoot }) => {
+          writeFileSync(join(targetBundleRoot, "MaomiAgent.exe"), "portable-exe");
+        },
+      });
+
+      expect(existsSync(exportedAssets.releaseAssetPath)).toBe(true);
+      expect(existsSync(exportedAssets.npmArchivePath)).toBe(true);
+      expect(readFileSync(join(bundleRoot, "MaomiAgent.cmd"), "utf8")).toContain(
+        'start "" "%~dp0bin\\launcher.exe"',
+      );
+      expect(readFileSync(join(bundleRoot, "MaomiAgent.exe"), "utf8")).toBe("portable-exe");
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -183,7 +256,7 @@ describe("build-portable-release-assets", () => {
   test("selects ditto for darwin app archives", () => {
     const command = resolvePortableArchiveCommand("darwin", {
       sourceRoot: join("tmp", "build"),
-      sourceEntryName: "MaomiAgent.app",
+      sourceEntries: ["MaomiAgent.app"],
       destinationPath: join("tmp", "artifacts", "macos-arm64-app.zip"),
     });
 
@@ -196,6 +269,55 @@ describe("build-portable-release-assets", () => {
       "MaomiAgent.app",
       resolve(join("tmp", "artifacts", "macos-arm64-app.zip")),
     ]);
+  });
+
+  test("uses root bundle contents for the Windows release archive", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "maomi-portable-windows-release-archive-"));
+
+    try {
+      const artifactRoot = join(tempRoot, "artifacts");
+      const bundleRoot = join(tempRoot, "build", "stable-win-x64", "MaomiAgent");
+      const releaseArchiveCalls: Array<{
+        sourceRoot: string;
+        sourceEntries: string[];
+      }> = [];
+
+      mkdirSync(join(bundleRoot, "bin"), { recursive: true });
+      mkdirSync(join(bundleRoot, "Resources"), { recursive: true });
+      writeFileSync(join(bundleRoot, "bin", "launcher.exe"), "launcher");
+      writeFileSync(join(bundleRoot, "Resources", "version.json"), JSON.stringify({ version: "0.0.2.0" }));
+
+      await exportPortableAssets({
+        artifactRoot,
+        bundleRoot,
+        channel: "stable",
+        targetPlatform: {
+          os: "win",
+          arch: "x64",
+        },
+        createArchive: async (input) => {
+          writeFileSync(input.destinationPath, `archive:${input.sourceEntries.join(",")}`);
+        },
+        createReleaseArchive: async (input) => {
+          releaseArchiveCalls.push({
+            sourceRoot: input.sourceRoot,
+            sourceEntries: input.sourceEntries,
+          });
+          writeFileSync(input.destinationPath, `release:${input.sourceEntries.join(",")}`);
+        },
+        createWindowsExecutable: async ({ bundleRoot: targetBundleRoot }) => {
+          writeFileSync(join(targetBundleRoot, "MaomiAgent.exe"), "portable-exe");
+        },
+      });
+
+      expect(releaseArchiveCalls).toHaveLength(1);
+      expect(releaseArchiveCalls[0]).toEqual({
+        sourceRoot: bundleRoot,
+        sourceEntries: ["MaomiAgent.cmd", "MaomiAgent.exe", "Resources", "bin"],
+      });
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 
   test("resolves scoped artifact cleanup paths only for newly created root entries", () => {

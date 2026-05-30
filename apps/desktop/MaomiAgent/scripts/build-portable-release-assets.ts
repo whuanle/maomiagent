@@ -1,7 +1,19 @@
-import { chmodSync, cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const APP_NAME = "MaomiAgent";
+const projectRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const WINDOWS_PORTABLE_LAUNCHER_ENTRYPOINT = join(projectRoot, "scripts", "portable-windows-launcher.ts");
+const WINDOWS_PORTABLE_ICON_PATH = join(
+  projectRoot,
+  "src",
+  "mainview",
+  "public",
+  "branding",
+  "generated",
+  "icon-512.png",
+);
 
 type PortableTargetOs = "win" | "linux" | "macos";
 type PortableAssetFormat = "portable-zip" | "app-zip" | "dmg";
@@ -14,13 +26,18 @@ type PortableTargetPlatform = {
 
 type PortableArchiveInput = {
   sourceRoot: string;
-  sourceEntryName: string;
+  sourceEntries: string[];
   destinationPath: string;
 };
 
 type PortableArchiveCommand = {
   command: string[];
   cwd: string;
+};
+
+type PortableWindowsExecutableInput = {
+  bundleRoot: string;
+  hostPlatform?: NodeJS.Platform;
 };
 
 export function resolvePortableReleaseAssetName(input: {
@@ -91,6 +108,8 @@ export async function exportPortableAssets(input: {
   macosReleaseFormat?: MacosReleaseFormat;
   nativeMacosDmgPath?: string;
   createArchive?: (input: PortableArchiveInput) => Promise<void>;
+  createWindowsExecutable?: (input: PortableWindowsExecutableInput) => Promise<void>;
+  createReleaseArchive?: (input: PortableArchiveInput) => Promise<void>;
 }): Promise<{
   releaseRoot: string;
   npmRoot: string;
@@ -107,12 +126,14 @@ export async function exportPortableAssets(input: {
   mkdirSync(releaseRoot, { recursive: true });
   mkdirSync(npmRoot, { recursive: true });
 
-  writePortableLaunchEntry(input.bundleRoot, input.targetPlatform.os);
+  await writePortableLaunchEntry(input.bundleRoot, input.targetPlatform.os, {
+    createWindowsExecutable: input.createWindowsExecutable,
+  });
 
   const npmArchivePath = join(npmRoot, resolvePortableNpmArchiveName(input.targetPlatform));
   await (input.createArchive ?? createPortableArchive)({
     sourceRoot: dirname(input.bundleRoot),
-    sourceEntryName: basename(input.bundleRoot),
+    sourceEntries: [basename(input.bundleRoot)],
     destinationPath: npmArchivePath,
   });
 
@@ -143,7 +164,13 @@ export async function exportPortableAssets(input: {
     );
     cpSync(dmgSourcePath, releaseAssetPath, { force: true });
   } else {
-    cpSync(npmArchivePath, releaseAssetPath, { force: true });
+    await (input.createReleaseArchive ?? input.createArchive ?? createPortableArchive)(
+      resolvePortableReleaseArchiveInput({
+        bundleRoot: input.bundleRoot,
+        os: input.targetPlatform.os,
+        destinationPath: releaseAssetPath,
+      }),
+    );
   }
 
   return {
@@ -162,12 +189,21 @@ function resolvePortableNpmArchiveName(targetPlatform: PortableTargetPlatform): 
   return `${targetPlatform.os}-${targetPlatform.arch}.zip`;
 }
 
-function writePortableLaunchEntry(bundleRoot: string, os: PortableTargetOs): void {
+async function writePortableLaunchEntry(
+  bundleRoot: string,
+  os: PortableTargetOs,
+  options?: {
+    createWindowsExecutable?: (input: PortableWindowsExecutableInput) => Promise<void>;
+  },
+): Promise<void> {
   if (os === "win") {
     writeFileSync(
       join(bundleRoot, `${APP_NAME}.cmd`),
       createPortableWindowsLaunchEntry("bin\\launcher.exe"),
     );
+    await (options?.createWindowsExecutable ?? createPortableWindowsExecutable)({
+      bundleRoot,
+    });
     return;
   }
 
@@ -181,9 +217,71 @@ function writePortableLaunchEntry(bundleRoot: string, os: PortableTargetOs): voi
   }
 }
 
+export function resolvePortableWindowsExecutableCommand(
+  input: PortableWindowsExecutableInput,
+): PortableArchiveCommand {
+  const hostPlatform = input.hostPlatform ?? process.platform;
+  if (hostPlatform !== "win32") {
+    throw new Error("Portable Windows launcher executables must be built on Windows hosts.");
+  }
+
+  const command = [
+    "bun",
+    "build",
+    WINDOWS_PORTABLE_LAUNCHER_ENTRYPOINT,
+    "--compile",
+    "--target=bun",
+    "--outfile",
+    join(input.bundleRoot, `${APP_NAME}.exe`),
+    "--windows-hide-console",
+    "--windows-title",
+    APP_NAME,
+    "--windows-description",
+    `${APP_NAME} portable launcher`,
+    "--windows-version",
+    resolvePortableWindowsExecutableVersion(input.bundleRoot),
+  ];
+
+  if (existsSync(WINDOWS_PORTABLE_ICON_PATH)) {
+    command.push("--windows-icon", WINDOWS_PORTABLE_ICON_PATH);
+  }
+
+  return {
+    command,
+    cwd: projectRoot,
+  };
+}
+
+async function createPortableWindowsExecutable(input: PortableWindowsExecutableInput): Promise<void> {
+  const compileCommand = resolvePortableWindowsExecutableCommand(input);
+  await runCommand(compileCommand.command, compileCommand.cwd);
+}
+
+function resolvePortableReleaseArchiveInput(
+  input: {
+    bundleRoot: string;
+    os: PortableTargetOs;
+    destinationPath: string;
+  },
+): PortableArchiveInput {
+  if (input.os === "macos") {
+    return {
+      sourceRoot: dirname(input.bundleRoot),
+      sourceEntries: [basename(input.bundleRoot)],
+      destinationPath: input.destinationPath,
+    };
+  }
+
+  return {
+    sourceRoot: input.bundleRoot,
+    sourceEntries: readdirSync(input.bundleRoot).sort(),
+    destinationPath: input.destinationPath,
+  };
+}
+
 async function createZipArchive(input: {
   sourceRoot: string;
-  sourceEntryName: string;
+  sourceEntries: string[];
   destinationPath: string;
 }): Promise<void> {
   rmSync(input.destinationPath, { force: true });
@@ -212,11 +310,48 @@ function escapePowerShellLiteral(value: string): string {
   return value.replaceAll("'", "''");
 }
 
+function resolvePortableWindowsExecutableVersion(bundleRoot: string): string {
+  const versionMetadataPath = join(bundleRoot, "Resources", "version.json");
+
+  if (!existsSync(versionMetadataPath)) {
+    return "0.0.0.0";
+  }
+
+  try {
+    const versionMetadata = JSON.parse(readFileSync(versionMetadataPath, "utf8")) as {
+      version?: string;
+    };
+    return normalizePortableWindowsExecutableVersion(versionMetadata.version);
+  } catch {
+    return "0.0.0.0";
+  }
+}
+
+function normalizePortableWindowsExecutableVersion(version?: string): string {
+  const numericSegments = (version ?? "")
+    .match(/\d+/g)
+    ?.slice(0, 4)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0) ?? [];
+
+  while (numericSegments.length < 4) {
+    numericSegments.push("0");
+  }
+
+  return numericSegments.join(".");
+}
+
 export function resolvePortableArchiveCommand(
   hostPlatform: NodeJS.Platform,
   input: PortableArchiveInput,
 ): PortableArchiveCommand {
+  const resolvedDestinationPath = resolve(input.destinationPath);
+
   if (hostPlatform === "win32") {
+    const escapedEntries = input.sourceEntries
+      .map((entry) => `'${escapePowerShellLiteral(entry)}'`)
+      .join(", ");
+
     return {
       command: [
         "powershell",
@@ -224,28 +359,32 @@ export function resolvePortableArchiveCommand(
         "-NoProfile",
         "-NonInteractive",
         "-Command",
-        `Compress-Archive -LiteralPath '${escapePowerShellLiteral(input.sourceEntryName)}' -DestinationPath '${escapePowerShellLiteral(resolve(input.destinationPath))}' -Force`,
+        `Compress-Archive -LiteralPath ${escapedEntries} -DestinationPath '${escapePowerShellLiteral(resolvedDestinationPath)}' -Force`,
       ],
       cwd: input.sourceRoot,
     };
   }
 
-  if (hostPlatform === "darwin" && input.sourceEntryName.endsWith(".app")) {
+  if (
+    hostPlatform === "darwin"
+    && input.sourceEntries.length === 1
+    && input.sourceEntries[0]?.endsWith(".app")
+  ) {
     return {
       command: [
         "ditto",
         "-c",
         "-k",
         "--keepParent",
-        input.sourceEntryName,
-        resolve(input.destinationPath),
+        input.sourceEntries[0],
+        resolvedDestinationPath,
       ],
       cwd: input.sourceRoot,
     };
   }
 
   return {
-    command: ["zip", "-y", "-r", "-9", resolve(input.destinationPath), input.sourceEntryName],
+    command: ["zip", "-y", "-r", "-9", resolvedDestinationPath, ...input.sourceEntries],
     cwd: input.sourceRoot,
   };
 }
