@@ -3,7 +3,10 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { ensureRuntimeExtracted } from "../lib/extract-runtime.js";
+import {
+  ensureRuntimeExtracted,
+  validateRuntimeBundles,
+} from "../lib/extract-runtime.js";
 import { launchGui } from "../lib/launch-gui.js";
 import {
   resolveLaunchPath,
@@ -92,18 +95,38 @@ describe("launchGui", () => {
 });
 
 describe("ensureRuntimeExtracted", () => {
-  test("extracts into runtime/active/<os>-<arch>, writes install metadata, and reuses existing installs", async () => {
+  test("fails clearly when required runtime bundles are missing", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "maomiagent-runtime-bundles-"));
+
+    await expect(validateRuntimeBundles(tempRoot)).rejects.toThrow(
+      "Missing runtime bundles: win-x64.zip, linux-x64.zip, macos-arm64-app.zip, macos-x64-app.zip. The maomiagent package must be assembled before packing or publishing.",
+    );
+  });
+
+  test("extracts into runtime/active/<os>-<arch>, writes install metadata, reuses matching installs, and re-extracts on marker drift", async () => {
     tempRoot = await mkdtemp(path.join(os.tmpdir(), "maomiagent-runtime-"));
 
-    const target = resolveTargetPlatform();
+    const target = {
+      os: "linux",
+      arch: "x64",
+    };
     const bundleName = resolveRuntimeBundleName(target);
     const bundlePath = path.join(tempRoot, "runtime-bundles", bundleName);
     const runtimeRoot = path.join(tempRoot, "runtime", "active", `${target.os}-${target.arch}`);
     const launchPath = resolveLaunchPath(runtimeRoot, target);
     const markerPath = path.join(runtimeRoot, ".installed.json");
+    const packageJsonPath = path.join(tempRoot, "package.json");
     let extractCalls = 0;
 
     await mkdir(path.dirname(bundlePath), { recursive: true });
+    await writeFile(
+      packageJsonPath,
+      JSON.stringify({
+        name: "maomiagent",
+        version: "1.0.0",
+      }, null, 2),
+      "utf8",
+    );
     await writeFile(bundlePath, "bundle", "utf8");
 
     const extractRuntime = async (sourcePath, options) => {
@@ -127,6 +150,7 @@ describe("ensureRuntimeExtracted", () => {
 
     const marker = JSON.parse(await readFile(markerPath, "utf8"));
     expect(marker.bundleName).toBe(bundleName);
+    expect(marker.packageVersion).toBe("1.0.0");
     expect(marker.target).toEqual(target);
 
     const secondInstall = await ensureRuntimeExtracted(tempRoot, {
@@ -139,5 +163,38 @@ describe("ensureRuntimeExtracted", () => {
       target,
     });
     expect(extractCalls).toBe(1);
+
+    await writeFile(
+      packageJsonPath,
+      JSON.stringify({
+        name: "maomiagent",
+        version: "2.0.0",
+      }, null, 2),
+      "utf8",
+    );
+
+    const thirdInstall = await ensureRuntimeExtracted(tempRoot, {
+      target,
+      extractRuntime,
+    });
+
+    expect(thirdInstall).toEqual({
+      runtimeRoot,
+      target,
+    });
+    expect(extractCalls).toBe(2);
+
+    await writeFile(markerPath, "{not-json", "utf8");
+
+    const fourthInstall = await ensureRuntimeExtracted(tempRoot, {
+      target,
+      extractRuntime,
+    });
+
+    expect(fourthInstall).toEqual({
+      runtimeRoot,
+      target,
+    });
+    expect(extractCalls).toBe(3);
   });
 });

@@ -1,5 +1,7 @@
 # maomiagent
 
+Supported platforms: Windows x64, Linux x64, macOS x64, macOS arm64.
+
 Install the desktop launcher package globally:
 
 ```bash

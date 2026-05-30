@@ -15,6 +15,7 @@
     "package.json"
   ],
   "scripts": {
+    "prepack": "node ./scripts/postinstall.js --validate-runtime-bundles",
     "postinstall": "node ./scripts/postinstall.js"
   },
   "dependencies": {
