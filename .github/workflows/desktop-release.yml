@@ -142,6 +142,9 @@ jobs:
           merge-multiple: true
           path: release-assets
 
+      - name: Install npm package dependencies
+        run: npm install --prefix ./packages/maomiagent-npm --ignore-scripts
+
       - name: Assemble npm package
         env:
           MAOMI_AGENT_NPM_ARTIFACT_ROOT: ${{ github.workspace }}/release-assets/npm

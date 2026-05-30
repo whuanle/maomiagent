@@ -46,6 +46,9 @@ describe("desktop-release workflow", () => {
     expect(workflowText).toContain("node-version: 22");
     expect(workflowText).toContain("registry-url: https://registry.npmjs.org");
     expect(workflowText).toContain("path: release-assets");
+    expect(workflowText).toContain(
+      "run: npm install --prefix ./packages/maomiagent-npm --ignore-scripts",
+    );
     expect(workflowText).toContain("run: node scripts/assemble-maomiagent-npm-package.mjs");
     expect(workflowText).toContain(
       "MAOMI_AGENT_NPM_ARTIFACT_ROOT: ${{ github.workspace }}/release-assets/npm",
