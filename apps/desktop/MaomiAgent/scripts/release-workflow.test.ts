@@ -19,6 +19,7 @@ describe("desktop-release workflow", () => {
   test("publishes a matrix release for windows, linux, and both macOS architectures", () => {
     expect(workflowText).toContain("prepare-release:");
     expect(workflowText).toContain("publish-release:");
+    expect(workflowText).toContain("publish-npm:");
     expect(workflowText).toContain("strategy:");
     expect(workflowText).toContain("target: win-x64");
     expect(workflowText).toContain("target: linux-x64");
@@ -35,6 +36,16 @@ describe("desktop-release workflow", () => {
     expect(workflowText).toContain("\"should_publish=false\"");
     expect(workflowText).toContain("if: needs.prepare-release.outputs.should_publish == 'true'");
     expect(workflowText).toContain("tag_name: ${{ needs.prepare-release.outputs.tag_name }}");
+  });
+
+  test("uploads portable artifacts and publishes release plus npm packages", () => {
+    expect(workflowText).toContain("path: apps/desktop/MaomiAgent/artifacts/**/*");
+    expect(workflowText).toContain("files: release-assets/release/*");
+    expect(workflowText).toContain("node-version: 22");
+    expect(workflowText).toContain("NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}");
+    expect(workflowText).toContain("npm publish ./packages/maomiagent-npm --access public");
+    expect(workflowText).not.toContain("release-assets/*.tar.zst");
+    expect(workflowText).not.toContain("release-assets/*update.json");
   });
 
   test("does not require object storage or release-admin secrets", () => {

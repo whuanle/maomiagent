@@ -93,7 +93,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: MaomiAgent-release-${{ matrix.target }}
-          path: apps/desktop/MaomiAgent/artifacts/*
+          path: apps/desktop/MaomiAgent/artifacts/**/*
 
   publish-release:
     if: needs.prepare-release.outputs.should_publish == 'true'
@@ -116,4 +116,39 @@ jobs:
           tag_name: ${{ needs.prepare-release.outputs.tag_name }}
           generate_release_notes: true
           prerelease: ${{ needs.prepare-release.outputs.is_prerelease == 'true' }}
-          files: release-assets/*
+          files: release-assets/release/*
+
+  publish-npm:
+    if: needs.prepare-release.outputs.should_publish == 'true'
+    needs:
+      - prepare-release
+      - build
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Download npm artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: MaomiAgent-release-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Assemble npm package
+        env:
+          MAOMI_AGENT_NPM_ARTIFACT_ROOT: ${{ github.workspace }}/release-assets/npm
+          MAOMI_AGENT_NPM_VERSION: ${{ needs.prepare-release.outputs.version }}
+        run: node scripts/assemble-maomiagent-npm-package.mjs
+
+      - name: Publish npm package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish ./packages/maomiagent-npm --access public
