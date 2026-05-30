@@ -13,6 +13,7 @@ import {
   resolvePortableMacosDmgSourcePath,
   resolvePortableReleaseAssetName,
 } from "./build-portable-release-assets";
+import { resolvePortableExportAfterNativePackagingFailure } from "./build-electrobun-bundle";
 
 describe("build-portable-release-assets", () => {
   test("resolves portable release asset names for supported targets", () => {
@@ -227,6 +228,92 @@ describe("build-portable-release-assets", () => {
 
       rmSync(nativeDmgPath, { force: true });
       expect(resolvePortableMacosDmgSourcePath(undefined, bundleRoot)).toBe(siblingDmgPath);
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("continues portable export after native packaging failure on windows", () => {
+    expect(
+      resolvePortableExportAfterNativePackagingFailure({
+        targetPlatform: { os: "win", arch: "x64" },
+        macosReleaseFormat: "app-zip",
+        hasNativeMacosDmgArtifact: false,
+        errorMessage: "native packaging failed",
+      }),
+    ).toEqual({
+      shouldContinuePortableExport: true,
+      warningMessage:
+        "[release] Native win-x64 packaging failed, continuing with portable release export: native packaging failed",
+    });
+  });
+
+  test("continues portable export after native packaging failure on linux", () => {
+    expect(
+      resolvePortableExportAfterNativePackagingFailure({
+        targetPlatform: { os: "linux", arch: "x64" },
+        macosReleaseFormat: "app-zip",
+        hasNativeMacosDmgArtifact: false,
+        errorMessage: "native packaging failed",
+      }),
+    ).toEqual({
+      shouldContinuePortableExport: true,
+      warningMessage:
+        "[release] Native linux-x64 packaging failed, continuing with portable release export: native packaging failed",
+    });
+  });
+
+  test("continues portable export after native packaging failure on macOS app-zip releases", () => {
+    expect(
+      resolvePortableExportAfterNativePackagingFailure({
+        targetPlatform: { os: "macos", arch: "arm64" },
+        macosReleaseFormat: "app-zip",
+        hasNativeMacosDmgArtifact: false,
+        errorMessage: "native packaging failed",
+      }),
+    ).toEqual({
+      shouldContinuePortableExport: true,
+      warningMessage:
+        "[release] Native macos-arm64 packaging failed, continuing with portable release export: native packaging failed",
+    });
+  });
+
+  test("stops portable export after native packaging failure on macOS dmg releases without a native dmg", () => {
+    expect(
+      resolvePortableExportAfterNativePackagingFailure({
+        targetPlatform: { os: "macos", arch: "arm64" },
+        macosReleaseFormat: "dmg",
+        nativeMacosDmgPath: join("tmp", "artifacts", "stable-macos-arm64-MaomiAgent.dmg"),
+        hasNativeMacosDmgArtifact: false,
+        errorMessage: "native packaging failed",
+      }),
+    ).toEqual({
+      shouldContinuePortableExport: false,
+      failureMessage:
+        "Native macos-arm64 desktop release packaging failed and portable dmg export cannot continue because no native dmg artifact is available at tmp\\artifacts\\stable-macos-arm64-MaomiAgent.dmg. Original error: native packaging failed",
+    });
+  });
+
+  test("continues portable export after native packaging failure on macOS dmg releases when the native dmg exists", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "maomi-native-packaging-dmg-decision-"));
+
+    try {
+      const nativeDmgPath = join(tempRoot, "stable-macos-arm64-MaomiAgent.dmg");
+      writeFileSync(nativeDmgPath, "native-dmg");
+
+      expect(
+        resolvePortableExportAfterNativePackagingFailure({
+          targetPlatform: { os: "macos", arch: "arm64" },
+          macosReleaseFormat: "dmg",
+          nativeMacosDmgPath: nativeDmgPath,
+          hasNativeMacosDmgArtifact: existsSync(nativeDmgPath),
+          errorMessage: "native packaging failed",
+        }),
+      ).toEqual({
+        shouldContinuePortableExport: true,
+        nativeMacosDmgPath: nativeDmgPath,
+        warningMessage: `[release] Native macos-arm64 packaging failed, continuing with portable dmg export using existing artifact ${nativeDmgPath}: native packaging failed`,
+      });
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }

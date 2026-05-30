@@ -7,10 +7,6 @@ import {
   normalizeDesktopAppUpdateChannel,
   resolveDesktopAppUpdatePlatform,
 } from "../src/bun/desktop-app-update/config";
-import {
-  buildDesktopNativePackagingFailureMessage,
-  resolveDesktopReleaseArtifactMode,
-} from "./build-electrobun-release-policy";
 import { stageElectrobunHostCli } from "./build-electrobun-host-cli";
 import {
   exportPortableAssets,
@@ -59,10 +55,23 @@ type BundleLayout = {
   bundleBunDir: string;
 };
 
-await main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+type NativePackagingFailureDecision =
+  | {
+    shouldContinuePortableExport: true;
+    warningMessage: string;
+    nativeMacosDmgPath?: string;
+  }
+  | {
+    shouldContinuePortableExport: false;
+    failureMessage: string;
+  };
+
+if (import.meta.main) {
+  await main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}
 
 async function main(): Promise<void> {
   if (buildMode === "release") {
@@ -89,17 +98,18 @@ async function prepareReleaseArtifacts(channel: string): Promise<void> {
   const macosReleaseFormat = normalizeMacosReleaseFormat(
     process.env.MAOMI_DESKTOP_MACOS_RELEASE_FORMAT,
   );
+  const expectedNativeMacosDmgPath = resolveNativeMacosDmgArtifactPath(
+    channel,
+    targetPlatform,
+    macosReleaseFormat,
+  );
   let nativeMacosDmgPath: string | undefined;
   const nativeArtifactRootEntriesBeforePackaging = snapshotArtifactRootEntryNames(artifactRoot);
   let nativeArtifactCleanupPaths: string[] = [];
 
   try {
     await runNativeReleasePackaging();
-    nativeMacosDmgPath = resolveNativeMacosDmgArtifactPath(
-      channel,
-      targetPlatform,
-      macosReleaseFormat,
-    );
+    nativeMacosDmgPath = expectedNativeMacosDmgPath;
     nativeArtifactCleanupPaths = resolveArtifactRootCleanupPaths({
       artifactRoot,
       beforeEntryNames: nativeArtifactRootEntriesBeforePackaging,
@@ -107,21 +117,28 @@ async function prepareReleaseArtifacts(channel: string): Promise<void> {
     });
   } catch (error) {
     const normalizedError = normalizeError(error);
-    const fallbackMode = resolveDesktopReleaseArtifactMode(targetPlatform);
     nativeArtifactCleanupPaths = resolveArtifactRootCleanupPaths({
       artifactRoot,
       beforeEntryNames: nativeArtifactRootEntriesBeforePackaging,
       afterEntryNames: snapshotArtifactRootEntryNames(artifactRoot),
     });
 
-    if (fallbackMode === "native-only") {
-      console.warn(
-        `[release] Native ${targetPlatform.os}-${targetPlatform.arch} packaging failed, continuing with portable release export: ${normalizedError}`,
-      );
-    } else {
-      const failureMessage = buildDesktopNativePackagingFailureMessage(targetPlatform, normalizedError);
-      console.warn(failureMessage);
+    const failureDecision = resolvePortableExportAfterNativePackagingFailure({
+      targetPlatform,
+      macosReleaseFormat,
+      nativeMacosDmgPath: expectedNativeMacosDmgPath,
+      hasNativeMacosDmgArtifact: expectedNativeMacosDmgPath
+        ? existsSync(expectedNativeMacosDmgPath)
+        : false,
+      errorMessage: normalizedError,
+    });
+
+    if (!failureDecision.shouldContinuePortableExport) {
+      throw new Error(failureDecision.failureMessage);
     }
+
+    nativeMacosDmgPath = failureDecision.nativeMacosDmgPath;
+    console.warn(failureDecision.warningMessage);
   }
 
   await preparePortableReleaseArtifacts(channel, targetPlatform, {
@@ -461,6 +478,37 @@ function resolveNativeMacosDmgArtifactPath(
       format: "dmg",
     }),
   );
+}
+
+export function resolvePortableExportAfterNativePackagingFailure(input: {
+  targetPlatform: DesktopTargetPlatform;
+  macosReleaseFormat: ReturnType<typeof normalizeMacosReleaseFormat>;
+  nativeMacosDmgPath?: string;
+  hasNativeMacosDmgArtifact: boolean;
+  errorMessage: string;
+}): NativePackagingFailureDecision {
+  const platformLabel = `${input.targetPlatform.os}-${input.targetPlatform.arch}`;
+  const normalizedError = input.errorMessage.trim() || "unknown error";
+
+  if (input.targetPlatform.os === "macos" && input.macosReleaseFormat === "dmg") {
+    if (input.hasNativeMacosDmgArtifact && input.nativeMacosDmgPath) {
+      return {
+        shouldContinuePortableExport: true,
+        nativeMacosDmgPath: input.nativeMacosDmgPath,
+        warningMessage: `[release] Native ${platformLabel} packaging failed, continuing with portable dmg export using existing artifact ${input.nativeMacosDmgPath}: ${normalizedError}`,
+      };
+    }
+
+    return {
+      shouldContinuePortableExport: false,
+      failureMessage: `Native ${platformLabel} desktop release packaging failed and portable dmg export cannot continue because no native dmg artifact is available${input.nativeMacosDmgPath ? ` at ${input.nativeMacosDmgPath}` : ""}. Original error: ${normalizedError}`,
+    };
+  }
+
+  return {
+    shouldContinuePortableExport: true,
+    warningMessage: `[release] Native ${platformLabel} packaging failed, continuing with portable release export: ${normalizedError}`,
+  };
 }
 
 function resolveElectrobunPlatformDist(os: string, arch: string): string {
