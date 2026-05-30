@@ -15,6 +15,7 @@ import { stageElectrobunHostCli } from "./build-electrobun-host-cli";
 import {
   exportPortableAssets,
   normalizeMacosReleaseFormat,
+  resolveArtifactRootCleanupPaths,
   resolvePortableReleaseAssetName,
 } from "./build-portable-release-assets";
 
@@ -84,10 +85,13 @@ async function main(): Promise<void> {
 
 async function prepareReleaseArtifacts(channel: string): Promise<void> {
   const targetPlatform = resolveDesktopAppUpdatePlatform();
+  const artifactRoot = join(projectRoot, artifactFolder);
   const macosReleaseFormat = normalizeMacosReleaseFormat(
     process.env.MAOMI_DESKTOP_MACOS_RELEASE_FORMAT,
   );
   let nativeMacosDmgPath: string | undefined;
+  const nativeArtifactRootEntriesBeforePackaging = snapshotArtifactRootEntryNames(artifactRoot);
+  let nativeArtifactCleanupPaths: string[] = [];
 
   try {
     await runNativeReleasePackaging();
@@ -96,21 +100,34 @@ async function prepareReleaseArtifacts(channel: string): Promise<void> {
       targetPlatform,
       macosReleaseFormat,
     );
+    nativeArtifactCleanupPaths = resolveArtifactRootCleanupPaths({
+      artifactRoot,
+      beforeEntryNames: nativeArtifactRootEntriesBeforePackaging,
+      afterEntryNames: snapshotArtifactRootEntryNames(artifactRoot),
+    });
   } catch (error) {
     const normalizedError = normalizeError(error);
     const fallbackMode = resolveDesktopReleaseArtifactMode(targetPlatform);
-    const failureMessage = buildDesktopNativePackagingFailureMessage(targetPlatform, normalizedError);
+    nativeArtifactCleanupPaths = resolveArtifactRootCleanupPaths({
+      artifactRoot,
+      beforeEntryNames: nativeArtifactRootEntriesBeforePackaging,
+      afterEntryNames: snapshotArtifactRootEntryNames(artifactRoot),
+    });
 
     if (fallbackMode === "native-only") {
-      throw new Error(failureMessage);
+      console.warn(
+        `[release] Native ${targetPlatform.os}-${targetPlatform.arch} packaging failed, continuing with portable release export: ${normalizedError}`,
+      );
+    } else {
+      const failureMessage = buildDesktopNativePackagingFailureMessage(targetPlatform, normalizedError);
+      console.warn(failureMessage);
     }
-
-    console.warn(failureMessage);
   }
 
   await preparePortableReleaseArtifacts(channel, targetPlatform, {
     macosReleaseFormat,
     nativeMacosDmgPath,
+    nativeArtifactCleanupPaths,
   });
 }
 
@@ -145,6 +162,7 @@ async function preparePortableReleaseArtifacts(
   input: {
     macosReleaseFormat: ReturnType<typeof normalizeMacosReleaseFormat>;
     nativeMacosDmgPath?: string;
+    nativeArtifactCleanupPaths: string[];
   },
 ): Promise<void> {
   const releasePlatformPrefix = formatPlatformPrefix(channel, targetPlatform.os, targetPlatform.arch);
@@ -171,7 +189,7 @@ async function preparePortableReleaseArtifacts(
     macosReleaseFormat: input.macosReleaseFormat,
     nativeMacosDmgPath: input.nativeMacosDmgPath,
   });
-  removeLegacyNativeReleaseArtifacts(artifactRoot);
+  removeArtifactRootEntries(input.nativeArtifactCleanupPaths);
 
   console.log(
     `[release] exported ${targetPlatform.os}-${targetPlatform.arch} portable release asset ${portableAssets.releaseAssetPath}`,
@@ -491,17 +509,17 @@ function formatPlatformPrefix(channel: string, os: string, arch: string): string
   return `${channel}-${os}-${arch}`;
 }
 
-function removeLegacyNativeReleaseArtifacts(artifactRoot: string): void {
+function snapshotArtifactRootEntryNames(artifactRoot: string): string[] {
   if (!existsSync(artifactRoot)) {
-    return;
+    return [];
   }
 
-  for (const entryName of readdirSync(artifactRoot)) {
-    if (entryName === "release" || entryName === "npm") {
-      continue;
-    }
+  return readdirSync(artifactRoot);
+}
 
-    rmSync(join(artifactRoot, entryName), { recursive: true, force: true });
+function removeArtifactRootEntries(paths: readonly string[]): void {
+  for (const path of paths) {
+    rmSync(path, { recursive: true, force: true });
   }
 }
 

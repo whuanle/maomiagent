@@ -12,6 +12,17 @@ type PortableTargetPlatform = {
   arch: string;
 };
 
+type PortableArchiveInput = {
+  sourceRoot: string;
+  sourceEntryName: string;
+  destinationPath: string;
+};
+
+type PortableArchiveCommand = {
+  command: string[];
+  cwd: string;
+};
+
 export function resolvePortableReleaseAssetName(input: {
   channel: string;
   os: PortableTargetOs;
@@ -79,6 +90,7 @@ export async function exportPortableAssets(input: {
   targetPlatform: PortableTargetPlatform;
   macosReleaseFormat?: MacosReleaseFormat;
   nativeMacosDmgPath?: string;
+  createArchive?: (input: PortableArchiveInput) => Promise<void>;
 }): Promise<{
   releaseRoot: string;
   npmRoot: string;
@@ -98,7 +110,7 @@ export async function exportPortableAssets(input: {
   writePortableLaunchEntry(input.bundleRoot, input.targetPlatform.os);
 
   const npmArchivePath = join(npmRoot, resolvePortableNpmArchiveName(input.targetPlatform));
-  await createZipArchive({
+  await (input.createArchive ?? createPortableArchive)({
     sourceRoot: dirname(input.bundleRoot),
     sourceEntryName: basename(input.bundleRoot),
     destinationPath: npmArchivePath,
@@ -175,41 +187,8 @@ async function createZipArchive(input: {
   destinationPath: string;
 }): Promise<void> {
   rmSync(input.destinationPath, { force: true });
-
-  if (process.platform === "win32") {
-    await runCommand(
-      [
-        "powershell",
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        `Compress-Archive -LiteralPath '${escapePowerShellLiteral(input.sourceEntryName)}' -DestinationPath '${escapePowerShellLiteral(resolve(input.destinationPath))}' -Force`,
-      ],
-      input.sourceRoot,
-    );
-    return;
-  }
-
-  if (process.platform === "darwin" && input.sourceEntryName.endsWith(".app")) {
-    await runCommand(
-      [
-        "ditto",
-        "-c",
-        "-k",
-        "--keepParent",
-        input.sourceEntryName,
-        resolve(input.destinationPath),
-      ],
-      input.sourceRoot,
-    );
-    return;
-  }
-
-  await runCommand(
-    ["zip", "-y", "-r", "-9", resolve(input.destinationPath), input.sourceEntryName],
-    input.sourceRoot,
-  );
+  const archiveCommand = resolvePortableArchiveCommand(process.platform, input);
+  await runCommand(archiveCommand.command, archiveCommand.cwd);
 }
 
 async function runCommand(command: string[], cwd: string): Promise<void> {
@@ -233,7 +212,45 @@ function escapePowerShellLiteral(value: string): string {
   return value.replaceAll("'", "''");
 }
 
-function resolvePortableMacosDmgSourcePath(
+export function resolvePortableArchiveCommand(
+  hostPlatform: NodeJS.Platform,
+  input: PortableArchiveInput,
+): PortableArchiveCommand {
+  if (hostPlatform === "win32") {
+    return {
+      command: [
+        "powershell",
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `Compress-Archive -LiteralPath '${escapePowerShellLiteral(input.sourceEntryName)}' -DestinationPath '${escapePowerShellLiteral(resolve(input.destinationPath))}' -Force`,
+      ],
+      cwd: input.sourceRoot,
+    };
+  }
+
+  if (hostPlatform === "darwin" && input.sourceEntryName.endsWith(".app")) {
+    return {
+      command: [
+        "ditto",
+        "-c",
+        "-k",
+        "--keepParent",
+        input.sourceEntryName,
+        resolve(input.destinationPath),
+      ],
+      cwd: input.sourceRoot,
+    };
+  }
+
+  return {
+    command: ["zip", "-y", "-r", "-9", resolve(input.destinationPath), input.sourceEntryName],
+    cwd: input.sourceRoot,
+  };
+}
+
+export function resolvePortableMacosDmgSourcePath(
   nativeMacosDmgPath: string | undefined,
   bundleRoot: string,
 ): string {
@@ -253,4 +270,20 @@ function resolvePortableMacosDmgSourcePath(
   }
 
   throw new Error(`Missing macOS dmg build output: ${siblingDmgPath}`);
+}
+
+export function resolveArtifactRootCleanupPaths(input: {
+  artifactRoot: string;
+  beforeEntryNames: readonly string[];
+  afterEntryNames: readonly string[];
+}): string[] {
+  const previousEntries = new Set(input.beforeEntryNames);
+
+  return input.afterEntryNames
+    .filter((entryName) => !previousEntries.has(entryName))
+    .map((entryName) => join(input.artifactRoot, entryName));
+}
+
+async function createPortableArchive(input: PortableArchiveInput): Promise<void> {
+  await createZipArchive(input);
 }
