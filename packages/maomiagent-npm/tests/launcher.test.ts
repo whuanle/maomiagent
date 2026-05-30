@@ -1,10 +1,15 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { ensureRuntimeExtracted } from "../lib/extract-runtime.js";
 import { launchGui } from "../lib/launch-gui.js";
-import { resolveRuntimeBundleName, resolveTargetPlatform } from "../lib/platform.js";
+import {
+  resolveLaunchPath,
+  resolveRuntimeBundleName,
+  resolveTargetPlatform,
+} from "../lib/platform.js";
 
 let tempRoot = "";
 
@@ -76,5 +81,56 @@ describe("launchGui", () => {
       launchPath,
     });
     expect(consoleSpy).toHaveBeenCalledWith(launchPath);
+  });
+});
+
+describe("ensureRuntimeExtracted", () => {
+  test("extracts into runtime/active/<os>-<arch>, writes install metadata, and reuses existing installs", async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "maomiagent-runtime-"));
+
+    const target = resolveTargetPlatform();
+    const bundleName = resolveRuntimeBundleName(target);
+    const bundlePath = path.join(tempRoot, "runtime-bundles", bundleName);
+    const runtimeRoot = path.join(tempRoot, "runtime", "active", `${target.os}-${target.arch}`);
+    const launchPath = resolveLaunchPath(runtimeRoot, target);
+    const markerPath = path.join(runtimeRoot, ".installed.json");
+    let extractCalls = 0;
+
+    await mkdir(path.dirname(bundlePath), { recursive: true });
+    await writeFile(bundlePath, "bundle", "utf8");
+
+    const extractRuntime = async (sourcePath, options) => {
+      extractCalls += 1;
+      expect(sourcePath).toBe(bundlePath);
+      expect(options.dir).toBe(runtimeRoot);
+      await mkdir(path.dirname(launchPath), { recursive: true });
+      await writeFile(launchPath, "launcher", "utf8");
+    };
+
+    const firstInstall = await ensureRuntimeExtracted(tempRoot, {
+      target,
+      extractRuntime,
+    });
+
+    expect(firstInstall).toEqual({
+      runtimeRoot,
+      target,
+    });
+    expect(extractCalls).toBe(1);
+
+    const marker = JSON.parse(await readFile(markerPath, "utf8"));
+    expect(marker.bundleName).toBe(bundleName);
+    expect(marker.target).toEqual(target);
+
+    const secondInstall = await ensureRuntimeExtracted(tempRoot, {
+      target,
+      extractRuntime,
+    });
+
+    expect(secondInstall).toEqual({
+      runtimeRoot,
+      target,
+    });
+    expect(extractCalls).toBe(1);
   });
 });

@@ -2,16 +2,24 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import extract from "extract-zip";
-
 import {
   resolveLaunchPath,
   resolveRuntimeBundleName,
   resolveTargetPlatform,
 } from "./platform.js";
 
-export async function ensureRuntimeExtracted(packageRoot) {
-  const target = resolveTargetPlatform();
+let extractRuntimeLoader;
+
+async function loadExtractRuntime() {
+  if (!extractRuntimeLoader) {
+    extractRuntimeLoader = import("extract-zip").then((module) => module.default);
+  }
+
+  return extractRuntimeLoader;
+}
+
+export async function ensureRuntimeExtracted(packageRoot, options = {}) {
+  const target = options.target ?? resolveTargetPlatform();
   const bundleName = resolveRuntimeBundleName(target);
   const runtimeRoot = path.join(packageRoot, "runtime", "active", `${target.os}-${target.arch}`);
   const bundlePath = path.join(packageRoot, "runtime-bundles", bundleName);
@@ -25,7 +33,8 @@ export async function ensureRuntimeExtracted(packageRoot) {
   await rm(runtimeRoot, { recursive: true, force: true });
   await mkdir(runtimeRoot, { recursive: true });
 
-  await extract(bundlePath, { dir: runtimeRoot });
+  const extractRuntime = options.extractRuntime ?? await loadExtractRuntime();
+  await extractRuntime(bundlePath, { dir: runtimeRoot });
   await writeFile(
     markerPath,
     `${JSON.stringify({
