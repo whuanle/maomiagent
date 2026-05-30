@@ -7,6 +7,10 @@ import {
   normalizeDesktopAppUpdateChannel,
   resolveDesktopAppUpdatePlatform,
 } from "../src/bun/desktop-app-update/config";
+import {
+  buildDesktopNativePackagingFailureMessage,
+  resolveDesktopReleaseArtifactMode,
+} from "./build-electrobun-release-policy";
 
 const APP_NAME = "MaomiAgent";
 const APP_IDENTIFIER = "com.maomiagent.desktop";
@@ -76,17 +80,23 @@ async function main(): Promise<void> {
 }
 
 async function prepareReleaseArtifacts(channel: string): Promise<void> {
+  const targetPlatform = resolveDesktopAppUpdatePlatform();
   logReleaseStep(`attempting native Electrobun packaging for ${channel}`);
   try {
     await runCommand(["bun", "x", "electrobun", "build", `--env=${ELECTROBUN_STABLE_ENV}`], undefined, projectRoot);
     return;
   } catch (error) {
-    console.warn(
-      `[release] Stable Electrobun packaging failed, retrying with bundle-only export: ${normalizeError(error)}`,
-    );
+    const normalizedError = normalizeError(error);
+    const fallbackMode = resolveDesktopReleaseArtifactMode(targetPlatform);
+    const failureMessage = buildDesktopNativePackagingFailureMessage(targetPlatform, normalizedError);
+
+    if (fallbackMode === "native-only") {
+      throw new Error(failureMessage);
+    }
+
+    console.warn(failureMessage);
   }
 
-  const targetPlatform = resolveDesktopAppUpdatePlatform();
   logReleaseStep(`switching to bundle-only export for ${formatTargetPlatform(targetPlatform)}`);
   await prepareBundleOnlyReleaseArtifacts(channel, targetPlatform);
 }
