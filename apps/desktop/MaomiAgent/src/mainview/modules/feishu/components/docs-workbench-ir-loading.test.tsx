@@ -25,6 +25,10 @@ describe("Feishu docs workbench IR loading bridge", () => {
   });
 
   test("workbench opens and pulls workspace markdown for visual preview", async () => {
+    const feishuLib = await source("src/mainview/lib/feishu.ts");
+    const desktopFeishuLib = await source("src/mainview/lib/desktop-feishu.ts");
+    const windowBridge = await source("src/mainview/lib/electrobun-window-bridge.ts");
+    const bunIndex = await source("src/bun/index.ts");
     const workbench = await source("src/mainview/modules/feishu/components/docs-workbench.tsx");
     const draftBuilder = await source("src/mainview/modules/feishu/components/feishu-doc-chat-draft.ts");
     const page = await source("src/mainview/modules/feishu/page.tsx");
@@ -38,6 +42,10 @@ describe("Feishu docs workbench IR loading bridge", () => {
     expect(workbench).toContain("draftText: buildFeishuDocChatDraftText({");
     expect(workbench).toContain("relativeUpdate: formatRelativeDocUpdateTime(target.doc?.updateTime, props.t)");
     expect(workbench).toContain("const result = await pullFeishuWorkspaceDoc(props.baseUrl, props.workspaceId, currentDoc.docId)");
+    expect(workbench).toContain('import { FeishuDocPermissionInspectModal } from "./feishu-doc-permission-inspect-modal"');
+    expect(workbench).toContain("inspectFeishuWorkspaceDocPermissions(props.baseUrl, props.workspaceId, currentDoc.docId)");
+    expect(workbench).toContain('props.t("飞书页.文档.按钮.权限自检")');
+    expect(workbench).toContain("whiteboardRecovery.permissionDeniedCount");
     expect(workbench).toContain("preloadSubtree: options?.preloadSubtree");
     expect(workbench).toContain("const nextNodes = result.subtree?.length");
     expect(workbench).toContain("mapTreeSnapshotNodes(result.subtree)");
@@ -88,6 +96,10 @@ describe("Feishu docs workbench IR loading bridge", () => {
     expect(workbench).not.toContain("if (props.workspaceId && !item.cache)");
     expect(workbench).not.toContain("openFeishuDocIR(props.baseUrl, { workspaceId: props.workspaceId, docId })");
     expect(workbench).not.toContain("pullFeishuDocIR(props.baseUrl");
+    expect(feishuLib).toContain("export async function inspectFeishuWorkspaceDocPermissions");
+    expect(desktopFeishuLib).toContain("inspectDesktopFeishuWorkspaceDocPermissions");
+    expect(windowBridge).toContain("rpc.request.inspectDesktopFeishuWorkspaceDocPermissions({ workspaceId, docId })");
+    expect(bunIndex).toContain("resolveDesktopFeishuQueryPort(host).inspectWorkspaceDocPermissions({ workspaceId, docId })");
   });
 
   test("workbench does not expose browser-open action without a reliable document url source", async () => {

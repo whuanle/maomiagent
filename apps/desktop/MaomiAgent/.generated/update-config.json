@@ -1,0 +1,9 @@
+{
+  "provider": "github",
+  "owner": "whuanle",
+  "repo": "maomiagent",
+  "channel": "stable",
+  "os": "win",
+  "arch": "x64",
+  "includePrerelease": false
+}

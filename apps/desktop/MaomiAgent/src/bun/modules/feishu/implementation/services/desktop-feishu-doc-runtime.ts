@@ -6,6 +6,7 @@ import type {
   FeishuDocCacheStateView,
   FeishuDocContentView,
   FeishuDocMediaPreviewResult,
+  FeishuDocPullDiagnosticsView,
   FeishuDocTreeBranchInput,
   FeishuDocTreeBranchResult,
   FeishuDocTreeLoadInput,
@@ -56,9 +57,12 @@ import { assessFeishuDocPush } from "./feishu-doc-push-assessor";
 import { normalizeFeishuDocPermissionError } from "./feishu-doc-openapi-permissions";
 import { FeishuDocRemoteMarkdownApi } from "./feishu-doc-remote-markdown-api";
 import { FeishuDocRemotePatchApi } from "./feishu-doc-remote-patch-api";
+import { summarizeWhiteboardRecoveryDiagnostics } from "./feishu-doc-permission-diagnostics";
 import {
   applyReversibleMermaidPushResult,
   buildReversibleMermaidPushPlan,
+  computeReversibleSourceChecksum,
+  parseMermaidFences,
 } from "./feishu-doc-whiteboard-reversible";
 import { FeishuDocWorkspaceRuntime } from "./feishu-doc-workspace-runtime";
 import { buildFeishuDocCurrentIR } from "./feishu-doc-working-copy-compiler";
@@ -127,6 +131,7 @@ type FeishuWorkspaceRemoteContent = {
   resolvedDocId?: string;
   documentIdType?: "document_id" | "wiki_node_token";
   source?: FeishuDocSourceSnapshot;
+  diagnostics?: FeishuDocPullDiagnosticsView;
 };
 
 const FEISHU_OPEN_API_BASE_URL = "https://open.feishu.cn/open-apis";
@@ -162,6 +167,45 @@ const FEISHU_NATIVE_MARKDOWN_TAG_NAMES = [
 ] as const;
 const FEISHU_NATIVE_MARKDOWN_TAG_PATTERN = new RegExp(
   `<\\/?(?:feishu-)?(?:${FEISHU_NATIVE_MARKDOWN_TAG_NAMES.map((name) => escapeRegExp(name)).join("|")})\\b`,
+  "i",
+);
+const FEISHU_DOCS_AI_COMPATIBLE_NATIVE_MARKDOWN_TAG_NAMES = [
+  "callout",
+  "grid",
+  "grid-column",
+  "divider",
+  "quote-container",
+  "table",
+  "table-cell",
+  "view",
+  "iframe",
+  "whiteboard",
+  "mindnote",
+  "diagram",
+  "sheet",
+  "bitable",
+  "board",
+  "chat-card",
+  "link-preview",
+  "jira-issue",
+  "add-ons",
+  "isv",
+  "okr",
+  "source-synced",
+  "reference-synced",
+  "ai-template",
+] as const;
+const FEISHU_DOCS_AI_COMPATIBLE_NATIVE_MARKDOWN_TAG_PATTERN = new RegExp(
+  `<\\/?(?:feishu-)?(?:${FEISHU_DOCS_AI_COMPATIBLE_NATIVE_MARKDOWN_TAG_NAMES.map((name) => escapeRegExp(name)).join("|")})\\b`,
+  "i",
+);
+const FEISHU_DOCS_AI_INCOMPATIBLE_NATIVE_MARKDOWN_TAG_NAMES = [
+  "undefined",
+  "image",
+  "file",
+] as const;
+const FEISHU_DOCS_AI_INCOMPATIBLE_NATIVE_MARKDOWN_TAG_PATTERN = new RegExp(
+  `<\\/?(?:feishu-)?(?:${FEISHU_DOCS_AI_INCOMPATIBLE_NATIVE_MARKDOWN_TAG_NAMES.map((name) => escapeRegExp(name)).join("|")})\\b`,
   "i",
 );
 const FEISHU_WORKING_COPY_MARKER_PATTERN = /<!--feishu:block:[^>]+-->/i;
@@ -205,12 +249,51 @@ function containsFeishuNativeMarkdownTag(markdown: string): boolean {
   return FEISHU_NATIVE_MARKDOWN_TAG_PATTERN.test(markdown);
 }
 
+function containsDocsAiCompatibleNativeMarkdownTag(markdown: string): boolean {
+  return FEISHU_DOCS_AI_COMPATIBLE_NATIVE_MARKDOWN_TAG_PATTERN.test(markdown);
+}
+
+function containsDocsAiIncompatibleNativeMarkdownTag(markdown: string): boolean {
+  return FEISHU_DOCS_AI_INCOMPATIBLE_NATIVE_MARKDOWN_TAG_PATTERN.test(markdown);
+}
+
 function containsFeishuWorkingCopyMarker(markdown: string): boolean {
   return FEISHU_WORKING_COPY_MARKER_PATTERN.test(markdown);
 }
 
 function containsMarkdownImage(markdown: string): boolean {
   return MARKDOWN_IMAGE_PATTERN.test(markdown);
+}
+
+function escapeMarkdownAttribute(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function extractMarkdownAttribute(attrs: string, name: string): string | null {
+  const match = new RegExp(`\\b${escapeRegExp(name)}\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)')`, "i").exec(attrs);
+  const value = (match?.[1] ?? match?.[2] ?? "").trim();
+  return value.length > 0 ? value : null;
+}
+
+function normalizeDocsAiWhiteboardPlaceholders(markdown: string): string {
+  const rewritePlaceholder = (attrs: string, original: string): string => {
+    const token = extractMarkdownAttribute(attrs, "token")
+      ?? extractMarkdownAttribute(attrs, "whiteboard_token")
+      ?? extractMarkdownAttribute(attrs, "whiteboardToken");
+    if (!token) {
+      return original;
+    }
+
+    return `<whiteboard token="${escapeMarkdownAttribute(token)}" />`;
+  };
+
+  return markdown
+    .replace(/<(?:board|whiteboard)\b([^>]*)\/>/gi, (match, attrs: string) => rewritePlaceholder(attrs, match))
+    .replace(/<(?:board|whiteboard)\b([^>]*)>\s*<\/(?:board|whiteboard)>/gi, (match, attrs: string) => rewritePlaceholder(attrs, match));
 }
 
 function looksLikeFeishuDocsMermaidSource(source: string): boolean {
@@ -292,16 +375,35 @@ function transformMermaidMarkdownBlocks(markdown: string): {
   };
 }
 
+function normalizeDocsAiOverwriteMarkdown(markdown: string): {
+  markdown: string;
+  containsMermaidBlock: boolean;
+} {
+  const transformed = transformMermaidMarkdownBlocks(markdown);
+  return {
+    markdown: normalizeDocsAiWhiteboardPlaceholders(transformed.markdown),
+    containsMermaidBlock: transformed.containsMermaidBlock,
+  };
+}
+
 function shouldUseDocsAiMarkdownOverwrite(input: {
   draftMarkdown: string;
   baselineMarkdown: string;
   baseIr?: FeishuDocIR | null;
 }): boolean {
-  if (transformMermaidMarkdownBlocks(input.draftMarkdown).containsMermaidBlock) {
+  if (containsDocsAiCompatibleNativeMarkdownTag(input.draftMarkdown)) {
     return true;
   }
 
-  if (transformMermaidMarkdownBlocks(input.baselineMarkdown).containsMermaidBlock) {
+  if (containsDocsAiCompatibleNativeMarkdownTag(input.baselineMarkdown)) {
+    return true;
+  }
+
+  if (normalizeDocsAiOverwriteMarkdown(input.draftMarkdown).containsMermaidBlock) {
+    return true;
+  }
+
+  if (normalizeDocsAiOverwriteMarkdown(input.baselineMarkdown).containsMermaidBlock) {
     return true;
   }
 
@@ -340,9 +442,82 @@ function createDocsAiMarkdownOverwritePlaceholderIr(input: {
   documentId: string;
   title: string;
   markdown: string;
+  newBlocks?: Array<{
+    blockId: string;
+    blockType?: string;
+    blockToken?: string;
+  }>;
   documentIdType: "document_id" | "wiki_node_token";
   nodeToken?: string;
 }): FeishuDocIR {
+  const pulledAt = new Date().toISOString();
+  const mermaidFences = parseMermaidFences(input.markdown);
+  const nextBlocks: FeishuDocIR["blocks"] = {
+    [input.documentId]: {
+      id: input.documentId,
+      type: "page",
+      parentId: null,
+      children: [],
+      editable: false,
+      text: [],
+      resource: null,
+      attrs: {
+        pushStrategy: FEISHU_DOCS_AI_OVERWRITE_STRATEGY,
+      },
+      raw: {
+        pushStrategy: FEISHU_DOCS_AI_OVERWRITE_STRATEGY,
+      },
+    },
+  };
+  const nextAssets: FeishuDocIR["assets"] = {};
+  const whiteboardBlocks = (input.newBlocks ?? [])
+    .filter((block) => Boolean(block.blockToken))
+    .map((block, index) => ({
+      blockId: block.blockId || `docs_ai_whiteboard_${index + 1}`,
+      blockType: resolveDocsAiWhiteboardPlaceholderType(block.blockType),
+      blockToken: block.blockToken!.trim(),
+    }))
+    .filter((block) => block.blockToken.length > 0);
+
+  for (const [index, block] of whiteboardBlocks.entries()) {
+    nextBlocks[input.documentId]!.children.push(block.blockId);
+    nextBlocks[block.blockId] = {
+      id: block.blockId,
+      type: block.blockType,
+      parentId: input.documentId,
+      children: [],
+      editable: true,
+      text: [],
+      resource: { token: block.blockToken, kind: "whiteboard" },
+      attrs: {},
+      raw: {},
+    };
+
+    const mermaidFence = mermaidFences[index];
+    nextAssets[block.blockToken] = {
+      token: block.blockToken,
+      kind: "whiteboard",
+      mime: "",
+      cacheKey: "",
+      status: "missing",
+      localPath: "",
+      checksum: "",
+      ...(mermaidFence
+        ? {
+            reversible: {
+              format: "mermaid",
+              source: mermaidFence.source,
+              sourceChecksum: computeReversibleSourceChecksum(mermaidFence.source),
+              ordinal: index,
+              origin: "docs_ai_markdown" as const,
+              state: "mermaid" as const,
+              lastResolvedAt: pulledAt,
+            },
+          }
+        : {}),
+    };
+  }
+
   return {
     schemaVersion: 1,
     document: {
@@ -350,35 +525,146 @@ function createDocsAiMarkdownOverwritePlaceholderIr(input: {
       title: input.title,
       revisionId: "",
       rootBlockId: input.documentId,
-      pulledAt: new Date().toISOString(),
+      pulledAt,
       source: {
         documentIdType: input.documentIdType,
         ...(input.documentIdType === "wiki_node_token" && input.nodeToken ? { nodeToken: input.nodeToken } : {}),
       },
     },
-    blocks: {
-      [input.documentId]: {
-        id: input.documentId,
-        type: "page",
-        parentId: null,
-        children: [],
-        editable: false,
-        text: [],
-        resource: null,
-        attrs: {
-          pushStrategy: FEISHU_DOCS_AI_OVERWRITE_STRATEGY,
-        },
-        raw: {
-          pushStrategy: FEISHU_DOCS_AI_OVERWRITE_STRATEGY,
-        },
-      },
-    },
-    assets: {},
+    blocks: nextBlocks,
+    assets: nextAssets,
     integrity: {
       contentHash: createMarkdownChecksum(input.markdown),
       rawHash: createMarkdownChecksum(`${FEISHU_DOCS_AI_OVERWRITE_STRATEGY}:${input.markdown}`),
     },
   };
+}
+
+function resolveDocsAiWhiteboardPlaceholderType(blockType: string | undefined): "whiteboard" | "board" {
+  const normalized = (blockType ?? "").trim().toLowerCase();
+  if (normalized === "43" || normalized === "board") {
+    return "board";
+  }
+  return "whiteboard";
+}
+
+function adjustPullDiagnosticsAfterCachedWhiteboardReuse(
+  diagnostics: FeishuDocPullDiagnosticsView | undefined,
+  reusedWhiteboardTokens: string[],
+): FeishuDocPullDiagnosticsView | undefined {
+  if (!diagnostics?.whiteboardRecovery || reusedWhiteboardTokens.length === 0) {
+    return diagnostics;
+  }
+
+  const reused = new Set(reusedWhiteboardTokens);
+  const remainingEntries = diagnostics.whiteboardRecovery.entries.filter((entry) => !reused.has(entry.token));
+  if (remainingEntries.length === diagnostics.whiteboardRecovery.entries.length) {
+    return diagnostics;
+  }
+
+  return {
+    ...diagnostics,
+    whiteboardRecovery: summarizeWhiteboardRecoveryDiagnostics({
+      recoveredCount: diagnostics.whiteboardRecovery.recoveredCount + reusedWhiteboardTokens.length,
+      entries: remainingEntries,
+    }),
+  };
+}
+
+function restoreMermaidWhiteboardsFromMarkdown(input: {
+  ir: FeishuDocIR;
+  markdown: string;
+  origin: "docs_ai_markdown" | "whiteboard_code_export";
+  resolvedAt: string;
+}): { ir: FeishuDocIR; reusedWhiteboardTokens: string[] } {
+  const orderedTokens = collectWhiteboardTokensInOrder(input.ir);
+  if (orderedTokens.length === 0) {
+    return {
+      ir: input.ir,
+      reusedWhiteboardTokens: [],
+    };
+  }
+  if (orderedTokens.some((token) => Boolean(input.ir.assets[token]?.reversible))) {
+    return {
+      ir: input.ir,
+      reusedWhiteboardTokens: [],
+    };
+  }
+
+  const fences = parseMermaidFences(input.markdown);
+  if (fences.length !== orderedTokens.length) {
+    return {
+      ir: input.ir,
+      reusedWhiteboardTokens: [],
+    };
+  }
+
+  const nextAssets = { ...input.ir.assets };
+  for (const [index, token] of orderedTokens.entries()) {
+    const asset = nextAssets[token];
+    const fence = fences[index];
+    if (!asset || !fence) {
+      return {
+        ir: input.ir,
+        reusedWhiteboardTokens: [],
+      };
+    }
+
+    nextAssets[token] = {
+      ...asset,
+      reversible: {
+        format: "mermaid",
+        source: fence.source,
+        sourceChecksum: computeReversibleSourceChecksum(fence.source),
+        ordinal: index,
+        origin: input.origin,
+        state: "mermaid",
+        lastResolvedAt: input.resolvedAt,
+      },
+    };
+  }
+
+  return {
+    ir: {
+      ...input.ir,
+      assets: nextAssets,
+    },
+    reusedWhiteboardTokens: orderedTokens,
+  };
+}
+
+function collectWhiteboardTokensInOrder(ir: FeishuDocIR): string[] {
+  const tokens: string[] = [];
+  const seenBlocks = new Set<string>();
+  const seenTokens = new Set<string>();
+
+  const walk = (blockId: string): void => {
+    if (seenBlocks.has(blockId)) {
+      return;
+    }
+    seenBlocks.add(blockId);
+
+    const block = ir.blocks[blockId];
+    if (!block) {
+      return;
+    }
+
+    if (
+      (block.type === "whiteboard" || block.type === "board" || block.type === "diagram")
+      && block.resource?.token
+      && !seenTokens.has(block.resource.token)
+    ) {
+      seenTokens.add(block.resource.token);
+      tokens.push(block.resource.token);
+    }
+
+    for (const childId of block.children) {
+      walk(childId);
+    }
+  };
+
+  walk(ir.document.rootBlockId);
+  return tokens;
 }
 
 function findUnsupportedMarkdownReplaceBlockType(ir: FeishuDocIR): string | null {
@@ -777,6 +1063,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
     existing?: FeishuDocContentView | null;
     cache?: FeishuDocCacheStateView;
     message?: string;
+    diagnostics?: FeishuDocContentView["diagnostics"];
   }): FeishuDocContentView {
     const title = input.title?.trim()
       ? input.title.trim()
@@ -786,6 +1073,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
     const analysis = input.existing?.analysis ?? DEFAULT_FEISHU_DOC_ANALYSIS;
     const message = input.message ?? input.existing?.message;
     const cache = input.cache ?? input.existing?.cache;
+    const diagnostics = input.diagnostics ?? input.existing?.diagnostics;
     const resolvedDocId = trimText(input.resolvedDocId)
       ?? trimText(cache?.resolvedDocId)
       ?? trimText(input.existing?.resolvedDocId);
@@ -810,6 +1098,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       ...(resolvedDocId ? { resolvedDocId } : {}),
       ...(message ? { message } : {}),
       ...(cache ? { cache } : {}),
+      ...(diagnostics ? { diagnostics } : {}),
     };
   }
 
@@ -1040,21 +1329,125 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       workspaceRoot,
       ir: remoteIR,
     });
-    const markdown = bundle?.content.markdown?.trimEnd() || feishuDocIRToSourceMarkdown(hydratedIR).trimEnd();
+    const merged = await this.reuseCachedReversibleWhiteboards({
+      workspaceRoot,
+      docId: input.docId,
+      ir: hydratedIR,
+    });
+    const storedDoc = merged.reusedWhiteboardTokens.length === 0
+      ? await this.readStoredDoc(input.docId)
+      : null;
+    const restoredFromStore = storedDoc
+      && storedDoc.cache?.hasLocalChanges !== true
+      && storedDoc.markdown.trim()
+      ? restoreMermaidWhiteboardsFromMarkdown({
+          ir: merged.ir,
+          markdown: storedDoc.markdown,
+          origin: "docs_ai_markdown",
+          resolvedAt: new Date().toISOString(),
+        })
+      : {
+          ir: merged.ir,
+          reusedWhiteboardTokens: [],
+        };
+    const reusedWhiteboardTokens = Array.from(new Set([
+      ...merged.reusedWhiteboardTokens,
+      ...restoredFromStore.reusedWhiteboardTokens,
+    ]));
+    const finalIR = restoredFromStore.ir;
+    const markdown = reusedWhiteboardTokens.length > 0 || !bundle?.content.markdown?.trim()
+      ? feishuDocIRToSourceMarkdown(finalIR).trimEnd()
+      : bundle.content.markdown.trimEnd();
+    const diagnostics = adjustPullDiagnosticsAfterCachedWhiteboardReuse(
+      bundle?.content.diagnostics?.latestPull,
+      reusedWhiteboardTokens,
+    );
 
     return {
-      ir: hydratedIR,
+      ir: finalIR,
       markdown,
-      title: bundle?.content.title || hydratedIR.document.title || input.docId,
+      title: bundle?.content.title || finalIR.document.title || input.docId,
       workspaceRoot,
       requestedDocId: trimText(bundle?.source?.requestedDocId) ?? input.docId,
       resolvedDocId: trimText(bundle?.source?.document.document_id)
-        ?? trimText(hydratedIR.document.id)
+        ?? trimText(finalIR.document.id)
         ?? trimText(bundle?.content.resolvedDocId)
         ?? trimText(bundle?.content.docId),
       ...(bundle?.source?.documentIdType ? { documentIdType: bundle.source.documentIdType } : {}),
       ...(bundle?.source ? { source: bundle.source } : {}),
+      ...(diagnostics ? { diagnostics } : {}),
     };
+  }
+
+  private async reuseCachedReversibleWhiteboards(input: {
+    workspaceRoot: string;
+    docId: string;
+    ir: FeishuDocIR;
+  }): Promise<{ ir: FeishuDocIR; reusedWhiteboardTokens: string[] }> {
+    const cache = new FeishuDocIRWorkspaceCache(input.workspaceRoot);
+    const [cachedDocument, cachedBase] = await Promise.all([
+      cache.readDocument(input.docId),
+      cache.readBase(input.docId),
+    ]);
+    const reusableAssets = new Map<string, NonNullable<FeishuDocIR["assets"][string]["reversible"]>>();
+
+    for (const candidate of [cachedDocument, cachedBase]) {
+      if (!candidate) {
+        continue;
+      }
+
+      for (const [token, asset] of Object.entries(candidate.assets)) {
+        const reversible = asset.reversible;
+        if (!reversible || reversible.format !== "mermaid" || reversible.state !== "mermaid") {
+          continue;
+        }
+        if (!reusableAssets.has(token)) {
+          reusableAssets.set(token, reversible);
+        }
+      }
+    }
+
+    if (reusableAssets.size === 0) {
+      return {
+        ir: input.ir,
+        reusedWhiteboardTokens: [],
+      };
+    }
+
+    let changed = false;
+    const reusedWhiteboardTokens: string[] = [];
+    const nextAssets = Object.fromEntries(
+      Object.entries(input.ir.assets).map(([token, asset]) => {
+        if (asset.kind !== "whiteboard" || asset.reversible) {
+          return [token, asset];
+        }
+
+        const reversible = reusableAssets.get(token);
+        if (!reversible) {
+          return [token, asset];
+        }
+
+        changed = true;
+        reusedWhiteboardTokens.push(token);
+        return [token, {
+          ...asset,
+          reversible: { ...reversible },
+        }];
+      }),
+    ) as FeishuDocIR["assets"];
+
+    return changed
+      ? {
+          ir: {
+            ...input.ir,
+            assets: nextAssets,
+          },
+          reusedWhiteboardTokens,
+        }
+      : {
+          ir: input.ir,
+          reusedWhiteboardTokens: [],
+        };
   }
 
   private async readCachedDocTreeSubtree(rootToken: string): Promise<FeishuDocTreeSnapshotNode[] | null> {
@@ -1164,11 +1557,13 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
           markdown: input.remote.markdown,
           baselineMarkdown: input.remote.markdown,
           lastPulledAt: new Date().toISOString(),
+          diagnostics: input.remote.diagnostics ? { latestPull: input.remote.diagnostics } : undefined,
         }) ?? this.createDocContentView({
           docId: input.docId,
           resolvedDocId: input.remote.resolvedDocId,
           title: input.remote.title,
           markdown: input.remote.markdown,
+          diagnostics: input.remote.diagnostics ? { latestPull: input.remote.diagnostics } : undefined,
         })
       : this.createDocContentView({
           docId: input.docId,
@@ -1187,6 +1582,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
             baselineMarkdown: input.remote.markdown,
             lastPulledAt: new Date().toISOString(),
           }),
+          diagnostics: input.remote.diagnostics ? { latestPull: input.remote.diagnostics } : undefined,
         });
     const remoteSourceChecksum = nextOriginalState?.document?.checksum ?? nextSourceState?.document?.checksum ?? "";
     const pullStatus = !currentDraftState?.document && !currentOriginalState?.document && !currentSourceState?.document
@@ -1196,10 +1592,14 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
           && (!currentDraftState?.document || currentDraftState.document.markdown === input.remote.markdown)
         ? "noop"
         : "updated";
+    if (nextItem.diagnostics) {
+      await this.persistDoc(nextItem);
+    }
 
     return {
       item: nextItem,
       pullStatus,
+      ...(input.remote.diagnostics ? { diagnostics: input.remote.diagnostics } : {}),
     };
   }
 
@@ -1468,11 +1868,11 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       return null;
     }
 
-    if (containsFeishuNativeMarkdownTag(input.draftMarkdown) || containsFeishuNativeMarkdownTag(baselineMarkdown)) {
+    if (containsDocsAiIncompatibleNativeMarkdownTag(input.draftMarkdown) || containsDocsAiIncompatibleNativeMarkdownTag(baselineMarkdown)) {
       return {
         item: input.fallbackItem,
         pushStatus: "blocked",
-        message: "当前文档包含飞书原生块，暂不支持直接按 Mermaid 回写。已保留本地草稿。",
+        message: "当前文档包含暂不支持整文回写的原生块，已保留本地草稿。",
       };
     }
 
@@ -1484,7 +1884,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       };
     }
 
-    const transformedDraft = transformMermaidMarkdownBlocks(input.draftMarkdown).markdown;
+    const transformedDraft = normalizeDocsAiOverwriteMarkdown(input.draftMarkdown).markdown;
     const documentIdType = input.sourceState?.document?.snapshot.documentIdType
       ?? input.sourceState?.base?.snapshot.documentIdType
       ?? input.baseIr?.document.source.documentIdType
@@ -1524,6 +1924,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
         documentId: resolvedDocumentId,
         title: input.pushTitle,
         markdown: input.draftMarkdown,
+        newBlocks: overwritten.newBlocks,
         documentIdType,
         ...(documentIdType === "wiki_node_token" ? { nodeToken: input.docId } : {}),
       });
@@ -1837,7 +2238,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       return null;
     }
 
-    const current = existing ?? null;
+    const current = existing ?? await this.readStoredDoc(input.docId) ?? null;
     const baselineMarkdown = (
       originalState?.base?.markdown
       ?? originalState?.document?.markdown
@@ -1893,6 +2294,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
     baselineMarkdown?: string;
     lastPulledAt?: string;
     lastPushedAt?: string;
+    diagnostics?: FeishuDocContentView["diagnostics"];
   }): Promise<FeishuDocContentView | null> {
     const [originalState, draftState, sourceState, irState] = await Promise.all([
       this.readWorkspaceOriginalMarkdownState(input.workspaceId, input.docId),
@@ -1912,6 +2314,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       title: input.title,
       markdown: document.markdown,
       existing: current,
+      diagnostics: input.diagnostics,
       cache: this.buildWorkspaceCacheState({
         workspaceId: input.workspaceId,
         original: originalState?.document,
@@ -1928,6 +2331,9 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
         lastPushedAt: input.lastPushedAt,
       }),
     });
+    if (item.diagnostics) {
+      await this.persistDoc(item);
+    }
     return item;
   }
 
@@ -2115,6 +2521,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
           resolvedDocId: remoteFromIR.resolvedDocId,
           title: remoteFromIR.title,
           markdown: remoteFromIR.markdown,
+          diagnostics: remoteFromIR.diagnostics ? { latestPull: remoteFromIR.diagnostics } : undefined,
         });
         return await this.readWorkspaceDocFromCache(input, seededItem) ?? seededItem;
       }
@@ -2202,6 +2609,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
             markdown: remote.markdown,
             baselineMarkdown: remote.markdown,
             lastPulledAt: new Date().toISOString(),
+            diagnostics: remote.diagnostics,
           }) ?? remote
         : remote,
       pullStatus: !currentDraftState?.document && !currentSourceState?.document
@@ -2209,6 +2617,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
         : currentDraftState?.document?.markdown === remote.markdown
           ? "noop"
           : "updated",
+      ...(remote.diagnostics?.latestPull ? { diagnostics: remote.diagnostics.latestPull } : {}),
     };
   }
 

@@ -1,0 +1,62 @@
+{
+	"name": "electrobun",
+	"version": "1.16.0",
+	"description": "Build ultra fast, tiny, and cross-platform desktop apps with Typescript.",
+	"license": "MIT",
+	"author": "Blackboard Technologies Inc.",
+	"keywords": [
+		"bun",
+		"desktop",
+		"app",
+		"cross-platform",
+		"typescript"
+	],
+	"exports": {
+		".": "./dist/api/bun/index.ts",
+		"./bun": "./dist/api/bun/index.ts",
+		"./view": "./dist/api/browser/index.ts"
+	},
+	"type": "module",
+	"bin": {
+		"electrobun": "./bin/electrobun.cjs"
+	},
+	"homepage": "https://electrobun.dev",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/blackboardsh/electrobun.git"
+	},
+	"scripts": {
+		"start": "bun src/bun/index.ts",
+		"check-zig-version": "vendors/zig/zig version",
+		"build:dev": "bun build.ts",
+		"build:release": "bun build.ts --release",
+		"dev": "bun install && bun build:dev && cd ../kitchen && bun install && bun dev",
+		"dev:clean": "cd ../kitchen && rm -rf node_modules && rm -rf vendors/cef && cd ../package && bun dev",
+		"dev:canary": "bun install && bun build:release && cd ../kitchen && bun install && bun build:canary",
+		"dev:stable": "bun install && bun build:release && cd ../kitchen && bun install && bun build:stable",
+		"build:docs:release": "cd ../documentation && bun run build",
+		"npm:publish": "bun build:release && npm publish",
+		"npm:publish:beta": "bun build:release && npm publish --tag beta",
+		"typecheck": "bunx tsc --noEmit && cd ../kitchen && bunx tsc --noEmit",
+		"push:beta": "bun run typecheck && bun scripts/push-version.js beta",
+		"push:patch": "bun run typecheck && bun scripts/push-version.js patch",
+		"push:minor": "bun run typecheck && bun scripts/push-version.js minor",
+		"push:major": "bun run typecheck && bun scripts/push-version.js major",
+		"push:stable": "bun run typecheck && bun scripts/push-version.js stable",
+		"build:push:artifacts": "bun scripts/build-and-upload-artifacts.js",
+		"test": "bun install && bun build:dev && bun build:cli && cd ../tests && bun install && bun build:dev && bun start",
+		"test:unit": "bun test src/shared",
+		"bump-cef": "bun scripts/update-cef-version.ts"
+	},
+	"devDependencies": {
+		"typescript": "^5.9.3"
+	},
+	"dependencies": {
+		"@babylonjs/core": "^7.45.0",
+		"@types/bun": "^1.3.8",
+		"png-to-ico": "^2.1.8",
+		"proxy-agent": "^6.5.0",
+		"rcedit": "^4.0.1",
+		"three": "^0.165.0"
+	}
+}

@@ -789,6 +789,8 @@ try {
               resolveDesktopFeishuCommandPort(host).pushDocIR(input),
             getDesktopFeishuWorkspaceDocLocalDraft: ({ workspaceId, docId }) =>
               resolveDesktopFeishuQueryPort(host).getWorkspaceDocLocalDraft({ workspaceId, docId }),
+            inspectDesktopFeishuWorkspaceDocPermissions: ({ workspaceId, docId }) =>
+              resolveDesktopFeishuQueryPort(host).inspectWorkspaceDocPermissions({ workspaceId, docId }),
             saveDesktopFeishuWorkspaceDocLocalDraft: (input) =>
               resolveDesktopFeishuCommandPort(host).saveWorkspaceDocLocalDraft(input),
             pullDesktopFeishuWorkspaceDoc: ({ workspaceId, docId }) =>

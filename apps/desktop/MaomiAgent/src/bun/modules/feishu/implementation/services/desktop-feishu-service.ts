@@ -12,6 +12,7 @@ import type {
   FeishuDeveloperConfigInput,
   FeishuDocContentView,
   FeishuDocMediaPreviewResult,
+  FeishuDocPermissionInspectView,
   FeishuDocTreeBranchInput,
   FeishuDocTreeBranchResult,
   FeishuDocTreeLoadInput,
@@ -43,9 +44,12 @@ import {
   scheduleDesktopFeishuDeveloperAutoRefreshTask,
 } from "./desktop-feishu-developer-token";
 import { buildFeishuBotTenantCapabilityCatalog } from "./desktop-feishu-bot-tenant-capability-catalog";
+import { readDesktopFeishuAccessTokenScopes } from "./desktop-feishu-access-token-claims";
 import { runDesktopFeishuStoreMutation } from "./desktop-feishu-store-mutation";
 import { hydrateDesktopFeishuStateView } from "./desktop-feishu-state-hydrator";
 import type { DesktopFeishuBotRuntimePort } from "./desktop-feishu-bot-runtime";
+import { extractInspectableWhiteboardTokens } from "./feishu-doc-permission-diagnostics";
+import { inspectFeishuDocPermissions } from "./feishu-doc-permission-inspector";
 
 function escapeHtml(value: string): string {
   return value
@@ -876,6 +880,47 @@ export class DesktopFeishuService implements DesktopFeishuPort {
     whiteboardTokens: string[];
   }): Promise<FeishuDocWhiteboardPreviewResult> {
     return this.docRuntime.getDocWhiteboardPreviewUrls(input);
+  }
+
+  async inspectWorkspaceDocPermissions(input: FeishuWorkspaceDocInput): Promise<FeishuDocPermissionInspectView> {
+    const snapshot = await this.store.read();
+    const hydrated = this.hydrateState(snapshot.state as FeishuStateView);
+    const accessToken = snapshot.developerToken.accessToken.trim();
+    if (!accessToken) {
+      throw new Error("当前没有可用的飞书授权，请先重新授权。");
+    }
+
+    const [{ ir }, draft] = await Promise.all([
+      this.docRuntime.openDocIR(input),
+      this.docRuntime.getWorkspaceDocLocalDraft(input),
+    ]);
+    const grantedScopes = new Set(readDesktopFeishuAccessTokenScopes(accessToken));
+    const probes = await inspectFeishuDocPermissions({
+      client: this.openApiClient,
+      accessToken,
+      docId: input.docId,
+      resolvedDocId: draft.resolvedDocId,
+      documentIdType: ir.document.source.documentIdType,
+      nodeToken: ir.document.source.nodeToken,
+      whiteboardTokens: extractInspectableWhiteboardTokens(ir, 3),
+    });
+
+    return {
+      checkedAt: new Date().toISOString(),
+      identity: {
+        authStatus: hydrated.smartAssistant.authStatus,
+        lastAuthorizedAt: hydrated.smartAssistant.lastAuthorizedAt,
+        accessTokenExpiresAt: hydrated.smartAssistant.accessTokenExpiresAt,
+        keyScopes: [
+          "board:whiteboard:node:read",
+          "docx:document:readonly",
+          "wiki:node:read",
+        ].map((scope) => ({ scope, granted: grantedScopes.has(scope) })),
+      },
+      document: probes.document,
+      whiteboards: probes.whiteboards,
+      latestPull: draft.diagnostics?.latestPull,
+    };
   }
 
   async openWorkspaceDoc(input: FeishuWorkspaceDocInput): Promise<FeishuDocContentView> {

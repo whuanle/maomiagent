@@ -33,6 +33,16 @@ describe("Feishu docs translations", () => {
     expect(t("飞书页.文档.状态.加载失败")).toBe("加载失败");
   });
 
+  test("resolves permission diagnostics copy instead of echoing raw keys", () => {
+    const zh = createTranslator("zh-CN");
+    const en = createTranslator("en-US");
+
+    expect(zh("飞书页.文档.按钮.权限自检")).toBe("权限自检");
+    expect(zh("飞书页.文档.反馈.拉取降级.权限.标题")).toBe("部分白板已回退为预览图");
+    expect(en("飞书页.文档.按钮.权限自检")).toBe("Permission Check");
+    expect(en("飞书页.文档.反馈.拉取降级.授权.标题")).toContain("authorization");
+  });
+
   test("resolves smart assistant copy instead of echoing raw keys", () => {
     const zh = createTranslator("zh-CN");
     const en = createTranslator("en-US");

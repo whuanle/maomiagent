@@ -189,6 +189,7 @@ import type {
   FeishuDeveloperConfigInput,
   FeishuDocContentView,
   FeishuDocMediaPreviewResult,
+  FeishuDocPermissionInspectView,
   FeishuDocTreeQuery,
   FeishuDocTreeView,
   FeishuDocWhiteboardPreviewResult,
@@ -529,6 +530,13 @@ export type DesktopRendererRPC = {
           docId: string;
         };
         response: FeishuDocContentView;
+      };
+      inspectDesktopFeishuWorkspaceDocPermissions: {
+        params: {
+          workspaceId: string;
+          docId: string;
+        };
+        response: FeishuDocPermissionInspectView;
       };
       saveDesktopFeishuWorkspaceDocLocalDraft: {
         params: {

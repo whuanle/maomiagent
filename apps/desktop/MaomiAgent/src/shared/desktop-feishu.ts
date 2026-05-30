@@ -1040,6 +1040,69 @@ export type FeishuDocWhiteboardPreviewResult = {
   errors: FeishuDocWhiteboardPreviewErrorItem[]
 }
 
+export type FeishuDocPermissionDiagnosticCategory = "permission" | "auth" | "network" | "unknown"
+
+export type FeishuDocPermissionDiagnosticStage = "wiki" | "docx" | "whiteboard_code"
+
+export type FeishuDocPermissionDiagnosticEntryView = {
+  token?: string
+  stage: FeishuDocPermissionDiagnosticStage
+  code?: number
+  message: string
+  category: FeishuDocPermissionDiagnosticCategory
+  fallbackApplied: boolean
+}
+
+export type FeishuDocWhiteboardRecoveryDiagnosticsView = {
+  status: "ok" | "partial" | "blocked"
+  recoveredCount: number
+  fallbackCount: number
+  permissionDeniedCount: number
+  documentPermissionDenied: boolean
+  entries: FeishuDocPermissionDiagnosticEntryView[]
+}
+
+export type FeishuDocPullDiagnosticsView = {
+  whiteboardRecovery?: FeishuDocWhiteboardRecoveryDiagnosticsView
+}
+
+export type FeishuDocStoredDiagnosticsView = {
+  latestPull?: FeishuDocPullDiagnosticsView
+}
+
+export type FeishuDocPermissionProbeView = {
+  ok: boolean
+  category: FeishuDocPermissionDiagnosticCategory
+  code?: number
+  message: string
+}
+
+export type FeishuDocPermissionScopeStatusView = {
+  scope: string
+  granted: boolean
+}
+
+export type FeishuDocPermissionInspectWhiteboardView = {
+  token: string
+  probeResult: FeishuDocPermissionProbeView
+}
+
+export type FeishuDocPermissionInspectView = {
+  checkedAt: string
+  identity: {
+    authStatus: FeishuDeveloperAuthStatus
+    lastAuthorizedAt?: string
+    accessTokenExpiresAt?: string
+    keyScopes: FeishuDocPermissionScopeStatusView[]
+  }
+  document: {
+    wiki: FeishuDocPermissionProbeView
+    docx: FeishuDocPermissionProbeView
+  }
+  whiteboards: FeishuDocPermissionInspectWhiteboardView[]
+  latestPull?: FeishuDocPullDiagnosticsView
+}
+
 export type FeishuDocContentAnalysis = {
   riskyBlocks: string[]
   riskySync: boolean
@@ -1093,6 +1156,7 @@ export type FeishuDocContentView = {
   message?: string
   analysis: FeishuDocContentAnalysis
   cache?: FeishuDocCacheStateView
+  diagnostics?: FeishuDocStoredDiagnosticsView
 }
 
 export type FeishuWorkspaceDocInput = {
@@ -1114,6 +1178,7 @@ export type FeishuDocWorkspacePullResult = {
   item: FeishuDocContentView
   pullStatus: "created" | "updated" | "noop"
   message?: string
+  diagnostics?: FeishuDocPullDiagnosticsView
 }
 
 export type FeishuDocWorkspacePushResult = {

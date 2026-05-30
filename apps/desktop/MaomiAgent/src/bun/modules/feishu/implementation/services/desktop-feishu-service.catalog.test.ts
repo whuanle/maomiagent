@@ -5,6 +5,7 @@ import type {
   FeishuDocContentView,
   FeishuStateView,
 } from "../../../../../shared/desktop-feishu";
+import type { FeishuDocIR } from "../../../../../shared/desktop-feishu-doc-ir";
 import type { DesktopFeishuStoreSnapshot } from "../../abstraction/ports/desktop-feishu-store.ports";
 import type { DesktopFeishuOpenApiClient } from "./desktop-feishu-openapi-client";
 import { DesktopFeishuService } from "./desktop-feishu-service";
@@ -114,7 +115,123 @@ function createStoreSnapshot(): DesktopFeishuStoreSnapshot {
   };
 }
 
-function createService(snapshot = createStoreSnapshot()) {
+function createDocContentView(input: {
+  docId: string;
+  title: string;
+  markdown: string;
+  resolvedDocId?: string;
+  diagnostics?: FeishuDocContentView["diagnostics"];
+}): FeishuDocContentView {
+  return {
+    docId: input.docId,
+    ...(input.resolvedDocId ? { resolvedDocId: input.resolvedDocId } : {}),
+    title: input.title,
+    markdown: input.markdown,
+    length: input.markdown.length,
+    totalLength: input.markdown.length,
+    offset: 0,
+    analysis: {
+      riskyBlocks: [],
+      riskySync: false,
+      syncMode: null,
+      riskyBlockMode: "safe",
+    },
+    ...(input.diagnostics ? { diagnostics: input.diagnostics } : {}),
+  };
+}
+
+function createInspectIR(tokens: string[]): FeishuDocIR {
+  const blocks: FeishuDocIR["blocks"] = {
+    doc_1: {
+      id: "doc_1",
+      type: "page",
+      parentId: null,
+      children: tokens.map((_, index) => `wb_${index + 1}`),
+      editable: false,
+      text: [],
+      resource: null,
+      attrs: {},
+      raw: {},
+    },
+  };
+  tokens.forEach((token, index) => {
+    blocks[`wb_${index + 1}`] = {
+      id: `wb_${index + 1}`,
+      type: "whiteboard",
+      parentId: "doc_1",
+      children: [],
+      editable: true,
+      text: [],
+      resource: { token, kind: "whiteboard" },
+      attrs: {},
+      raw: {},
+    };
+  });
+  return {
+    schemaVersion: 1,
+    document: {
+      id: "doc_1",
+      title: "Demo",
+      revisionId: "1",
+      rootBlockId: "doc_1",
+      pulledAt: "2026-05-30T09:00:00.000Z",
+      source: {
+        documentIdType: "document_id",
+      },
+    },
+    blocks,
+    assets: {},
+    integrity: {
+      contentHash: "content",
+      rawHash: "raw",
+    },
+  };
+}
+
+function createJwt(payload: Record<string, unknown>): string {
+  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  return `header.${encoded}.signature`;
+}
+
+function createInspectOpenApiClient(): DesktopFeishuOpenApiClient {
+  return {
+    exchangeOAuthCode: async () => {
+      throw new Error("not used in inspect test");
+    },
+    refreshUserAccessToken: async () => {
+      throw new Error("not used in inspect test");
+    },
+    getJson: async <T>(url: string) => {
+      if (url.includes("/wiki/v2/spaces/get_node")) {
+        return {
+          node: {
+            token: "doc_1",
+          },
+        } as T;
+      }
+      if (url.includes("/docx/v1/documents/doc_1")) {
+        return {
+          document: {
+            document_id: "doc_1",
+            title: "Demo",
+          },
+        } as T;
+      }
+      if (url.includes("board_1")) {
+        return { data: { format: "mermaid", source: "flowchart TD\nA-->B" } } as T;
+      }
+      throw new Error("Feishu API HTTP error 403 (code 2890005): forbidden");
+    },
+  } as unknown as DesktopFeishuOpenApiClient;
+}
+
+function createService(
+  snapshot = createStoreSnapshot(),
+  overrides: {
+    docRuntime?: Record<string, unknown>;
+    openApiClient?: DesktopFeishuOpenApiClient;
+  } = {},
+) {
   let current = snapshot;
 
   const store = {
@@ -161,9 +278,19 @@ function createService(snapshot = createStoreSnapshot()) {
     pushWorkspaceDoc: async () => {
       throw new Error("not used in catalog test");
     },
+    openDocIR: async () => {
+      throw new Error("not used in catalog test");
+    },
+    pullDocIR: async () => {
+      throw new Error("not used in catalog test");
+    },
+    pushDocIR: async () => {
+      throw new Error("not used in catalog test");
+    },
+    ...(overrides.docRuntime ?? {}),
   };
 
-  const openApiClient = {
+  const defaultOpenApiClient = {
     exchangeOAuthCode: async () => ({
       accessToken: "test-access-token",
       refreshToken: "test-refresh-token",
@@ -178,7 +305,12 @@ function createService(snapshot = createStoreSnapshot()) {
     }),
   } as unknown as DesktopFeishuOpenApiClient;
 
-  return new DesktopFeishuService(store, actionExecutor, docRuntime, openApiClient);
+  return new DesktopFeishuService(
+    store,
+    actionExecutor,
+    docRuntime as any,
+    overrides.openApiClient ?? defaultOpenApiClient,
+  );
 }
 
 describe("DesktopFeishuService smart assistant catalog hydration", () => {
@@ -738,5 +870,63 @@ describe("DesktopFeishuService smart assistant catalog hydration", () => {
       chatId: "oc_123",
       detail: "legacy webhook payload",
     });
+  });
+
+  test("inspectWorkspaceDocPermissions reports current token scopes, current document probes, and latest pull summary", async () => {
+    const snapshot = createStoreSnapshot();
+    snapshot.state.smartAssistant = {
+      ...snapshot.state.smartAssistant,
+      enabled: true,
+      authStatus: "authorized",
+      accessTokenExpiresAt: "2026-05-30T10:00:00.000Z",
+      lastAuthorizedAt: "2026-05-30T08:00:00.000Z",
+    };
+    snapshot.developerToken.accessToken = createJwt({
+      scope: "board:whiteboard:node:read docx:document:readonly wiki:node:read",
+    });
+
+    const service = createService(snapshot, {
+      docRuntime: {
+        openDocIR: async () => ({
+          source: "cache" as const,
+          ir: createInspectIR(["board_1", "board_2", "board_3", "board_4"]),
+        }),
+        getWorkspaceDocLocalDraft: async () => createDocContentView({
+          docId: "doc_1",
+          title: "Demo",
+          markdown: "# Demo",
+          diagnostics: {
+            latestPull: {
+              whiteboardRecovery: {
+                status: "partial",
+                recoveredCount: 1,
+                fallbackCount: 1,
+                permissionDeniedCount: 1,
+                documentPermissionDenied: false,
+                entries: [{
+                  token: "board_2",
+                  stage: "whiteboard_code",
+                  code: 2890005,
+                  message: "forbidden",
+                  category: "permission",
+                  fallbackApplied: true,
+                }],
+              },
+            },
+          },
+        }),
+      },
+      openApiClient: createInspectOpenApiClient(),
+    });
+
+    const result = await service.inspectWorkspaceDocPermissions({ workspaceId: "ws_1", docId: "doc_1" });
+
+    expect(result.identity.keyScopes).toEqual([
+      { scope: "board:whiteboard:node:read", granted: true },
+      { scope: "docx:document:readonly", granted: true },
+      { scope: "wiki:node:read", granted: true },
+    ]);
+    expect(result.whiteboards).toHaveLength(3);
+    expect(result.latestPull?.whiteboardRecovery?.permissionDeniedCount).toBe(1);
   });
 });

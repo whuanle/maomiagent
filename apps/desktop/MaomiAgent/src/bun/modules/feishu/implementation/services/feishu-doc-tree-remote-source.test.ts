@@ -355,6 +355,28 @@ describe("FeishuDocTreeRemoteSource", () => {
     }));
   });
 
+  test("readDocumentBundle keeps board blocks as native board source placeholders", async () => {
+    const source = createSource({
+      "/docx/v1/documents/doc_1/blocks": {
+        items: [
+          { block_id: "doc_1", block_type: 1, children: ["board_1"] },
+          { block_id: "board_1", parent_id: "doc_1", block_type: 43, board: { token: "whiteboard_token_1" } },
+        ],
+      },
+      "/docx/v1/documents/doc_1": {
+        document: { document_id: "doc_1", title: "Board Doc", revision_id: 7 },
+      },
+    });
+
+    const bundle = await source.readDocumentBundle("access", "doc_1");
+
+    expect(bundle.content.markdown).toContain('<board blockId="board_1" token="whiteboard_token_1" />');
+    expect(bundle.ir.assets.whiteboard_token_1).toEqual(expect.objectContaining({
+      token: "whiteboard_token_1",
+      kind: "whiteboard",
+    }));
+  });
+
   test("readDocumentBundle keeps token blocks when whiteboard recovery is unsupported", async () => {
     const source = createSource({
       "/docx/v1/documents/doc_1/blocks": {
@@ -380,5 +402,184 @@ describe("FeishuDocTreeRemoteSource", () => {
     expect(bundle.content.markdown).toContain('<whiteboard blockId="wb_1" token="whiteboard_token_1" />');
     expect(bundle.content.markdown).not.toContain("```mermaid");
     expect(bundle.ir.assets.whiteboard_token_1?.reversible).toBeUndefined();
+  });
+
+  test("readDocumentBundle retries rate-limited whiteboard code export and recovers boards serially", async () => {
+    const retryDelays: number[] = [];
+    const attemptsByToken = new Map<string, number>();
+    const observedOrder: string[] = [];
+    let activeRequests = 0;
+    let maxActiveRequests = 0;
+    const source = new FeishuDocTreeRemoteSource(
+      {
+        getJson: async (url: string) => {
+          if (url.includes("/docx/v1/documents/doc_1/blocks")) {
+            return {
+              items: [
+                { block_id: "doc_1", block_type: 1, children: ["wb_1", "wb_2", "wb_3"] },
+                { block_id: "wb_1", parent_id: "doc_1", block_type: 37, whiteboard: { token: "whiteboard_token_1" } },
+                { block_id: "wb_2", parent_id: "doc_1", block_type: 37, whiteboard: { token: "whiteboard_token_2" } },
+                { block_id: "wb_3", parent_id: "doc_1", block_type: 37, whiteboard: { token: "whiteboard_token_3" } },
+              ],
+            };
+          }
+          if (url.includes("/docx/v1/documents/doc_1")) {
+            return {
+              document: { document_id: "doc_1", title: "Retry Board Doc", revision_id: 7 },
+            };
+          }
+          throw new Error(`No mock for ${url}`);
+        },
+      },
+      {
+        queryWhiteboardCode: async ({ whiteboardToken }) => {
+          const currentAttempt = (attemptsByToken.get(whiteboardToken) ?? 0) + 1;
+          attemptsByToken.set(whiteboardToken, currentAttempt);
+          activeRequests += 1;
+          maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+          observedOrder.push(`start:${whiteboardToken}:${currentAttempt}`);
+          try {
+            await Bun.sleep(1);
+            if (whiteboardToken === "whiteboard_token_1" && currentAttempt < 3) {
+              throw new Error("Feishu API HTTP error 400 (code 99991400): request trigger frequency limit");
+            }
+            return {
+              format: "mermaid",
+              source: `flowchart TD\n${whiteboardToken}-->B`,
+            };
+          } finally {
+            observedOrder.push(`end:${whiteboardToken}:${currentAttempt}`);
+            activeRequests -= 1;
+          }
+        },
+      },
+      {
+        sleep: async (ms) => {
+          retryDelays.push(ms);
+        },
+        whiteboardRecoveryConcurrency: 1,
+        whiteboardCodeRetryDelaysMs: [10, 20],
+      },
+    );
+
+    const bundle = await source.readDocumentBundle("access", "doc_1");
+
+    expect(bundle.content.markdown).toContain("```mermaid\nflowchart TD\nwhiteboard_token_1-->B\n```");
+    expect(bundle.content.markdown).toContain("```mermaid\nflowchart TD\nwhiteboard_token_2-->B\n```");
+    expect(bundle.content.markdown).toContain("```mermaid\nflowchart TD\nwhiteboard_token_3-->B\n```");
+    expect(bundle.content.diagnostics).toBeUndefined();
+    expect(attemptsByToken.get("whiteboard_token_1")).toBe(3);
+    expect(attemptsByToken.get("whiteboard_token_2")).toBe(1);
+    expect(attemptsByToken.get("whiteboard_token_3")).toBe(1);
+    expect(retryDelays).toEqual([10, 20]);
+    expect(maxActiveRequests).toBe(1);
+    expect(observedOrder).toEqual([
+      "start:whiteboard_token_1:1",
+      "end:whiteboard_token_1:1",
+      "start:whiteboard_token_1:2",
+      "end:whiteboard_token_1:2",
+      "start:whiteboard_token_1:3",
+      "end:whiteboard_token_1:3",
+      "start:whiteboard_token_2:1",
+      "end:whiteboard_token_2:1",
+      "start:whiteboard_token_3:1",
+      "end:whiteboard_token_3:1",
+    ]);
+  });
+
+  test("readDocumentBundle keeps diagnostics when whiteboard code export remains rate limited after retries", async () => {
+    const retryDelays: number[] = [];
+    let attempts = 0;
+    const source = new FeishuDocTreeRemoteSource(
+      {
+        getJson: async (url: string) => {
+          if (url.includes("/docx/v1/documents/doc_1/blocks")) {
+            return {
+              items: [
+                { block_id: "doc_1", block_type: 1, children: ["wb_1"] },
+                { block_id: "wb_1", parent_id: "doc_1", block_type: 37, whiteboard: { token: "whiteboard_token_1" } },
+              ],
+            };
+          }
+          if (url.includes("/docx/v1/documents/doc_1")) {
+            return {
+              document: { document_id: "doc_1", title: "Rate Limited Board Doc", revision_id: 7 },
+            };
+          }
+          throw new Error(`No mock for ${url}`);
+        },
+      },
+      {
+        queryWhiteboardCode: async () => {
+          attempts += 1;
+          throw new Error("Feishu API HTTP error 400 (code 99991400): request trigger frequency limit");
+        },
+      },
+      {
+        sleep: async (ms) => {
+          retryDelays.push(ms);
+        },
+        whiteboardRecoveryConcurrency: 1,
+        whiteboardCodeRetryDelaysMs: [10, 20],
+      },
+    );
+
+    const bundle = await source.readDocumentBundle("access", "doc_1");
+
+    expect(bundle.content.markdown).toContain('<whiteboard blockId="wb_1" token="whiteboard_token_1" />');
+    expect(bundle.content.diagnostics?.latestPull?.whiteboardRecovery).toEqual(expect.objectContaining({
+      status: "blocked",
+      recoveredCount: 0,
+      fallbackCount: 1,
+      permissionDeniedCount: 0,
+    }));
+    expect(bundle.content.diagnostics?.latestPull?.whiteboardRecovery?.entries).toEqual([
+      expect.objectContaining({
+        token: "whiteboard_token_1",
+        stage: "whiteboard_code",
+        code: 99991400,
+        category: "unknown",
+        fallbackApplied: true,
+      }),
+    ]);
+    expect(attempts).toBe(3);
+    expect(retryDelays).toEqual([10, 20]);
+  });
+
+  test("readDocumentBundle records diagnostics when whiteboard code export is forbidden", async () => {
+    const source = createSource({
+      "/docx/v1/documents/doc_1/blocks": {
+        items: [
+          { block_id: "doc_1", block_type: 1, children: ["wb_1"] },
+          { block_id: "wb_1", parent_id: "doc_1", block_type: 37, whiteboard: { token: "whiteboard_token_1" } },
+        ],
+      },
+      "/docx/v1/documents/doc_1": {
+        document: { document_id: "doc_1", title: "Forbidden Board Doc", revision_id: 7 },
+      },
+    }, {
+      whiteboard: {
+        whiteboard_token_1: new Error("Feishu API HTTP error 403 (code 2890005): forbidden"),
+      },
+    });
+
+    const bundle = await source.readDocumentBundle("access", "doc_1");
+
+    expect(bundle.content.markdown).toContain('<whiteboard blockId="wb_1" token="whiteboard_token_1" />');
+    expect(bundle.content.diagnostics?.latestPull?.whiteboardRecovery).toEqual(expect.objectContaining({
+      status: "blocked",
+      recoveredCount: 0,
+      fallbackCount: 1,
+      permissionDeniedCount: 1,
+    }));
+    expect(bundle.content.diagnostics?.latestPull?.whiteboardRecovery?.entries).toEqual([
+      expect.objectContaining({
+        token: "whiteboard_token_1",
+        stage: "whiteboard_code",
+        code: 2890005,
+        category: "permission",
+        fallbackApplied: true,
+      }),
+    ]);
   });
 });

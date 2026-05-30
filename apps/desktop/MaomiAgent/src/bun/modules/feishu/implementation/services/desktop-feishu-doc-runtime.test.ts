@@ -131,7 +131,12 @@ function createSnapshot(docs: Record<string, FeishuDocContentView> = {}): Deskto
   };
 }
 
-function createContentView(docId: string, title: string, markdown: string): FeishuDocContentView {
+function createContentView(
+  docId: string,
+  title: string,
+  markdown: string,
+  diagnostics?: FeishuDocContentView["diagnostics"],
+): FeishuDocContentView {
   return {
     docId,
     title,
@@ -145,6 +150,7 @@ function createContentView(docId: string, title: string, markdown: string): Feis
       syncMode: null,
       riskyBlockMode: "safe",
     },
+    ...(diagnostics ? { diagnostics } : {}),
   };
 }
 
@@ -395,6 +401,65 @@ function createDocumentIRWithReversibleMermaid(input: {
           state: "mermaid",
           lastResolvedAt: "2026-05-29T00:00:00.000Z",
         },
+      },
+    },
+    integrity: {
+      contentHash: "sha256:content",
+      rawHash: "sha256:raw",
+    },
+  };
+}
+
+function createDocumentIRWithBoardToken(input: {
+  resolvedDocId: string;
+  whiteboardToken: string;
+}): FeishuDocIR {
+  return {
+    schemaVersion: 1,
+    document: {
+      id: input.resolvedDocId,
+      title: "Mermaid Doc",
+      revisionId: "8",
+      rootBlockId: input.resolvedDocId,
+      pulledAt: "2026-05-30T00:00:00.000Z",
+      source: {
+        documentIdType: "wiki_node_token",
+        nodeToken: "wiki_node_1",
+      },
+    },
+    blocks: {
+      [input.resolvedDocId]: {
+        id: input.resolvedDocId,
+        type: "page",
+        parentId: null,
+        children: ["board_1"],
+        editable: false,
+        text: [],
+        resource: null,
+        attrs: {},
+        raw: {},
+      },
+      board_1: {
+        id: "board_1",
+        type: "board",
+        parentId: input.resolvedDocId,
+        children: [],
+        editable: true,
+        text: [],
+        resource: { token: input.whiteboardToken, kind: "whiteboard" },
+        attrs: {},
+        raw: {},
+      },
+    },
+    assets: {
+      [input.whiteboardToken]: {
+        token: input.whiteboardToken,
+        kind: "whiteboard",
+        mime: "",
+        cacheKey: "",
+        status: "missing",
+        localPath: "",
+        checksum: "",
       },
     },
     integrity: {
@@ -1066,6 +1131,59 @@ describe("DesktopFeishuDocRuntime", () => {
         .toBe(markdown);
       await expect(readFile(join(workspaceRoot, ".maomi", "feishu-docs", "drafts", `${nodeToken}.draft.md`), "utf8"))
         .rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("pullWorkspaceDoc returns and persists latest pull diagnostics", async () => {
+    const snapshot = createSnapshot();
+    const nodeToken = "node_1";
+    const resolvedDocId = "doc_1";
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-pull-diagnostics-"));
+    const diagnostics = {
+      latestPull: {
+        whiteboardRecovery: {
+          status: "partial" as const,
+          recoveredCount: 1,
+          fallbackCount: 1,
+          permissionDeniedCount: 1,
+          documentPermissionDenied: false,
+          entries: [{
+            token: "board_1",
+            stage: "whiteboard_code" as const,
+            code: 2890005,
+            message: "forbidden",
+            category: "permission" as const,
+            fallbackApplied: true,
+          }],
+        },
+      },
+    };
+
+    try {
+      const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
+      const runtime = createRuntimeWithContentSource(snapshot, {
+        readDocumentContent: async (_accessToken, docId) => {
+          expect(docId).toBe(nodeToken);
+          return createContentView(resolvedDocId, "Remote Doc", "# Remote Doc", diagnostics);
+        },
+        readDocumentBundle: async (_accessToken, docId) => {
+          expect(docId).toBe(nodeToken);
+          return {
+            content: createContentView(resolvedDocId, "Remote Doc", "# Remote Doc", diagnostics),
+            ir: createDocumentIRWithText(resolvedDocId, "Remote Doc", "# Remote Doc"),
+            source: createSourceSnapshot(nodeToken, "Remote Doc", resolvedDocId),
+          };
+        },
+      }, workspaceQuery);
+
+      const result = await runtime.pullWorkspaceDoc({ workspaceId: "ws_1", docId: nodeToken });
+      const cached = await runtime.getWorkspaceDocLocalDraft({ workspaceId: "ws_1", docId: nodeToken });
+
+      expect(result.diagnostics?.whiteboardRecovery?.permissionDeniedCount).toBe(1);
+      expect(result.item.diagnostics?.latestPull?.whiteboardRecovery?.entries[0]?.code).toBe(2890005);
+      expect(cached.diagnostics?.latestPull?.whiteboardRecovery?.entries[0]?.code).toBe(2890005);
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }
@@ -1958,6 +2076,351 @@ describe("DesktopFeishuDocRuntime", () => {
       ]);
       expect(second.item.markdown).toBe("# Plain Remote Doc");
       expect(second.item.cache?.hasLocalChanges).toBe(false);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("pullWorkspaceDoc restores previously pushed Mermaid source when remote whiteboards fall back to board tokens", async () => {
+    const snapshot = createSnapshot();
+    const nodeToken = "node_1";
+    const resolvedDocId = "doc_1";
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-pull-restores-mermaid-"));
+    let bundleMode: "initial" | "pulled" = "initial";
+
+    try {
+      const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
+      const runtime = createRuntimeWithContentSource(
+        snapshot,
+        {
+          readDocumentContent: async () => createContentView(resolvedDocId, "Remote Doc", "# Remote Doc"),
+          readDocumentBundle: async () => {
+            if (bundleMode === "initial") {
+              return {
+                content: createContentView(resolvedDocId, "Remote Doc", "# Remote Doc"),
+                ir: createDocumentIRWithText(resolvedDocId, "Remote Doc", "# Remote Doc"),
+                source: createSourceSnapshot(nodeToken, "Remote Doc", resolvedDocId),
+              };
+            }
+
+            return {
+              content: createContentView(
+                resolvedDocId,
+                "Remote Doc",
+                '<board blockId="board_1" token="wb_1" />',
+                {
+                  latestPull: {
+                    whiteboardRecovery: {
+                      status: "blocked",
+                      recoveredCount: 0,
+                      fallbackCount: 1,
+                      permissionDeniedCount: 0,
+                      documentPermissionDenied: false,
+                      entries: [{
+                        token: "wb_1",
+                        stage: "whiteboard_code",
+                        code: 99991400,
+                        message: "request trigger frequency limit",
+                        category: "unknown",
+                        fallbackApplied: true,
+                      }],
+                    },
+                  },
+                },
+              ),
+              ir: createDocumentIRWithBoardToken({
+                resolvedDocId,
+                whiteboardToken: "wb_1",
+              }),
+              source: createSourceSnapshot(nodeToken, "Remote Doc", resolvedDocId),
+            };
+          },
+        },
+        workspaceQuery,
+        async (url, init) => {
+          const target = new URL(String(url));
+          if (target.pathname === `/open-apis/docs_ai/v1/documents/${nodeToken}`) {
+            expect(init?.method).toBe("PUT");
+            expect(JSON.parse(String(init?.body))).toEqual({
+              command: "overwrite",
+              content: '# Remote Doc\n\n<whiteboard type="mermaid">\nflowchart TD\nA --> B\n</whiteboard>',
+              format: "markdown",
+              revision_id: -1,
+            });
+
+            return new Response(JSON.stringify({
+              code: 0,
+              data: {
+                document: {
+                  revision_id: 2,
+                  new_blocks: [{
+                    block_id: "board_1",
+                    block_type: "whiteboard",
+                    block_token: "wb_1",
+                  }],
+                },
+                result: "success",
+                warnings: [],
+              },
+            }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+
+          throw new Error(`unexpected fetch url: ${String(url)}`);
+        },
+      );
+
+      await runtime.openWorkspaceDoc({ workspaceId: "ws_1", docId: nodeToken });
+
+      const pushed = await runtime.pushWorkspaceDoc({
+        workspaceId: "ws_1",
+        docId: nodeToken,
+        title: "Remote Doc",
+        markdown: "# Remote Doc\n\n```mermaid\nflowchart TD\nA --> B\n```",
+        force: true,
+      });
+      expect(pushed.pushStatus).toBe("succeeded");
+
+      bundleMode = "pulled";
+
+      const pulled = await runtime.pullWorkspaceDoc({
+        workspaceId: "ws_1",
+        docId: nodeToken,
+      });
+
+      expect(pulled.pullStatus).toBe("updated");
+      expect(pulled.item.markdown).toContain("```mermaid\nflowchart TD\nA --> B\n```");
+      expect(pulled.item.markdown).not.toContain("<board blockId=\"board_1\" token=\"wb_1\" />");
+      expect(pulled.item.diagnostics?.latestPull?.whiteboardRecovery?.fallbackCount).toBe(0);
+      expect(pulled.item.diagnostics?.latestPull?.whiteboardRecovery?.status).toBe("ok");
+
+      const cached = await runtime.getWorkspaceDocLocalDraft({ workspaceId: "ws_1", docId: nodeToken });
+      expect(cached.markdown).toContain("```mermaid\nflowchart TD\nA --> B\n```");
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("pullWorkspaceDoc restores Mermaid source from stored doc when legacy workspace caches lost reversible metadata", async () => {
+    const nodeToken = "node_legacy";
+    const resolvedDocId = "doc_legacy";
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-pull-restores-from-store-"));
+    const snapshot = createSnapshot({
+      [nodeToken]: {
+        ...createContentView(
+          nodeToken,
+          "Remote Doc",
+          "# Remote Doc\n\n```mermaid\nflowchart TD\nA --> B\n```",
+        ),
+        resolvedDocId,
+        cache: {
+          workspaceId: "ws_1",
+          hasBaseline: true,
+          hasLocalChanges: false,
+          localChecksum: "sha256:stored",
+          status: "cached",
+        },
+      },
+    });
+
+    try {
+      const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
+      const runtime = createRuntimeWithContentSource(
+        snapshot,
+        {
+          readDocumentContent: async () => createContentView(
+            resolvedDocId,
+            "Remote Doc",
+            '<board blockId="board_1" token="wb_1" />',
+          ),
+          readDocumentBundle: async () => ({
+            content: createContentView(
+              resolvedDocId,
+              "Remote Doc",
+              '<board blockId="board_1" token="wb_1" />',
+              {
+                latestPull: {
+                  whiteboardRecovery: {
+                    status: "blocked",
+                    recoveredCount: 0,
+                    fallbackCount: 1,
+                    permissionDeniedCount: 0,
+                    documentPermissionDenied: false,
+                    entries: [{
+                      token: "wb_1",
+                      stage: "whiteboard_code",
+                      code: 99991400,
+                      message: "request trigger frequency limit",
+                      category: "unknown",
+                      fallbackApplied: true,
+                    }],
+                  },
+                },
+              },
+            ),
+            ir: createDocumentIRWithBoardToken({
+              resolvedDocId,
+              whiteboardToken: "wb_1",
+            }),
+            source: createSourceSnapshot(nodeToken, "Remote Doc", resolvedDocId),
+          }),
+        },
+        workspaceQuery,
+      );
+
+      const pulled = await runtime.pullWorkspaceDoc({
+        workspaceId: "ws_1",
+        docId: nodeToken,
+      });
+
+      expect(pulled.pullStatus).toBe("created");
+      expect(pulled.item.markdown).toContain("```mermaid\nflowchart TD\nA --> B\n```");
+      expect(pulled.item.markdown).not.toContain("<board blockId=\"board_1\" token=\"wb_1\" />");
+      expect(pulled.item.diagnostics?.latestPull?.whiteboardRecovery?.fallbackCount).toBe(0);
+      expect(pulled.item.diagnostics?.latestPull?.whiteboardRecovery?.status).toBe("ok");
+
+      const cached = await runtime.getWorkspaceDocLocalDraft({ workspaceId: "ws_1", docId: nodeToken });
+      expect(cached.markdown).toContain("```mermaid\nflowchart TD\nA --> B\n```");
+      expect(snapshot.docs[nodeToken]?.markdown).toContain("```mermaid\nflowchart TD\nA --> B\n```");
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("pushWorkspaceDoc keeps pulled native board source docs as noop when content is unchanged", async () => {
+    const snapshot = createSnapshot();
+    const nodeToken = "node_1";
+    const resolvedDocId = "doc_1";
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-push-native-noop-"));
+    let remoteWrites = 0;
+
+    try {
+      const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
+      const runtime = createRuntimeWithContentSource(
+        snapshot,
+        {
+          readDocumentContent: async () => createContentView(
+            resolvedDocId,
+            "Remote Doc",
+            '# Remote Doc\n\n<board blockId="board_1" token="wb_1" />\n\n<table blockId="table_1"></table>',
+          ),
+          readDocumentBundle: async () => ({
+            content: createContentView(
+              resolvedDocId,
+              "Remote Doc",
+              '# Remote Doc\n\n<board blockId="board_1" token="wb_1" />\n\n<table blockId="table_1"></table>',
+            ),
+            ir: createDocumentIRWithText(resolvedDocId, "Remote Doc", "# Remote Doc"),
+            source: createSourceSnapshot(nodeToken, "Remote Doc", resolvedDocId),
+          }),
+        },
+        workspaceQuery,
+        async () => {
+          remoteWrites += 1;
+          throw new Error("remote write should not happen for unchanged native source docs");
+        },
+      );
+
+      await runtime.openWorkspaceDoc({ workspaceId: "ws_1", docId: nodeToken });
+
+      const pushed = await runtime.pushWorkspaceDoc({
+        workspaceId: "ws_1",
+        docId: nodeToken,
+        title: "Remote Doc",
+        markdown: '# Remote Doc\n\n<board blockId="board_1" token="wb_1" />\n\n<table blockId="table_1"></table>',
+        force: true,
+      });
+
+      expect(remoteWrites).toBe(0);
+      expect(pushed.pushStatus).toBe("noop");
+      expect(pushed.item.markdown).toBe('# Remote Doc\n\n<board blockId="board_1" token="wb_1" />\n\n<table blockId="table_1"></table>');
+      expect(pushed.item.cache?.hasLocalChanges).toBe(false);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("pushWorkspaceDoc normalizes native board placeholders before docs v2 overwrite", async () => {
+    const snapshot = createSnapshot();
+    const nodeToken = "node_1";
+    const resolvedDocId = "doc_1";
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-push-native-source-"));
+    const docsAiBodies: Array<Record<string, unknown>> = [];
+    let bundleReads = 0;
+
+    try {
+      const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
+      const runtime = createRuntimeWithContentSource(
+        snapshot,
+        {
+          readDocumentContent: async () => createContentView(
+            resolvedDocId,
+            "Remote Doc",
+            '# Remote Doc\n\n<board blockId="board_1" token="wb_1" />\n\n<table blockId="table_1"></table>',
+          ),
+          readDocumentBundle: async () => {
+            bundleReads += 1;
+            if (bundleReads > 1) {
+              throw new Error("push should not re-read remote content after docs v2 overwrite");
+            }
+
+            return {
+              content: createContentView(
+                resolvedDocId,
+                "Remote Doc",
+                '# Remote Doc\n\n<board blockId="board_1" token="wb_1" />\n\n<table blockId="table_1"></table>',
+              ),
+              ir: createDocumentIRWithText(resolvedDocId, "Remote Doc", "# Remote Doc"),
+              source: createSourceSnapshot(nodeToken, "Remote Doc", resolvedDocId),
+            };
+          },
+        },
+        workspaceQuery,
+        async (url, init) => {
+          const target = new URL(String(url));
+          if (target.pathname === `/open-apis/docs_ai/v1/documents/${nodeToken}`) {
+            expect(init?.method).toBe("PUT");
+            docsAiBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+            return new Response(JSON.stringify({
+              code: 0,
+              data: {
+                document: {
+                  revision_id: 2,
+                  new_blocks: [{
+                    block_id: "blk_board_1",
+                    block_type: "board",
+                    block_token: "wb_1",
+                  }],
+                },
+                result: "success",
+                warnings: [],
+              },
+            }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+
+          throw new Error(`unexpected fetch url: ${String(url)}`);
+        },
+      );
+
+      await runtime.openWorkspaceDoc({ workspaceId: "ws_1", docId: nodeToken });
+
+      const pushed = await runtime.pushWorkspaceDoc({
+        workspaceId: "ws_1",
+        docId: nodeToken,
+        title: "Remote Doc",
+        markdown: '# Remote Doc\n1\n\n<board blockId="board_1" token="wb_1" />\n\n<table blockId="table_1"></table>',
+        force: true,
+      });
+
+      expect(pushed.pushStatus).toBe("succeeded");
+      expect(bundleReads).toBe(1);
+      expect(docsAiBodies).toEqual([{
+        command: "overwrite",
+        content: '# Remote Doc\n1\n\n<whiteboard token="wb_1" />\n\n<table blockId="table_1"></table>',
+        format: "markdown",
+        revision_id: -1,
+      }]);
+      expect(pushed.item.markdown).toBe('# Remote Doc\n1\n\n<board blockId="board_1" token="wb_1" />\n\n<table blockId="table_1"></table>');
+      expect(pushed.item.cache?.hasLocalChanges).toBe(false);
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }

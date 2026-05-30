@@ -9,6 +9,7 @@ import type {
   FeishuDocTreeLoadInput,
   FeishuDocTreeLoadResult,
   FeishuDocMediaPreviewResult,
+  FeishuDocPermissionInspectView,
   FeishuDocTreeQuery,
   FeishuDocTreeView,
   FeishuDocWhiteboardPreviewResult,
@@ -64,6 +65,10 @@ type DesktopFeishuBridge = {
     workspaceId: string,
     docId: string,
   ) => Promise<FeishuDocContentView>;
+  inspectDesktopFeishuWorkspaceDocPermissions: (
+    workspaceId: string,
+    docId: string,
+  ) => Promise<FeishuDocPermissionInspectView>;
   saveDesktopFeishuWorkspaceDocLocalDraft: (input: {
     workspaceId: string;
     docId: string;
@@ -225,6 +230,13 @@ export function fetchDesktopFeishuWorkspaceDocLocalDraft(
   docId: string,
 ): Promise<FeishuDocContentView> {
   return getDesktopFeishuBridge().getDesktopFeishuWorkspaceDocLocalDraft(workspaceId, docId);
+}
+
+export function inspectDesktopFeishuWorkspaceDocPermissions(
+  workspaceId: string,
+  docId: string,
+): Promise<FeishuDocPermissionInspectView> {
+  return getDesktopFeishuBridge().inspectDesktopFeishuWorkspaceDocPermissions(workspaceId, docId);
 }
 
 export function saveDesktopFeishuWorkspaceDocLocalDraft(input: {

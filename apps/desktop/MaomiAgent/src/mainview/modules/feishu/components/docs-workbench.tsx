@@ -30,6 +30,8 @@ import { startTransition, useCallback, useEffect, useMemo, useRef, useState } fr
 import type {
   FeishuDocContentView,
   FeishuDocMediaPreviewErrorItem,
+  FeishuDocPermissionInspectView,
+  FeishuDocPullDiagnosticsView,
   FeishuDocWhiteboardPreviewErrorItem,
   FeishuDocSummary,
   FeishuDocTreeNode,
@@ -44,6 +46,7 @@ import {
   fetchFeishuDocWhiteboardPreviewUrls,
   fetchFeishuDocsCapabilities,
   fetchFeishuWorkspaceDocLocalDraft,
+  inspectFeishuWorkspaceDocPermissions,
   loadFeishuDocTreeBranch,
   loadFeishuDocTreeRoot,
   openFeishuWorkspaceDoc,
@@ -63,6 +66,7 @@ import {
   extractFeishuWhiteboardTokens,
 } from "./feishu-doc-preview-support"
 import { buildFeishuDocChatDraftText } from "./feishu-doc-chat-draft"
+import { FeishuDocPermissionInspectModal } from "./feishu-doc-permission-inspect-modal"
 
 const { Text, Title } = Typography
 
@@ -409,6 +413,10 @@ export function FeishuDocsWorkbench(props: Props) {
     Record<string, { left: number; top: number; width: number; height: number }>
   >({})
   const [whiteboardPreviewErrors, setWhiteboardPreviewErrors] = useState<FeishuDocWhiteboardPreviewErrorItem[]>([])
+  const [permissionInspectOpen, setPermissionInspectOpen] = useState(false)
+  const [permissionInspectLoading, setPermissionInspectLoading] = useState(false)
+  const [permissionInspectError, setPermissionInspectError] = useState("")
+  const [permissionInspectResult, setPermissionInspectResult] = useState<FeishuDocPermissionInspectView | null>(null)
   const lastSavedDraftRef = useRef("")
   const initialDocLoadedRef = useRef(false)
   const draftRef = useRef("")
@@ -420,6 +428,7 @@ export function FeishuDocsWorkbench(props: Props) {
   const whiteboardPreviewRequestIdRef = useRef(0)
   const lastLoadErrorNoticeRef = useRef("")
   const lastAccessNoticeRef = useRef("")
+  const lastPullDiagnosticNoticeRef = useRef("")
   const loadingTreeNodeKeysRef = useRef<Set<string>>(new Set())
   const treeHydrationRunIdRef = useRef(0)
   const treeNodesLengthRef = useRef(initialTreeNodes.length)
@@ -833,6 +842,59 @@ export function FeishuDocsWorkbench(props: Props) {
     treeRootDocId,
   ])
 
+  const loadPermissionInspect = useCallback(async () => {
+    if (!currentDoc?.docId || !hasWorkspaceContext) {
+      return
+    }
+
+    setPermissionInspectLoading(true)
+    setPermissionInspectError("")
+    setPermissionInspectResult(null)
+    try {
+      const result = await inspectFeishuWorkspaceDocPermissions(props.baseUrl, props.workspaceId, currentDoc.docId)
+      setPermissionInspectResult(result)
+    } catch (error) {
+      setPermissionInspectError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setPermissionInspectLoading(false)
+    }
+  }, [currentDoc?.docId, hasWorkspaceContext, props.baseUrl, props.workspaceId])
+
+  const noticePullDiagnostics = useCallback((docId: string, diagnostics?: FeishuDocPullDiagnosticsView) => {
+    const whiteboardRecovery = diagnostics?.whiteboardRecovery
+    if (!whiteboardRecovery || whiteboardRecovery.fallbackCount === 0) {
+      return
+    }
+
+    const hasAuth = whiteboardRecovery.entries.some((entry) => entry.category === "auth")
+    const hasPermission = whiteboardRecovery.permissionDeniedCount > 0
+    const noticeKey = [
+      docId,
+      whiteboardRecovery.status,
+      whiteboardRecovery.fallbackCount,
+      whiteboardRecovery.permissionDeniedCount,
+      hasAuth,
+    ].join(":")
+    if (lastPullDiagnosticNoticeRef.current === noticeKey) {
+      return
+    }
+
+    lastPullDiagnosticNoticeRef.current = noticeKey
+    notificationCenter.warning({
+      title: hasAuth
+        ? props.t("飞书页.文档.反馈.拉取降级.授权.标题")
+        : hasPermission
+          ? props.t("飞书页.文档.反馈.拉取降级.权限.标题")
+          : props.t("飞书页.文档.反馈.拉取降级.通用.标题"),
+      description: hasAuth
+        ? props.t("飞书页.文档.反馈.拉取降级.授权.描述")
+        : hasPermission
+          ? props.t("飞书页.文档.反馈.拉取降级.权限.描述", { 数量: whiteboardRecovery.permissionDeniedCount })
+          : props.t("飞书页.文档.反馈.拉取降级.通用.描述"),
+      duration: 5.5,
+    })
+  }, [props.t])
+
   const handlePullDoc = useCallback(async () => {
     if (!currentDoc?.docId) {
       return
@@ -847,6 +909,7 @@ export function FeishuDocsWorkbench(props: Props) {
         setCurrentDoc(result.item)
         setDraft(result.item.markdown)
         lastSavedDraftRef.current = result.item.markdown
+        noticePullDiagnostics(result.item.docId, result.diagnostics ?? result.item.diagnostics?.latestPull)
       } else {
         const item = await fetchFeishuDocContent(
           props.baseUrl,
@@ -863,7 +926,15 @@ export function FeishuDocsWorkbench(props: Props) {
       setSaveError(error instanceof Error ? error.message : String(error))
       setSaveState("error")
     }
-  }, [activeDoc, commitEditSessionBaseline, currentDoc, hasWorkspaceContext, props.baseUrl, props.workspaceId])
+  }, [
+    activeDoc,
+    commitEditSessionBaseline,
+    currentDoc,
+    hasWorkspaceContext,
+    noticePullDiagnostics,
+    props.baseUrl,
+    props.workspaceId,
+  ])
 
   const handlePushDoc = useCallback(async () => {
     if (!currentDoc?.docId || !hasWorkspaceContext) {
@@ -1742,6 +1813,17 @@ export function FeishuDocsWorkbench(props: Props) {
                       <Button type="primary" className="feishu-docs-toolbar-action" icon={<ReloadOutlined />} onClick={handleReloadAll}>
                         {props.t("飞书页.文档.按钮.刷新")}
                       </Button>
+                      <Button
+                        className="feishu-docs-toolbar-action"
+                        icon={<ApartmentOutlined />}
+                        disabled={!hasWorkspaceContext || !currentDoc?.docId || saveState === "pulling" || saveState === "pushing"}
+                        onClick={() => {
+                          setPermissionInspectOpen(true)
+                          void loadPermissionInspect()
+                        }}
+                      >
+                        {props.t("飞书页.文档.按钮.权限自检")}
+                      </Button>
                       <Popconfirm
                         title={props.t("飞书页.文档.提示.覆盖本地草稿")}
                         description={props.t("飞书页.文档.提示.拉取覆盖说明")}
@@ -1856,6 +1938,17 @@ export function FeishuDocsWorkbench(props: Props) {
         </main>
       </div>
       </div>
+      <FeishuDocPermissionInspectModal
+        open={permissionInspectOpen}
+        loading={permissionInspectLoading}
+        error={permissionInspectError}
+        result={permissionInspectResult}
+        t={props.t}
+        onClose={() => setPermissionInspectOpen(false)}
+        onRetry={() => {
+          void loadPermissionInspect()
+        }}
+      />
     </>
   )
 }

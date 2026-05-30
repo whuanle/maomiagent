@@ -5,6 +5,7 @@ import type {
   FeishuDeveloperConfigInput,
   FeishuDocContentView,
   FeishuDocMediaPreviewResult,
+  FeishuDocPermissionInspectView,
   FeishuDocTreeBranchInput,
   FeishuDocTreeBranchResult,
   FeishuDocTreeLoadInput,
@@ -37,6 +38,7 @@ export interface DesktopFeishuQueryPort {
     whiteboardTokens: string[];
   }): Promise<FeishuDocWhiteboardPreviewResult>;
   getWorkspaceDocLocalDraft(input: FeishuWorkspaceDocInput): Promise<FeishuDocContentView>;
+  inspectWorkspaceDocPermissions(input: FeishuWorkspaceDocInput): Promise<FeishuDocPermissionInspectView>;
   openDocIR(input: FeishuWorkspaceDocInput): Promise<{ source: "cache" | "remote"; ir: FeishuDocIR }>;
 }
 

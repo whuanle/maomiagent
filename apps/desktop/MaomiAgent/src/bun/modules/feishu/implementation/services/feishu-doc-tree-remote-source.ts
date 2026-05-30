@@ -1,5 +1,6 @@
 import type {
   FeishuDocContentView,
+  FeishuDocPullDiagnosticsView,
   FeishuDocTreeNode,
   FeishuDocTreeObjectType,
 } from "../../../../../shared/desktop-feishu";
@@ -7,6 +8,10 @@ import type { FeishuDocIR } from "../../../../../shared/desktop-feishu-doc-ir";
 import { feishuDocIRToSourceMarkdown } from "./feishu-doc-source-markdown-codec";
 import type { FeishuDocSourceSnapshot } from "./feishu-doc-source-workspace-cache";
 import { applyRecoveredMermaidWhiteboards } from "./feishu-doc-whiteboard-reversible";
+import {
+  classifyFeishuDocDiagnosticError,
+  summarizeWhiteboardRecoveryDiagnostics,
+} from "./feishu-doc-permission-diagnostics";
 import {
   normalizeFeishuDocBlocksToIR,
   type FeishuRawDocBlock,
@@ -18,6 +23,12 @@ export type FeishuOpenApiReader = {
 
 type FeishuWhiteboardCodeReader = {
   queryWhiteboardCode(input: { whiteboardToken: string }): Promise<{ format: string; source: string } | null>;
+};
+
+type FeishuDocTreeRemoteSourceOptions = {
+  sleep?: (ms: number) => Promise<void>;
+  whiteboardRecoveryConcurrency?: number;
+  whiteboardCodeRetryDelaysMs?: readonly number[];
 };
 
 export type FeishuDocTreeRecognizedRoot = {
@@ -108,6 +119,12 @@ const FEISHU_MERMAID_SOURCE_MARKERS = [
   "C4Dynamic",
   "C4Deployment",
 ] as const;
+const FEISHU_WHITEBOARD_CODE_RATE_LIMIT_CODES = new Set<number>([99991400]);
+const FEISHU_WHITEBOARD_CODE_RATE_LIMIT_PATTERNS = [
+  "request trigger frequency limit",
+] as const;
+const DEFAULT_WHITEBOARD_RECOVERY_CONCURRENCY = 1;
+const DEFAULT_WHITEBOARD_CODE_RETRY_DELAYS_MS = [500, 1000, 2000] as const;
 
 function openApiUrl(path: string, params: Record<string, string | number | boolean | undefined | null> = {}): string {
   const search = new URLSearchParams();
@@ -194,11 +211,31 @@ function ensureDocumentRootBlock(blocks: FeishuRawDocBlock[], documentId: string
   ];
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableWhiteboardCodeError(error: unknown): boolean {
+  const classified = classifyFeishuDocDiagnosticError(error);
+  const normalized = classified.message.toLowerCase();
+  return (classified.code != null && FEISHU_WHITEBOARD_CODE_RATE_LIMIT_CODES.has(classified.code))
+    || FEISHU_WHITEBOARD_CODE_RATE_LIMIT_PATTERNS.some((pattern) => normalized.includes(pattern));
+}
+
 export class FeishuDocTreeRemoteSource {
+  private readonly sleep: (ms: number) => Promise<void>;
+  private readonly whiteboardRecoveryConcurrency: number;
+  private readonly whiteboardCodeRetryDelaysMs: readonly number[];
+
   constructor(
     private readonly reader: FeishuOpenApiReader,
     private readonly whiteboardApi?: FeishuWhiteboardCodeReader,
-  ) {}
+    options: FeishuDocTreeRemoteSourceOptions = {},
+  ) {
+    this.sleep = options.sleep ?? delay;
+    this.whiteboardRecoveryConcurrency = Math.max(1, options.whiteboardRecoveryConcurrency ?? DEFAULT_WHITEBOARD_RECOVERY_CONCURRENCY);
+    this.whiteboardCodeRetryDelaysMs = options.whiteboardCodeRetryDelaysMs ?? DEFAULT_WHITEBOARD_CODE_RETRY_DELAYS_MS;
+  }
 
   async readDocumentBundle(accessToken: string, docId: string): Promise<ResolvedFeishuDocxDocument> {
     try {
@@ -257,17 +294,17 @@ export class FeishuDocTreeRemoteSource {
       nodeToken: documentIdType === "wiki_node_token" ? docId : undefined,
       blocks,
     });
-    const recoveredIr = await this.reverseWhiteboardsInIR({
+    const reversed = await this.reverseWhiteboardsInIR({
       ir,
       pulledAt,
     });
-    const markdown = feishuDocIRToSourceMarkdown(recoveredIr).trimEnd();
-    const riskyBlocks = Object.values(recoveredIr.blocks)
+    const markdown = feishuDocIRToSourceMarkdown(reversed.ir).trimEnd();
+    const riskyBlocks = Object.values(reversed.ir.blocks)
       .filter((block) => block.type === "undefined")
       .map((block) => block.id);
 
     return {
-      ir: recoveredIr,
+      ir: reversed.ir,
       source: {
         requestedDocId: docId,
         resolvedDocId,
@@ -286,6 +323,7 @@ export class FeishuDocTreeRemoteSource {
         offset: 0,
         updatedAt: new Date().toISOString(),
         blocks,
+        ...(reversed.diagnostics ? { diagnostics: { latestPull: reversed.diagnostics } } : {}),
         analysis: {
           riskyBlocks,
           riskySync: false,
@@ -299,9 +337,9 @@ export class FeishuDocTreeRemoteSource {
   private async reverseWhiteboardsInIR(input: {
     ir: FeishuDocIR;
     pulledAt: string;
-  }): Promise<FeishuDocIR> {
+  }): Promise<{ ir: FeishuDocIR; diagnostics?: FeishuDocPullDiagnosticsView }> {
     if (!this.whiteboardApi) {
-      return input.ir;
+      return { ir: input.ir };
     }
 
     const whiteboardTokens = [...new Set(
@@ -310,46 +348,146 @@ export class FeishuDocTreeRemoteSource {
         .map((block) => block.resource!.token),
     )];
     if (whiteboardTokens.length === 0) {
-      return input.ir;
+      return { ir: input.ir };
     }
 
-    const recovered = (await Promise.all(whiteboardTokens.map(async (whiteboardToken) => {
-      try {
-        const result = await this.whiteboardApi?.queryWhiteboardCode({ whiteboardToken });
-        if (!result) {
-          return null;
-        }
+    const attempts = await this.mapWithConcurrency(whiteboardTokens, async (whiteboardToken) =>
+      this.recoverWhiteboardToken({
+        whiteboardToken,
+        pulledAt: input.pulledAt,
+      })
+    );
 
-        const format = result.format.trim().toLowerCase();
-        if (format && format !== "mermaid" && format !== "unknown") {
-          return null;
-        }
+    const recovered = attempts.flatMap((item) => item.recovered ? [item.recovered] : []);
+    const entries = attempts.flatMap((item) => item.diagnostic ? [item.diagnostic] : []);
+    const ir = recovered.length > 0
+      ? applyRecoveredMermaidWhiteboards({
+          ir: input.ir,
+          recovered,
+        })
+      : input.ir;
 
-        const source = result.source.trim();
-        if (!source || (format !== "mermaid" && !looksLikeMermaidSource(source))) {
-          return null;
-        }
+    return {
+      ir,
+      diagnostics: entries.length > 0
+        ? {
+            whiteboardRecovery: summarizeWhiteboardRecoveryDiagnostics({
+              recoveredCount: recovered.length,
+              entries,
+            }),
+          }
+        : undefined,
+    };
+  }
 
+  private async recoverWhiteboardToken(input: {
+    whiteboardToken: string;
+    pulledAt: string;
+  }): Promise<{
+    recovered: {
+      whiteboardToken: string;
+      format: "mermaid";
+      source: string;
+      origin: "whiteboard_code_export";
+      resolvedAt: string;
+    } | null;
+    diagnostic: {
+      token: string;
+      stage: "whiteboard_code";
+      code?: number;
+      message: string;
+      category: "permission" | "auth" | "network" | "unknown";
+      fallbackApplied: true;
+    } | null;
+  }> {
+    try {
+      const result = await this.queryWhiteboardCodeWithRetry(input.whiteboardToken);
+      if (!result) {
         return {
-          whiteboardToken,
-          format: "mermaid" as const,
-          source,
-          origin: "whiteboard_code_export" as const,
-          resolvedAt: input.pulledAt,
+          recovered: null,
+          diagnostic: null,
         };
-      } catch {
-        return null;
       }
-    }))).filter((entry): entry is NonNullable<typeof entry> => entry !== null);
 
-    if (recovered.length === 0) {
-      return input.ir;
+      const format = result.format.trim().toLowerCase();
+      if (format && format !== "mermaid" && format !== "unknown") {
+        return {
+          recovered: null,
+          diagnostic: null,
+        };
+      }
+
+      const source = result.source.trim();
+      if (!source || (format !== "mermaid" && !looksLikeMermaidSource(source))) {
+        return {
+          recovered: null,
+          diagnostic: null,
+        };
+      }
+
+      return {
+        recovered: {
+          whiteboardToken: input.whiteboardToken,
+          format: "mermaid",
+          source,
+          origin: "whiteboard_code_export",
+          resolvedAt: input.pulledAt,
+        },
+        diagnostic: null,
+      };
+    } catch (error) {
+      const classified = classifyFeishuDocDiagnosticError(error);
+      return {
+        recovered: null,
+        diagnostic: {
+          token: input.whiteboardToken,
+          stage: "whiteboard_code",
+          code: classified.code,
+          message: classified.message,
+          category: classified.category,
+          fallbackApplied: true,
+        },
+      };
     }
+  }
 
-    return applyRecoveredMermaidWhiteboards({
-      ir: input.ir,
-      recovered,
-    });
+  private async queryWhiteboardCodeWithRetry(whiteboardToken: string): Promise<{ format: string; source: string } | null> {
+    let retryIndex = 0;
+    for (;;) {
+      try {
+        return await this.whiteboardApi?.queryWhiteboardCode({ whiteboardToken }) ?? null;
+      } catch (error) {
+        const delayMs = this.whiteboardCodeRetryDelaysMs[retryIndex];
+        if (delayMs == null || !isRetryableWhiteboardCodeError(error)) {
+          throw error;
+        }
+        retryIndex += 1;
+        await this.sleep(delayMs);
+      }
+    }
+  }
+
+  private async mapWithConcurrency<T, TResult>(
+    items: readonly T[],
+    worker: (item: T, index: number) => Promise<TResult>,
+  ): Promise<TResult[]> {
+    const results = new Array<TResult>(items.length);
+    let nextIndex = 0;
+    const runnerCount = Math.min(this.whiteboardRecoveryConcurrency, items.length);
+
+    const run = async () => {
+      for (;;) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+        if (currentIndex >= items.length) {
+          return;
+        }
+        results[currentIndex] = await worker(items[currentIndex]!, currentIndex);
+      }
+    };
+
+    await Promise.all(Array.from({ length: runnerCount }, () => run()));
+    return results;
   }
 
   async recognizeRoot(accessToken: string, token: string): Promise<FeishuDocTreeRecognizedRoot> {
