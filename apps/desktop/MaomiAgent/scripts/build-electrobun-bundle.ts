@@ -11,6 +11,7 @@ import {
   buildDesktopNativePackagingFailureMessage,
   resolveDesktopReleaseArtifactMode,
 } from "./build-electrobun-release-policy";
+import { stageElectrobunHostCli } from "./build-electrobun-host-cli";
 
 const APP_NAME = "MaomiAgent";
 const APP_IDENTIFIER = "com.maomiagent.desktop";
@@ -83,7 +84,7 @@ async function prepareReleaseArtifacts(channel: string): Promise<void> {
   const targetPlatform = resolveDesktopAppUpdatePlatform();
   logReleaseStep(`attempting native Electrobun packaging for ${channel}`);
   try {
-    await runCommand(["bun", "x", "electrobun", "build", `--env=${ELECTROBUN_STABLE_ENV}`], undefined, projectRoot);
+    await runNativeReleasePackaging();
     return;
   } catch (error) {
     const normalizedError = normalizeError(error);
@@ -99,6 +100,15 @@ async function prepareReleaseArtifacts(channel: string): Promise<void> {
 
   logReleaseStep(`switching to bundle-only export for ${formatTargetPlatform(targetPlatform)}`);
   await prepareBundleOnlyReleaseArtifacts(channel, targetPlatform);
+}
+
+async function runNativeReleasePackaging(): Promise<void> {
+  const hostCliEntrypoint = stageElectrobunHostCli({
+    generatedFolder: GENERATED_FOLDER,
+    electrobunPackageRoot: ELECTROBUN_PACKAGE_ROOT,
+  });
+
+  await runCommand(["bun", hostCliEntrypoint, "build", `--env=${ELECTROBUN_STABLE_ENV}`], undefined, projectRoot);
 }
 
 async function prepareWindowsBundle(): Promise<string> {
