@@ -162,6 +162,9 @@ jobs:
       - prepare-release
       - build
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - name: Checkout repository
@@ -190,6 +193,4 @@ jobs:
         run: node scripts/assemble-maomiagent-npm-package.mjs
 
       - name: Publish npm package
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish ./packages/maomiagent-npm --access public
+        run: npm publish ./packages/maomiagent-npm --access public --provenance
