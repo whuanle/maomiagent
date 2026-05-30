@@ -25,7 +25,10 @@ import {
   selectDesktopAppPublicReleaseAssets,
   type DesktopAppPublicLatestRelease,
 } from "./desktop-app-update/public-contract";
-import { resolveDesktopAppUpdatePlatformExecutor } from "./desktop-app-update/platform-executor";
+import {
+  PORTABLE_DESKTOP_APP_UPDATE_MESSAGE,
+  resolveDesktopAppUpdatePlatformExecutor,
+} from "./desktop-app-update/platform-executor";
 import type {
   DesktopAppUpdateAsset,
   DesktopAppUpdateCheckResult,
@@ -51,6 +54,7 @@ const DEFAULT_VERSION = "0.1.0";
 const GITHUB_RELEASE_HEADERS = {
   Accept: "application/vnd.github+json",
 } as const;
+const DOWNLOAD_ONLY_UPDATE_MESSAGE = `A newer desktop version is available to download. ${PORTABLE_DESKTOP_APP_UPDATE_MESSAGE}`;
 
 export async function checkDesktopAppUpdate(): Promise<DesktopAppUpdateCheckResult> {
   const localInfo = await resolveLocalVersionInfo();
@@ -122,11 +126,7 @@ export async function checkDesktopAppUpdate(): Promise<DesktopAppUpdateCheckResu
     arch: updateConfig.arch,
   });
   const downloadAsset = resolveDownloadAsset(installerAsset, bundleAsset);
-  const platformExecutor = resolveDesktopAppUpdatePlatformExecutor();
-  const installSupported =
-    platformExecutor.supported &&
-    updateConfig.os === "win" &&
-    Boolean(bundleAsset?.downloadUrl);
+  const installSupported = false;
 
   if (!downloadAsset) {
     return {
@@ -141,9 +141,7 @@ export async function checkDesktopAppUpdate(): Promise<DesktopAppUpdateCheckResu
     configured: true,
     installSupported,
     hasUpdate: true,
-    message: installSupported
-      ? "A newer desktop version is available."
-      : "A newer desktop version is available for download.",
+    message: DOWNLOAD_ONLY_UPDATE_MESSAGE,
     releaseId: release.versionId,
     releaseVersion: remoteVersion,
     releaseVersionCode: remoteVersionCode,

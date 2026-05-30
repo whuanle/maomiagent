@@ -86,6 +86,7 @@ export const enUSMessages: Record<I18nKey, string> = {
   "设置页.更新.按钮.检查更新": "Check for Updates",
   "设置页.更新.按钮.下载安装": "Download and Install",
   "设置页.更新.按钮.下载更新": "Download Update",
+  "设置页.更新.提示.便携包与Npm": "Desktop portable releases are download-only. Download the latest package to replace your current copy, or run npm update -g maomiagent if you installed via npm.",
   "设置页.更新.标签.强制": "Required",
   "设置页.更新.标签.预发布": "Prerelease",
   "设置页.更新.状态.未检查": "Not checked yet",

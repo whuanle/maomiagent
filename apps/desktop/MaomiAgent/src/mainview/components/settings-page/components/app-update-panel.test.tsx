@@ -9,12 +9,14 @@ async function source(path: string): Promise<string> {
 }
 
 describe("AppUpdatePanel", () => {
-  test("opens the release download link when the update is download-only", async () => {
+  test("renders download-only guidance and removes install-first actions", async () => {
     const panel = await source("src/mainview/components/settings-page/components/app-update-panel.tsx");
 
     expect(panel).toContain("resolveDesktopAppUpdateDownloadAsset");
     expect(panel).toContain("openDesktopExternalUrl(downloadAsset.downloadUrl)");
+    expect(panel).toContain('props.t("设置页.更新.提示.便携包与Npm")');
     expect(panel).toContain('props.t("设置页.更新.按钮.下载更新")');
-    expect(panel).toContain('props.t("设置页.更新.反馈.已打开下载链接")');
+    expect(panel).not.toContain('props.t("设置页.更新.按钮.下载安装")');
+    expect(panel).not.toContain("installDesktopAppUpdate");
   });
 });

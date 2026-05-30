@@ -80,6 +80,27 @@ describe("desktop app update bridge", () => {
     },
   };
 
+  const portableBundleResult: DesktopAppUpdateCheckResult = {
+    configured: true,
+    supported: true,
+    installSupported: false,
+    hasUpdate: true,
+    currentVersion: "1.0.0",
+    currentVersionCode: 100,
+    currentChannel: "stable",
+    releaseId: 42,
+    releaseVersion: "1.1.0",
+    releaseVersionCode: 110,
+    downloadAsset: {
+      assetId: 10,
+      packageType: "bundle",
+      packageFormat: "zip",
+      fileName: "stable-win-x64-MaomiAgent.zip",
+      fileSize: 4096,
+      downloadUrl: "https://example.test/maomi.zip",
+    },
+  };
+
   const installInput: DesktopAppUpdateInstallInput = {
     releaseId: 42,
     bundleAssetId: 7,
@@ -142,9 +163,17 @@ describe("desktop app update bridge", () => {
     ).toBe(false);
   });
 
-  test("prefers the resolved download asset only when it includes a download url", () => {
+  test("returns false for portable zip and dmg updates", () => {
+    expect(canInstallDesktopAppUpdate(portableBundleResult)).toBe(false);
+    expect(canInstallDesktopAppUpdate(downloadableResult)).toBe(false);
+  });
+
+  test("returns the portable download asset only when it includes a download url", () => {
     expect(resolveDesktopAppUpdateDownloadAsset(installableResult)?.downloadUrl).toBe(
       "https://example.test/bundle.zip",
+    );
+    expect(resolveDesktopAppUpdateDownloadAsset(portableBundleResult)?.fileName).toBe(
+      "stable-win-x64-MaomiAgent.zip",
     );
     expect(resolveDesktopAppUpdateDownloadAsset(downloadableResult)?.fileName).toBe(
       "stable-macos-arm64-MaomiAgent.dmg",

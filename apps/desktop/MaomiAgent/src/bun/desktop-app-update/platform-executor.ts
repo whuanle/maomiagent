@@ -7,19 +7,17 @@ export type DesktopAppUpdatePlatformExecutor =
       message: string;
     };
 
-export const WINDOWS_ONLY_DESKTOP_APP_UPDATE_MESSAGE = "Desktop self-update currently supports Windows only.";
+export const PORTABLE_DESKTOP_APP_UPDATE_MESSAGE =
+  "Portable desktop releases are download-only. Download the latest package from the release assets, or run npm update -g maomiagent if you installed via npm.";
+export const WINDOWS_ONLY_DESKTOP_APP_UPDATE_MESSAGE = PORTABLE_DESKTOP_APP_UPDATE_MESSAGE;
 
 export function resolveDesktopAppUpdatePlatformExecutor(
   platform: string = process.platform,
 ): DesktopAppUpdatePlatformExecutor {
-  if (platform === "win32") {
-    return {
-      supported: true,
-    };
-  }
+  void platform;
 
   return {
     supported: false,
-    message: WINDOWS_ONLY_DESKTOP_APP_UPDATE_MESSAGE,
+    message: PORTABLE_DESKTOP_APP_UPDATE_MESSAGE,
   };
 }

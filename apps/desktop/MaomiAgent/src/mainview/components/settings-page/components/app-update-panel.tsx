@@ -3,12 +3,10 @@ import { useState } from "react";
 
 import type { Translate } from "../../../i18n";
 import {
-  canInstallDesktopAppUpdate,
   checkDesktopAppUpdate,
-  installDesktopAppUpdate,
   resolveDesktopAppUpdateDownloadAsset,
 } from "../../../lib/desktop-app-update";
-import { openDesktopExternalUrl, runDesktopWindowAction } from "../../../lib/desktop-window";
+import { openDesktopExternalUrl } from "../../../lib/desktop-window";
 import type { RuntimeStatus } from "../../../types/status";
 import type { DesktopAppUpdateCheckResult } from "../../../../shared/desktop-updater";
 
@@ -35,13 +33,11 @@ export function AppUpdatePanel(props: Props) {
   const { message } = AntdApp.useApp();
   const [result, setResult] = useState<DesktopAppUpdateCheckResult | null>(null);
   const [checking, setChecking] = useState(false);
-  const [installing, setInstalling] = useState(false);
+  const [openingDownload, setOpeningDownload] = useState(false);
 
-  const installableResult = canInstallDesktopAppUpdate(result) ? result : null;
   const downloadAsset = resolveDesktopAppUpdateDownloadAsset(result);
-  const canInstall = Boolean(installableResult) && !checking;
-  const canDownload = Boolean(downloadAsset) && !checking && !installing;
-  const displayedAsset = installableResult?.bundleAsset || downloadAsset || result?.bundleAsset || result?.installerAsset;
+  const canDownload = Boolean(downloadAsset) && !checking && !openingDownload;
+  const displayedAsset = downloadAsset || result?.installerAsset || result?.bundleAsset;
 
   async function handleCheck() {
     setChecking(true);
@@ -61,49 +57,19 @@ export function AppUpdatePanel(props: Props) {
     }
   }
 
-  async function handleInstall() {
-    if (!installableResult) {
-      return;
-    }
-
-    setInstalling(true);
-    try {
-      const installResult = await installDesktopAppUpdate({
-        releaseId: installableResult.releaseId,
-        bundleAssetId: installableResult.bundleAsset.assetId,
-        bundleFileSize: installableResult.bundleAsset.fileSize,
-        bundleDownloadUrl: installableResult.bundleAsset.downloadUrl || "",
-        targetVersion: installableResult.releaseVersion,
-        targetVersionCode: installableResult.releaseVersionCode,
-        updateInfoAssetId: installableResult.updateInfoAsset?.assetId,
-        updateInfoDownloadUrl: installableResult.updateInfoAsset?.downloadUrl,
-      });
-      message.success(installResult.message);
-      if (installResult.closeRequested) {
-        window.setTimeout(() => {
-          void runDesktopWindowAction("close");
-        }, 240);
-      }
-    } catch (error) {
-      message.error(`${props.t("设置页.更新.反馈.安装失败")}: ${normalizeError(error)}`);
-    } finally {
-      setInstalling(false);
-    }
-  }
-
   async function handleDownload() {
     if (!downloadAsset?.downloadUrl) {
       return;
     }
 
-    setInstalling(true);
+    setOpeningDownload(true);
     try {
       await openDesktopExternalUrl(downloadAsset.downloadUrl);
       message.success(props.t("设置页.更新.反馈.已打开下载链接"));
     } catch (error) {
       message.error(`${props.t("设置页.更新.反馈.打开下载失败")}: ${normalizeError(error)}`);
     } finally {
-      setInstalling(false);
+      setOpeningDownload(false);
     }
   }
 
@@ -138,17 +104,23 @@ export function AppUpdatePanel(props: Props) {
         </Descriptions.Item>
       </Descriptions>
 
+      {result?.hasUpdate ? (
+        <Typography.Paragraph className="settings-page-update-notes">
+          {props.t("设置页.更新.提示.便携包与Npm")}
+        </Typography.Paragraph>
+      ) : null}
+
       <div className="settings-page-update-actions">
         <Button type="default" loading={checking} onClick={() => void handleCheck()}>
           {props.t("设置页.更新.按钮.检查更新")}
         </Button>
         <Button
           type="primary"
-          loading={installing}
-          disabled={!canInstall && !canDownload}
-          onClick={() => void (canInstall ? handleInstall() : handleDownload())}
+          loading={openingDownload}
+          disabled={!canDownload}
+          onClick={() => void handleDownload()}
         >
-          {canInstall ? props.t("设置页.更新.按钮.下载安装") : props.t("设置页.更新.按钮.下载更新")}
+          {props.t("设置页.更新.按钮.下载更新")}
         </Button>
       </div>
     </section>
