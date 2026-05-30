@@ -1,4 +1,4 @@
-import { chmodSync, cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -15,6 +15,7 @@ import { stageElectrobunHostCli } from "./build-electrobun-host-cli";
 import {
   exportPortableAssets,
   normalizeMacosReleaseFormat,
+  resolvePortableReleaseAssetName,
 } from "./build-portable-release-assets";
 
 const APP_NAME = "MaomiAgent";
@@ -83,10 +84,18 @@ async function main(): Promise<void> {
 
 async function prepareReleaseArtifacts(channel: string): Promise<void> {
   const targetPlatform = resolveDesktopAppUpdatePlatform();
+  const macosReleaseFormat = normalizeMacosReleaseFormat(
+    process.env.MAOMI_DESKTOP_MACOS_RELEASE_FORMAT,
+  );
+  let nativeMacosDmgPath: string | undefined;
 
   try {
     await runNativeReleasePackaging();
-    return;
+    nativeMacosDmgPath = resolveNativeMacosDmgArtifactPath(
+      channel,
+      targetPlatform,
+      macosReleaseFormat,
+    );
   } catch (error) {
     const normalizedError = normalizeError(error);
     const fallbackMode = resolveDesktopReleaseArtifactMode(targetPlatform);
@@ -99,7 +108,10 @@ async function prepareReleaseArtifacts(channel: string): Promise<void> {
     console.warn(failureMessage);
   }
 
-  await prepareBundleOnlyReleaseArtifacts(channel, targetPlatform);
+  await preparePortableReleaseArtifacts(channel, targetPlatform, {
+    macosReleaseFormat,
+    nativeMacosDmgPath,
+  });
 }
 
 async function runNativeReleasePackaging(): Promise<void> {
@@ -127,17 +139,18 @@ async function prepareWindowsBundle(): Promise<string> {
   return bundleRoot;
 }
 
-async function prepareBundleOnlyReleaseArtifacts(
+async function preparePortableReleaseArtifacts(
   channel: string,
   targetPlatform: DesktopTargetPlatform,
+  input: {
+    macosReleaseFormat: ReturnType<typeof normalizeMacosReleaseFormat>;
+    nativeMacosDmgPath?: string;
+  },
 ): Promise<void> {
   const releasePlatformPrefix = formatPlatformPrefix(channel, targetPlatform.os, targetPlatform.arch);
   const releaseBuildRoot = join(projectRoot, buildFolder, releasePlatformPrefix);
   const bundleRoot = join(releaseBuildRoot, resolveReleaseBundleFolderName(targetPlatform.os));
   const artifactRoot = join(projectRoot, artifactFolder);
-  const macosReleaseFormat = normalizeMacosReleaseFormat(
-    process.env.MAOMI_DESKTOP_MACOS_RELEASE_FORMAT,
-  );
 
   rmSync(releaseBuildRoot, { recursive: true, force: true });
   mkdirSync(releaseBuildRoot, { recursive: true });
@@ -155,8 +168,10 @@ async function prepareBundleOnlyReleaseArtifacts(
     bundleRoot,
     channel,
     targetPlatform,
-    macosReleaseFormat,
+    macosReleaseFormat: input.macosReleaseFormat,
+    nativeMacosDmgPath: input.nativeMacosDmgPath,
   });
+  removeLegacyNativeReleaseArtifacts(artifactRoot);
 
   console.log(
     `[release] exported ${targetPlatform.os}-${targetPlatform.arch} portable release asset ${portableAssets.releaseAssetPath}`,
@@ -409,6 +424,27 @@ function resolveReleaseBundleFolderName(os: string): string {
   return os === "macos" ? `${APP_NAME}.app` : APP_NAME;
 }
 
+function resolveNativeMacosDmgArtifactPath(
+  channel: string,
+  targetPlatform: DesktopTargetPlatform,
+  macosReleaseFormat: ReturnType<typeof normalizeMacosReleaseFormat>,
+): string | undefined {
+  if (targetPlatform.os !== "macos" || macosReleaseFormat !== "dmg") {
+    return undefined;
+  }
+
+  return join(
+    projectRoot,
+    artifactFolder,
+    resolvePortableReleaseAssetName({
+      channel,
+      os: targetPlatform.os,
+      arch: targetPlatform.arch,
+      format: "dmg",
+    }),
+  );
+}
+
 function resolveElectrobunPlatformDist(os: string, arch: string): string {
   return join(ELECTROBUN_PACKAGE_ROOT, `dist-${os}-${arch}`);
 }
@@ -453,6 +489,20 @@ function ensureExecutableFile(filePath: string, os: string): void {
 
 function formatPlatformPrefix(channel: string, os: string, arch: string): string {
   return `${channel}-${os}-${arch}`;
+}
+
+function removeLegacyNativeReleaseArtifacts(artifactRoot: string): void {
+  if (!existsSync(artifactRoot)) {
+    return;
+  }
+
+  for (const entryName of readdirSync(artifactRoot)) {
+    if (entryName === "release" || entryName === "npm") {
+      continue;
+    }
+
+    rmSync(join(artifactRoot, entryName), { recursive: true, force: true });
+  }
 }
 
 function resolveElectrobunPackageRoot(): string {

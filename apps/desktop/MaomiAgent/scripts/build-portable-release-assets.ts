@@ -78,6 +78,7 @@ export async function exportPortableAssets(input: {
   channel: string;
   targetPlatform: PortableTargetPlatform;
   macosReleaseFormat?: MacosReleaseFormat;
+  nativeMacosDmgPath?: string;
 }): Promise<{
   releaseRoot: string;
   npmRoot: string;
@@ -89,6 +90,8 @@ export async function exportPortableAssets(input: {
   const npmRoot = join(artifactRoot, "npm");
   const macosReleaseFormat = input.macosReleaseFormat ?? "app-zip";
 
+  rmSync(releaseRoot, { recursive: true, force: true });
+  rmSync(npmRoot, { recursive: true, force: true });
   mkdirSync(releaseRoot, { recursive: true });
   mkdirSync(npmRoot, { recursive: true });
 
@@ -112,10 +115,10 @@ export async function exportPortableAssets(input: {
   );
 
   if (input.targetPlatform.os === "macos" && macosReleaseFormat === "dmg") {
-    const siblingDmgPath = join(dirname(input.bundleRoot), `${APP_NAME}.dmg`);
-    if (!existsSync(siblingDmgPath)) {
-      throw new Error(`Missing macOS dmg build output: ${siblingDmgPath}`);
-    }
+    const dmgSourcePath = resolvePortableMacosDmgSourcePath(
+      input.nativeMacosDmgPath,
+      input.bundleRoot,
+    );
 
     releaseAssetPath = join(
       releaseRoot,
@@ -126,7 +129,7 @@ export async function exportPortableAssets(input: {
         format: "dmg",
       }),
     );
-    cpSync(siblingDmgPath, releaseAssetPath, { force: true });
+    cpSync(dmgSourcePath, releaseAssetPath, { force: true });
   } else {
     cpSync(npmArchivePath, releaseAssetPath, { force: true });
   }
@@ -188,6 +191,21 @@ async function createZipArchive(input: {
     return;
   }
 
+  if (process.platform === "darwin" && input.sourceEntryName.endsWith(".app")) {
+    await runCommand(
+      [
+        "ditto",
+        "-c",
+        "-k",
+        "--keepParent",
+        input.sourceEntryName,
+        resolve(input.destinationPath),
+      ],
+      input.sourceRoot,
+    );
+    return;
+  }
+
   await runCommand(
     ["zip", "-y", "-r", "-9", resolve(input.destinationPath), input.sourceEntryName],
     input.sourceRoot,
@@ -213,4 +231,26 @@ async function runCommand(command: string[], cwd: string): Promise<void> {
 
 function escapePowerShellLiteral(value: string): string {
   return value.replaceAll("'", "''");
+}
+
+function resolvePortableMacosDmgSourcePath(
+  nativeMacosDmgPath: string | undefined,
+  bundleRoot: string,
+): string {
+  if (nativeMacosDmgPath && existsSync(nativeMacosDmgPath)) {
+    return nativeMacosDmgPath;
+  }
+
+  const siblingDmgPath = join(dirname(bundleRoot), `${APP_NAME}.dmg`);
+  if (existsSync(siblingDmgPath)) {
+    return siblingDmgPath;
+  }
+
+  if (nativeMacosDmgPath) {
+    throw new Error(
+      `Missing macOS dmg build output: ${nativeMacosDmgPath}. Checked sibling fallback at ${siblingDmgPath}.`,
+    );
+  }
+
+  throw new Error(`Missing macOS dmg build output: ${siblingDmgPath}`);
 }
