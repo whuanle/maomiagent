@@ -12,7 +12,7 @@ export async function launchGui({ runtimeRoot, target, dryRun = false }) {
   }
 
   if (dryRun || process.env.MAOMI_AGENT_LAUNCH_TEST === "1") {
-    console.log(`Dry run: ${launchPath}`);
+    console.log(launchPath);
     return {
       didLaunch: false,
       launchPath,

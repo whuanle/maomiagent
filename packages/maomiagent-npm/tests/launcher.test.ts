@@ -75,6 +75,6 @@ describe("launchGui", () => {
       didLaunch: false,
       launchPath,
     });
-    expect(consoleSpy).toHaveBeenCalledWith(`Dry run: ${launchPath}`);
+    expect(consoleSpy).toHaveBeenCalledWith(launchPath);
   });
 });
