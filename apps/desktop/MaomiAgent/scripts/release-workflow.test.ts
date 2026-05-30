@@ -11,7 +11,7 @@ const workflowPath = path.resolve(
   "..",
   ".github",
   "workflows",
-  "desktop-release.yml",
+  "release.yml",
 );
 const workflowText = readFileSync(workflowPath, "utf8");
 
