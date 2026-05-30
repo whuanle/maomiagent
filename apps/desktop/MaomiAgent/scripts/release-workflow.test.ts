@@ -41,7 +41,18 @@ describe("desktop-release workflow", () => {
   test("uploads portable artifacts and publishes release plus npm packages", () => {
     expect(workflowText).toContain("path: apps/desktop/MaomiAgent/artifacts/**/*");
     expect(workflowText).toContain("files: release-assets/release/*");
+    expect(workflowText).toContain("runs-on: ubuntu-24.04");
+    expect(workflowText).toContain("uses: actions/setup-node@v4");
     expect(workflowText).toContain("node-version: 22");
+    expect(workflowText).toContain("registry-url: https://registry.npmjs.org");
+    expect(workflowText).toContain("path: release-assets");
+    expect(workflowText).toContain("run: node scripts/assemble-maomiagent-npm-package.mjs");
+    expect(workflowText).toContain(
+      "MAOMI_AGENT_NPM_ARTIFACT_ROOT: ${{ github.workspace }}/release-assets/npm",
+    );
+    expect(workflowText).toContain(
+      "MAOMI_AGENT_NPM_VERSION: ${{ needs.prepare-release.outputs.version }}",
+    );
     expect(workflowText).toContain("NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}");
     expect(workflowText).toContain("npm publish ./packages/maomiagent-npm --access public");
     expect(workflowText).not.toContain("release-assets/*.tar.zst");
