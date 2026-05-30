@@ -32,6 +32,8 @@
     "recovery:inventory": "bun scripts/recovery/collect-recovery-inventory.ts",
     "recovery:batch-map": "bun scripts/recovery/build-recovery-batch-map.ts",
     "recovery:apply": "bun scripts/recovery/apply-recovery-batch.ts",
+    "desktop:assemble:npm-package": "node scripts/assemble-maomiagent-npm-package.mjs",
+    "desktop:npm:pack": "npm pack ./packages/maomiagent-npm",
     "maomi": "bun run dev",
     "maomi:dev": "bun run dev",
     "maomi:web": "bun run ui:dev"
