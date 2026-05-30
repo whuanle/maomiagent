@@ -23,6 +23,7 @@
     "build": "bun run brand:generate && vite build && bun run scripts/build-electrobun-bundle.ts",
     "release:prepare-web": "bun run brand:generate && vite build",
     "release:build": "bun run release:prepare-web && MAOMI_DESKTOP_BUILD_MODE=release bun run scripts/build-electrobun-bundle.ts",
+    "release:artifacts:test": "bun test scripts/build-portable-release-assets.test.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },

@@ -1,5 +1,5 @@
 import { chmodSync, cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -12,6 +12,10 @@ import {
   resolveDesktopReleaseArtifactMode,
 } from "./build-electrobun-release-policy";
 import { stageElectrobunHostCli } from "./build-electrobun-host-cli";
+import {
+  exportPortableAssets,
+  normalizeMacosReleaseFormat,
+} from "./build-portable-release-assets";
 
 const APP_NAME = "MaomiAgent";
 const APP_IDENTIFIER = "com.maomiagent.desktop";
@@ -130,16 +134,9 @@ async function prepareBundleOnlyReleaseArtifacts(
   const releasePlatformPrefix = formatPlatformPrefix(channel, targetPlatform.os, targetPlatform.arch);
   const releaseBuildRoot = join(projectRoot, buildFolder, releasePlatformPrefix);
   const bundleRoot = join(releaseBuildRoot, resolveReleaseBundleFolderName(targetPlatform.os));
-  const tarPath = join(releaseBuildRoot, `${basename(bundleRoot)}.tar`);
-  const compressedTarPath = `${tarPath}.zst`;
   const artifactRoot = join(projectRoot, artifactFolder);
-  const artifactBundlePath = join(
-    artifactRoot,
-    `${releasePlatformPrefix}-${basename(compressedTarPath)}`,
-  );
-  const zstdPath = join(
-    resolveElectrobunPlatformDist(targetPlatform.os, targetPlatform.arch),
-    resolveExecutableName("zig-zstd", targetPlatform.os),
+  const macosReleaseFormat = normalizeMacosReleaseFormat(
+    process.env.MAOMI_DESKTOP_MACOS_RELEASE_FORMAT,
   );
 
   rmSync(releaseBuildRoot, { recursive: true, force: true });
@@ -153,31 +150,20 @@ async function prepareBundleOnlyReleaseArtifacts(
     targetPlatform,
   });
 
-  await createTarArchive({
-    tarPath,
-    cwd: releaseBuildRoot,
-    entries: [basename(bundleRoot)],
+  const portableAssets = await exportPortableAssets({
+    artifactRoot,
+    bundleRoot,
+    channel,
+    targetPlatform,
+    macosReleaseFormat,
   });
-  await runCommand(
-    [
-      zstdPath,
-      "compress",
-      "-i",
-      basename(tarPath),
-      "-o",
-      basename(compressedTarPath),
-      "--threads",
-      "max",
-    ],
-    undefined,
-    releaseBuildRoot,
+
+  console.log(
+    `[release] exported ${targetPlatform.os}-${targetPlatform.arch} portable release asset ${portableAssets.releaseAssetPath}`,
   );
-
-  rmSync(artifactRoot, { recursive: true, force: true });
-  mkdirSync(artifactRoot, { recursive: true });
-  cpSync(compressedTarPath, artifactBundlePath, { force: true });
-
-  console.log(`[release] exported ${targetPlatform.os}-${targetPlatform.arch} bundle-only artifact ${artifactBundlePath}`);
+  console.log(
+    `[release] exported ${targetPlatform.os}-${targetPlatform.arch} npm asset ${portableAssets.npmArchivePath}`,
+  );
 }
 
 async function prepareBundleAt(input: {
@@ -395,18 +381,6 @@ function writeBundleMetadata(input: {
       2,
     )}\n`,
   );
-}
-
-async function createTarArchive(input: {
-  tarPath: string;
-  cwd: string;
-  entries: string[];
-}): Promise<void> {
-  const resolvedTarPath = process.platform === "win32"
-    ? relative(input.cwd, input.tarPath)
-    : input.tarPath;
-
-  await runCommand(["tar", "-cf", resolvedTarPath, ...input.entries], undefined, input.cwd);
 }
 
 function writeGeneratedUpdateConfig(channel: string): void {
