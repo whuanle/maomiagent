@@ -48,6 +48,8 @@ describe("desktop-release workflow", () => {
     expect(workflowText).toContain("uses: actions/setup-node@v4");
     expect(workflowText).toContain("node-version: 22");
     expect(workflowText).toContain("registry-url: https://registry.npmjs.org");
+    expect(workflowText).toContain("Upgrade npm CLI for trusted publishing");
+    expect(workflowText).toContain("npm install --global npm@11.16.0");
     expect(workflowText).toContain("path: release-assets");
     expect(workflowText).toContain("Remove existing release assets for tag");
     expect(workflowText).toContain("https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ needs.prepare-release.outputs.tag_name }}");
@@ -63,9 +65,8 @@ describe("desktop-release workflow", () => {
       "MAOMI_AGENT_NPM_VERSION: ${{ needs.prepare-release.outputs.npm_version }}",
     );
     expect(workflowText).not.toContain("NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}");
-    expect(workflowText).toContain(
-      "npm publish ./packages/maomiagent-npm --access public --provenance",
-    );
+    expect(workflowText).toContain("npm publish ./packages/maomiagent-npm --access public");
+    expect(workflowText).not.toContain("--provenance");
     expect(workflowText).not.toContain("release-assets/*.tar.zst");
     expect(workflowText).not.toContain("release-assets/*update.json");
   });
