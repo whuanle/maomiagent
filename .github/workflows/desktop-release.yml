@@ -162,6 +162,9 @@ jobs:
       - prepare-release
       - build
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - name: Checkout repository
@@ -172,6 +175,9 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
+
+      - name: Upgrade npm CLI for trusted publishing
+        run: npm install --global npm@11.16.0
 
       - name: Download npm artifacts
         uses: actions/download-artifact@v4
@@ -190,6 +196,4 @@ jobs:
         run: node scripts/assemble-maomiagent-npm-package.mjs
 
       - name: Publish npm package
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish ./packages/maomiagent-npm --access public
