@@ -5,15 +5,26 @@ import { fileURLToPath } from "node:url";
 const APP_NAME = "MaomiAgent";
 const projectRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const WINDOWS_PORTABLE_LAUNCHER_ENTRYPOINT = join(projectRoot, "scripts", "portable-windows-launcher.ts");
-const WINDOWS_PORTABLE_ICON_PATH = join(
-  projectRoot,
-  "src",
-  "mainview",
-  "public",
-  "branding",
-  "generated",
-  "icon-512.png",
-);
+const WINDOWS_PORTABLE_ICON_CANDIDATES = [
+  join(
+    projectRoot,
+    "src",
+    "mainview",
+    "public",
+    "branding",
+    "generated",
+    "icon-512.ico",
+  ),
+  join(
+    projectRoot,
+    "src",
+    "mainview",
+    "public",
+    "branding",
+    "generated",
+    "icon.ico",
+  ),
+];
 
 type PortableTargetOs = "win" | "linux" | "macos";
 type PortableAssetFormat = "portable-zip" | "app-zip" | "dmg";
@@ -242,8 +253,9 @@ export function resolvePortableWindowsExecutableCommand(
     resolvePortableWindowsExecutableVersion(input.bundleRoot),
   ];
 
-  if (existsSync(WINDOWS_PORTABLE_ICON_PATH)) {
-    command.push("--windows-icon", WINDOWS_PORTABLE_ICON_PATH);
+  const windowsIconPath = resolvePortableWindowsIconPath();
+  if (windowsIconPath) {
+    command.push("--windows-icon", windowsIconPath);
   }
 
   return {
@@ -255,6 +267,21 @@ export function resolvePortableWindowsExecutableCommand(
 async function createPortableWindowsExecutable(input: PortableWindowsExecutableInput): Promise<void> {
   const compileCommand = resolvePortableWindowsExecutableCommand(input);
   await runCommand(compileCommand.command, compileCommand.cwd);
+}
+
+export function resolvePortableWindowsIconPath(
+  iconCandidates: readonly string[] = WINDOWS_PORTABLE_ICON_CANDIDATES,
+): string | undefined {
+  for (const iconPath of iconCandidates) {
+    if (!iconPath.toLowerCase().endsWith(".ico")) {
+      continue;
+    }
+    if (existsSync(iconPath)) {
+      return iconPath;
+    }
+  }
+
+  return undefined;
 }
 
 function resolvePortableReleaseArchiveInput(

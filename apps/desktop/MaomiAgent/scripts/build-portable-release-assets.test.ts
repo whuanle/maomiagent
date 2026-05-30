@@ -12,6 +12,7 @@ import {
   resolvePortableArchiveCommand,
   resolvePortableMacosDmgSourcePath,
   resolvePortableReleaseAssetName,
+  resolvePortableWindowsIconPath,
   resolvePortableWindowsExecutableCommand,
 } from "./build-portable-release-assets";
 import { resolvePortableExportAfterNativePackagingFailure } from "./build-electrobun-bundle";
@@ -77,6 +78,23 @@ describe("build-portable-release-assets", () => {
       expect(command.command).toContain("--windows-version");
       expect(command.command).toContain("0.0.2.0");
       expect(command.command).toContain(join(bundleRoot, "MaomiAgent.exe"));
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("ignores png icon candidates and only returns existing ico files", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "maomi-portable-windows-icon-"));
+
+    try {
+      const pngPath = join(tempRoot, "icon-512.png");
+      const icoPath = join(tempRoot, "icon-512.ico");
+      writeFileSync(pngPath, "png");
+
+      expect(resolvePortableWindowsIconPath([pngPath])).toBeUndefined();
+
+      writeFileSync(icoPath, "ico");
+      expect(resolvePortableWindowsIconPath([pngPath, icoPath])).toBe(icoPath);
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }
