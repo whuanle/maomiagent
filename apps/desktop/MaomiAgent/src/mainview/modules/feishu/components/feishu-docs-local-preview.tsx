@@ -20,21 +20,19 @@ import {
   type JsxEditorProps,
 } from "@mdxeditor/editor"
 import "@mdxeditor/editor/style.css"
-import DOMPurify from "dompurify"
 import katex from "katex"
 import "katex/dist/katex.min.css"
-import mermaid from "mermaid"
 import { Image, Tag, Typography } from "antd"
 import { gfmStrikethroughToMarkdown } from "mdast-util-gfm-strikethrough"
 import { gfmTableToMarkdown } from "mdast-util-gfm-table"
 import { gfmTaskListItemToMarkdown } from "mdast-util-gfm-task-list-item"
 import { mdxToMarkdown } from "mdast-util-mdx"
 import { toMarkdown } from "mdast-util-to-markdown"
-import { Fragment, useEffect, useId, useMemo, useState, type CSSProperties, type ReactNode } from "react"
+import { Fragment, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react"
 import type { Root, RootContent } from "mdast"
 import type { LanguageCode } from "../../../config/titlebar"
 import type { FeishuI18nKey as I18nKey, FeishuTranslate as Translate } from "../types"
-import { isDarkThemeMode, readThemeMode } from "../../../theme/antd-theme"
+import { looksLikeMermaidMindmapSource } from "../../../lib/conversation-mindmap-preview"
 import {
   formatFeishuDocsReminderMeta,
   normalizeFeishuDocsAttributes,
@@ -51,6 +49,8 @@ import {
   parseMarkdownIndentedCodeBlock,
 } from "./feishu-docs-markdown-code"
 import { shouldRenderFeishuDocsMermaidBlock } from "./feishu-docs-mermaid"
+import { FeishuDocMermaidPreview } from "./feishu-doc-mermaid-preview"
+import { FeishuDocMindmapPreview } from "./feishu-doc-mindmap-preview"
 import { renderHighlightedFeishuDocsCode, resolveFeishuDocsHighlightLanguage } from "./feishu-docs-markdown-highlight"
 import { parseFeishuDocsLocalPreview, type FeishuDocsPreviewNode } from "./feishu-docs-local-preview-model"
 import {
@@ -174,8 +174,6 @@ type FeishuDocsMdxJsxNode = JsxEditorProps["mdastNode"]
 
 const FEISHU_DOCS_BOARD_PREVIEW_MAX_WIDTH = 700
 const FEISHU_DOCS_BOARD_PREVIEW_MAX_HEIGHT = 700
-const FEISHU_DOCS_DIAGRAM_PREVIEW_MAX_WIDTH = 700
-const FEISHU_DOCS_DIAGRAM_PREVIEW_MAX_HEIGHT = 700
 
 export const FEISHU_DOCS_MARKDOWN_CODE_BLOCK_LANGUAGE_LABELS: Record<string, string> = {
   bash: "Bash",
@@ -697,96 +695,6 @@ function FeishuDocsMathBlock(input: {
       {rendered.error ? (
         <Text type="secondary" className="feishu-docs-local-preview-math-note">
           {previewText(input.t, "飞书页.文档.预览.公式.渲染失败", "公式渲染失败，已回退源码。")}
-        </Text>
-      ) : null}
-    </div>
-  )
-}
-
-function FeishuDocsMermaidBlock(input: {
-  source: string
-  t?: Translate
-}) {
-  const source = useMemo(
-    () => normalizeMarkdownSource(input.source).trim(),
-    [input.source],
-  )
-  const renderId = useId().replace(/[^a-zA-Z0-9_-]/g, "")
-  const [svg, setSvg] = useState("")
-  const [error, setError] = useState("")
-  const mermaidTheme = isDarkThemeMode(readThemeMode()) ? "dark" : "default"
-
-  useEffect(() => {
-    if (!source || typeof window === "undefined") {
-      setSvg("")
-      setError("")
-      return
-    }
-
-    let cancelled = false
-    setSvg("")
-    setError("")
-
-    mermaid.initialize({
-      startOnLoad: false,
-      securityLevel: "strict",
-      theme: mermaidTheme,
-      htmlLabels: false,
-    })
-
-    void mermaid.render(`feishu-docs-mermaid-${renderId}`, source)
-      .then((rendered) => {
-        if (cancelled) {
-          return
-        }
-        setSvg(
-          DOMPurify.sanitize(rendered.svg, {
-            USE_PROFILES: {
-              svg: true,
-              svgFilters: true,
-            },
-            ADD_TAGS: ["style"],
-            ADD_ATTR: ["style"],
-          }),
-        )
-        setError("")
-      })
-      .catch((renderError) => {
-        if (cancelled) {
-          return
-        }
-        setSvg("")
-        setError(resolvePreviewErrorMessage(renderError))
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [mermaidTheme, renderId, source])
-
-  return (
-    <div className="feishu-docs-local-preview-mermaid-shell">
-      {svg ? (
-        <div
-          className="feishu-docs-local-preview-mermaid-rendered"
-          style={{
-            maxWidth: `${FEISHU_DOCS_DIAGRAM_PREVIEW_MAX_WIDTH}px`,
-            maxHeight: `${FEISHU_DOCS_DIAGRAM_PREVIEW_MAX_HEIGHT}px`,
-          }}
-          dangerouslySetInnerHTML={{ __html: svg }}
-        />
-      ) : (
-        <pre className="feishu-docs-local-preview-mermaid-fallback">
-          <code>{source}</code>
-        </pre>
-      )}
-      {error ? (
-        <Text type="secondary" className="feishu-docs-local-preview-math-note">
-          {previewText(
-            input.t,
-            "飞书页.文档.预览.Mermaid.渲染失败",
-            "Mermaid 渲染失败，已回退源码。",
-          )}
         </Text>
       ) : null}
     </div>
@@ -1993,7 +1901,11 @@ function renderMarkdownCodeBlock(
   if (shouldRenderFeishuDocsMermaidBlock({ language: block.language, source: block.code })) {
     return (
       <div key={key} className="feishu-docs-local-preview-code-block is-mermaid" data-language={block.language}>
-        <FeishuDocsMermaidBlock source={block.code} t={context.t} />
+        {looksLikeMermaidMindmapSource(block.code) ? (
+          <FeishuDocMindmapPreview source={block.code} t={context.t} language={context.language} />
+        ) : (
+          <FeishuDocMermaidPreview source={block.code} t={context.t} />
+        )}
       </div>
     )
   }
@@ -3140,7 +3052,9 @@ function FeishuDocsReadonlyMdxMarkdown(props: FeishuDocsMdxMarkdownProps) {
       }
 
       if (shouldRenderFeishuDocsMermaidBlock({ language: editorProps.language, source: editorProps.code })) {
-        return <FeishuDocsMermaidBlock source={editorProps.code} t={props.t} />
+        return looksLikeMermaidMindmapSource(editorProps.code)
+          ? <FeishuDocMindmapPreview source={editorProps.code} t={props.t} language={props.language} />
+          : <FeishuDocMermaidPreview source={editorProps.code} t={props.t} />
       }
 
       return (

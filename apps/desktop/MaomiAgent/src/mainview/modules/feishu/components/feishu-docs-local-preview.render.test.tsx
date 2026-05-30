@@ -7,12 +7,20 @@ import {
 } from "../../../../shared/desktop-feishu-oauth"
 import { normalizeFeishuDocsPreviewHref } from "./feishu-docs-render-utils"
 
-async function source(): Promise<string> {
-  return readFile(new URL("./feishu-docs-local-preview.tsx", import.meta.url), "utf8")
+async function source(relativePath = "./feishu-docs-local-preview.tsx"): Promise<string> {
+  return readFile(new URL(relativePath, import.meta.url), "utf8")
 }
 
 async function tableLayoutSource(): Promise<string> {
   return readFile(new URL("./feishu-docs-native-table-layout.ts", import.meta.url), "utf8")
+}
+
+async function diagramModalSource(): Promise<string> {
+  return readFile(new URL("./feishu-doc-diagram-preview-modal.tsx", import.meta.url), "utf8")
+}
+
+async function diagramToolbarSource(): Promise<string> {
+  return readFile(new URL("./feishu-doc-diagram-toolbar.tsx", import.meta.url), "utf8")
 }
 
 describe("FeishuDocsLocalPreview", () => {
@@ -82,16 +90,50 @@ describe("FeishuDocsLocalPreview", () => {
 
   test("renders mermaid diagrams inline, recognizes flowchart sources and falls back from broken preview images", async () => {
     const previewSource = await source()
+    const modalSource = await diagramModalSource()
+    const toolbarSource = await diagramToolbarSource()
+    const mermaidPreviewSource = await source("./feishu-doc-mermaid-preview.tsx")
+    const mindmapPreviewSource = await source("./feishu-doc-mindmap-preview.tsx")
 
-    expect(previewSource).toContain("const FEISHU_DOCS_DIAGRAM_PREVIEW_MAX_WIDTH = 700")
-    expect(previewSource).toContain("const FEISHU_DOCS_DIAGRAM_PREVIEW_MAX_HEIGHT = 700")
-    expect(previewSource).toContain('import mermaid from "mermaid"')
+    expect(previewSource).toContain('import { looksLikeMermaidMindmapSource } from "../../../lib/conversation-mindmap-preview"')
+    expect(previewSource).toContain('import { FeishuDocMermaidPreview } from "./feishu-doc-mermaid-preview"')
+    expect(previewSource).toContain('import { FeishuDocMindmapPreview } from "./feishu-doc-mindmap-preview"')
     expect(previewSource).toContain("shouldRenderFeishuDocsMermaidBlock")
-    expect(previewSource).toContain('ADD_TAGS: ["style"]')
-    expect(previewSource).toContain('dangerouslySetInnerHTML={{ __html: svg }}')
-    expect(previewSource).toContain("maxWidth: `${FEISHU_DOCS_DIAGRAM_PREVIEW_MAX_WIDTH}px`")
-    expect(previewSource).toContain("maxHeight: `${FEISHU_DOCS_DIAGRAM_PREVIEW_MAX_HEIGHT}px`")
+    expect(previewSource).toContain("looksLikeMermaidMindmapSource(block.code)")
+    expect(previewSource).toContain("<FeishuDocMindmapPreview")
+    expect(previewSource).toContain("<FeishuDocMermaidPreview")
     expect(previewSource).toContain("onError={() => setImageFailed(true)}")
     expect(previewSource).toContain('feishu-docs-local-preview-image-placeholder${input.plain ? " is-plain" : ""}')
+
+    expect(mermaidPreviewSource).toContain('import mermaid from "mermaid"')
+    expect(mermaidPreviewSource).toContain("const FEISHU_DOCS_DIAGRAM_PREVIEW_MAX_WIDTH = 700")
+    expect(mermaidPreviewSource).toContain("const FEISHU_DOCS_DIAGRAM_PREVIEW_MAX_HEIGHT = 700")
+    expect(mermaidPreviewSource).toContain('ADD_TAGS: ["style"]')
+    expect(mermaidPreviewSource).toContain('dangerouslySetInnerHTML={{ __html: props.svg }}')
+    expect(mermaidPreviewSource).toContain("FeishuDocDiagramPreviewModal")
+    expect(mermaidPreviewSource).toContain("FeishuDocDiagramToolbar")
+    expect(mermaidPreviewSource).toContain("downloadFeishuDocPreviewSvg")
+    expect(mermaidPreviewSource).toContain('className="feishu-doc-diagram-viewport"')
+    expect(mermaidPreviewSource).toContain('className="feishu-docs-local-preview-diagram-trigger"')
+
+    expect(mindmapPreviewSource).toContain('import { MindMapViewer, type MindMapViewerRef } from "@xiangfa/mindmap/viewer"')
+    expect(mindmapPreviewSource).toContain("buildConversationMindmapPreviewData")
+    expect(mindmapPreviewSource).toContain("looksLikeMermaidMindmapSource")
+    expect(mindmapPreviewSource).toContain("viewer.fitView()")
+    expect(mindmapPreviewSource).toContain("FeishuDocDiagramToolbar")
+    expect(mindmapPreviewSource).toContain("serializeFeishuDocPreviewSvgElement")
+    expect(mindmapPreviewSource).toContain("downloadFeishuDocPreviewSvg")
+    expect(mindmapPreviewSource).toContain('className="feishu-docs-local-preview-diagram-trigger is-mindmap"')
+    expect(mindmapPreviewSource).toContain("FeishuDocDiagramPreviewModal")
+
+    expect(modalSource).toContain("title={null}")
+    expect(modalSource).toContain("footer={null}")
+    expect(modalSource).toContain('width="min(1560px, calc(100vw - 32px))"')
+
+    expect(toolbarSource).toContain("DownloadOutlined")
+    expect(toolbarSource).toContain("ExpandOutlined")
+    expect(toolbarSource).toContain("MinusOutlined")
+    expect(toolbarSource).toContain("PlusOutlined")
+    expect(toolbarSource).toContain('role="toolbar"')
   })
 })

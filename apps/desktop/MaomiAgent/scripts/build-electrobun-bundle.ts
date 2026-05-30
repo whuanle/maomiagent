@@ -1,5 +1,5 @@
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -43,6 +43,8 @@ const BUNDLED_RENDERER_DIST = join(projectRoot, "dist");
 const GENERATED_FOLDER = join(projectRoot, ".generated");
 const GENERATED_UPDATE_CONFIG_PATH = join(GENERATED_FOLDER, "update-config.json");
 const ELECTROBUN_STABLE_ENV = "stable";
+const ELECTROBUN_GITHUB_RELEASES = "https://github.com/blackboardsh/electrobun/releases/download";
+const ELECTROBUN_PACKAGE_VERSION = resolveElectrobunPackageVersion();
 
 type DesktopTargetPlatform = ReturnType<typeof resolveDesktopAppUpdatePlatform>;
 
@@ -77,6 +79,7 @@ async function main(): Promise<void> {
   if (buildMode === "release") {
     const releaseChannel = resolveReleaseChannel();
     writeGeneratedUpdateConfig(releaseChannel);
+    logReleaseStep(`starting ${releaseChannel} desktop release build for ${APP_VERSION}`);
     await prepareReleaseArtifacts(releaseChannel);
     console.log(`Prepared desktop release artifacts at ${join(projectRoot, artifactFolder)}`);
     return;
@@ -182,6 +185,7 @@ async function preparePortableReleaseArtifacts(
     nativeArtifactCleanupPaths: string[];
   },
 ): Promise<void> {
+  logReleaseStep(`preparing portable artifact for ${formatTargetPlatform(targetPlatform)}`);
   const releasePlatformPrefix = formatPlatformPrefix(channel, targetPlatform.os, targetPlatform.arch);
   const releaseBuildRoot = join(projectRoot, buildFolder, releasePlatformPrefix);
   const bundleRoot = join(releaseBuildRoot, resolveReleaseBundleFolderName(targetPlatform.os));
@@ -225,21 +229,29 @@ async function prepareBundleAt(input: {
 }): Promise<void> {
   const layout = resolveBundleLayout(input.bundleRoot, input.targetPlatform.os);
 
+  logReleaseStep(`preparing bundle layout at ${layout.bundleRoot}`);
   rmSync(input.bundleRoot, { force: true, recursive: true });
   mkdirSync(layout.bundleBinDir, { recursive: true });
   mkdirSync(layout.bundleBunDir, { recursive: true });
 
+  await ensureElectrobunRuntimeAssets(input.targetPlatform);
+  logReleaseStep(`copying platform runtime files for ${formatTargetPlatform(input.targetPlatform)}`);
   copyPlatformRuntimeFiles(layout, input.targetPlatform);
+  logReleaseStep("building Bun entrypoint");
   await buildBundleEntrypoint(layout);
+  logReleaseStep("copying bundled renderer assets");
   copyBundledRenderer(layout.bundleAppDir);
 
   if (input.targetPlatform.os === "linux") {
+    logReleaseStep("copying Linux bundle icons");
     copyLinuxBundleIcons(layout);
   }
   if (input.targetPlatform.os === "macos") {
+    logReleaseStep("writing macOS Info.plist");
     writeMacInfoPlist(layout.bundleContentsDir, input.bundleRuntimeName, input.appVersion);
   }
 
+  logReleaseStep("writing bundle metadata");
   writeBundleMetadata({
     layout,
     appVersion: input.appVersion,
@@ -319,6 +331,71 @@ function copyPlatformRuntimeFiles(
   }
 
   copyRequiredFile(resolveElectrobunMainJsPath(targetPlatform), join(layout.bundleResourcesDir, "main.js"));
+}
+
+async function ensureElectrobunRuntimeAssets(
+  targetPlatform: DesktopTargetPlatform,
+): Promise<void> {
+  const requiredAssets = resolveElectrobunRuntimeAssets(targetPlatform);
+  const missingAssets = requiredAssets.filter((filePath) => !existsSync(filePath));
+
+  if (missingAssets.length === 0) {
+    return;
+  }
+
+  logReleaseStep(
+    `Electrobun runtime missing for ${formatTargetPlatform(targetPlatform)}: ${missingAssets
+      .map(formatElectrobunRelativePath)
+      .join(", ")}`,
+  );
+  await downloadElectrobunRuntimeAssets(targetPlatform);
+
+  const unresolvedAssets = requiredAssets.filter((filePath) => !existsSync(filePath));
+  if (unresolvedAssets.length > 0) {
+    throw new Error(
+      `Electrobun runtime download for ${formatTargetPlatform(targetPlatform)} is incomplete: ${unresolvedAssets
+        .map(formatElectrobunRelativePath)
+        .join(", ")}`,
+    );
+  }
+
+  for (const executablePath of resolveElectrobunExecutableAssets(targetPlatform)) {
+    ensureExecutableFile(executablePath, targetPlatform.os);
+  }
+}
+
+async function downloadElectrobunRuntimeAssets(
+  targetPlatform: DesktopTargetPlatform,
+): Promise<void> {
+  const platformDist = resolveElectrobunPlatformDist(targetPlatform.os, targetPlatform.arch);
+  const archivePath = join(
+    ELECTROBUN_PACKAGE_ROOT,
+    `electrobun-core-${targetPlatform.os}-${targetPlatform.arch}.tar.gz`,
+  );
+  const archiveUrl = resolveElectrobunCoreRuntimeUrl(targetPlatform);
+
+  logReleaseStep(`downloading Electrobun core runtime from ${archiveUrl}`);
+  rmSync(archivePath, { force: true });
+  await downloadFile({
+    url: archiveUrl,
+    destinationPath: archivePath,
+  });
+
+  try {
+    logReleaseStep(`extracting Electrobun core runtime into ${platformDist}`);
+    rmSync(platformDist, { recursive: true, force: true });
+    mkdirSync(platformDist, { recursive: true });
+    await extractTarGzArchive({
+      archivePath,
+      destinationPath: platformDist,
+    });
+  } finally {
+    rmSync(archivePath, { force: true });
+  }
+
+  logReleaseStep(
+    `Electrobun runtime extracted for ${formatTargetPlatform(targetPlatform)}: ${readdirSync(platformDist).join(", ")}`,
+  );
 }
 
 async function buildBundleEntrypoint(
@@ -433,6 +510,63 @@ function writeBundleMetadata(input: {
   );
 }
 
+async function extractTarGzArchive(input: {
+  archivePath: string;
+  destinationPath: string;
+}): Promise<void> {
+  await runCommand(
+    ["tar", "-xzf", basename(input.archivePath), "-C", basename(input.destinationPath)],
+    undefined,
+    ELECTROBUN_PACKAGE_ROOT,
+  );
+}
+
+async function downloadFile(input: {
+  url: string;
+  destinationPath: string;
+}): Promise<void> {
+  mkdirSync(dirname(input.destinationPath), { recursive: true });
+
+  const curlExecutable = process.platform === "win32" ? "curl.exe" : "curl";
+  try {
+    await runCommand(
+      [
+        curlExecutable,
+        "-L",
+        "--fail",
+        "--retry",
+        "3",
+        "--retry-delay",
+        "2",
+        "--retry-all-errors",
+        "-o",
+        basename(input.destinationPath),
+        input.url,
+      ],
+      undefined,
+      dirname(input.destinationPath),
+    );
+    return;
+  } catch (error) {
+    logReleaseStep(`curl download failed, retrying with fetch: ${normalizeError(error)}`);
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 180_000);
+  try {
+    const response = await fetch(input.url, {
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`Download failed with status ${response.status}: ${input.url}`);
+    }
+
+    writeFileSync(input.destinationPath, Buffer.from(await response.arrayBuffer()));
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function writeGeneratedUpdateConfig(channel: string): void {
   const targetPlatform = resolveDesktopAppUpdatePlatform();
   mkdirSync(GENERATED_FOLDER, { recursive: true });
@@ -545,6 +679,47 @@ function resolveLibraryExtension(os: string): string {
   throw new Error(`Unsupported desktop library target: ${os}`);
 }
 
+function resolveElectrobunRuntimeAssets(
+  targetPlatform: DesktopTargetPlatform,
+): string[] {
+  const platformDist = resolveElectrobunPlatformDist(targetPlatform.os, targetPlatform.arch);
+  const runtimeAssets = [
+    ...resolveElectrobunExecutableAssets(targetPlatform),
+    join(platformDist, `libNativeWrapper${resolveLibraryExtension(targetPlatform.os)}`),
+    resolveElectrobunMainJsPath(targetPlatform),
+  ];
+
+  if (targetPlatform.os === "win") {
+    runtimeAssets.push(join(platformDist, "WebView2Loader.dll"));
+    runtimeAssets.push(ELECTROBUN_ZIG_ASAR_X64);
+    runtimeAssets.push(ELECTROBUN_ZIG_ASAR_ARM64);
+  } else {
+    runtimeAssets.push(join(platformDist, `libasar${resolveLibraryExtension(targetPlatform.os)}`));
+  }
+
+  return runtimeAssets;
+}
+
+function resolveElectrobunExecutableAssets(
+  targetPlatform: DesktopTargetPlatform,
+): string[] {
+  const platformDist = resolveElectrobunPlatformDist(targetPlatform.os, targetPlatform.arch);
+  return ["launcher", "bun", "bspatch", "zig-zstd"].map((executableName) =>
+    join(platformDist, resolveExecutableName(executableName, targetPlatform.os))
+  );
+}
+
+function resolveElectrobunCoreRuntimeUrl(
+  targetPlatform: DesktopTargetPlatform,
+): string {
+  const platformName = targetPlatform.os === "macos"
+    ? "darwin"
+    : targetPlatform.os === "win"
+      ? "win"
+      : "linux";
+  return `${ELECTROBUN_GITHUB_RELEASES}/v${ELECTROBUN_PACKAGE_VERSION}/electrobun-core-${platformName}-${targetPlatform.arch}.tar.gz`;
+}
+
 function ensureExecutableFile(filePath: string, os: string): void {
   if (os === "win") {
     return;
@@ -589,6 +764,32 @@ function resolveElectrobunPackageRoot(): string {
   }
 
   throw new Error("Could not resolve the installed electrobun package.");
+}
+
+function resolveElectrobunPackageVersion(): string {
+  const packageJson = JSON.parse(readFileSync(join(ELECTROBUN_PACKAGE_ROOT, "package.json"), "utf8")) as {
+    version?: string;
+  };
+  const version = packageJson.version?.trim();
+  if (!version) {
+    throw new Error("Could not resolve the installed electrobun package version.");
+  }
+
+  return version;
+}
+
+function formatTargetPlatform(targetPlatform: DesktopTargetPlatform): string {
+  return `${targetPlatform.os}-${targetPlatform.arch}`;
+}
+
+function formatElectrobunRelativePath(filePath: string): string {
+  return filePath.startsWith(ELECTROBUN_PACKAGE_ROOT)
+    ? `electrobun/${relative(ELECTROBUN_PACKAGE_ROOT, filePath)}`
+    : relative(projectRoot, filePath);
+}
+
+function logReleaseStep(message: string): void {
+  console.log(`[release] ${message}`);
 }
 
 function copyRequiredFile(sourcePath: string, destinationPath: string): void {

@@ -2098,15 +2098,33 @@
 }
 
 .feishu-docs-local-preview-mermaid-shell,
-.feishu-docs-local-preview-math-block {
+.feishu-docs-local-preview-math-block,
+.feishu-docs-local-preview-mindmap-shell {
   display: flex;
   min-width: 0;
   flex-direction: column;
 }
 
-.feishu-docs-local-preview-mermaid-shell {
+.feishu-docs-local-preview-mermaid-shell,
+.feishu-docs-local-preview-mindmap-shell {
   gap: 10px;
   padding: 14px 16px 16px;
+}
+
+.feishu-docs-local-preview-diagram-trigger {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: zoom-in;
+}
+
+.feishu-docs-local-preview-diagram-trigger:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--app-primary) 66%, white 34%);
+  outline-offset: 3px;
+  border-radius: 24px;
 }
 
 .feishu-docs-local-preview-mermaid-rendered {
@@ -2114,6 +2132,26 @@
   width: 100%;
   justify-content: center;
   overflow: auto;
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, var(--app-border) 82%, transparent);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at top left, color-mix(in srgb, var(--app-primary) 10%, transparent), transparent 42%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--app-surface) 98%, transparent) 0%,
+      color-mix(in srgb, var(--app-surface-hover) 94%, transparent) 100%
+    );
+}
+
+.feishu-docs-local-preview-mermaid-rendered.is-modal {
+  min-height: 0;
+  max-height: none;
+  overflow: visible;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .feishu-docs-local-preview-mermaid-rendered svg {
@@ -2131,6 +2169,10 @@
 .feishu-docs-local-preview-mermaid-rendered svg .edgeLabel {
   fill: var(--app-text);
   color: var(--app-text);
+}
+
+.feishu-docs-local-preview-mermaid-rendered.is-modal svg {
+  max-width: none;
 }
 
 .feishu-docs-local-preview-mermaid-fallback,
@@ -2164,6 +2206,306 @@
 
 .feishu-docs-local-preview-math-note {
   line-height: 1.5;
+}
+
+.feishu-docs-local-preview-diagram-trigger .feishu-docs-local-preview-mermaid-rendered *,
+.feishu-docs-local-preview-diagram-trigger .feishu-docs-local-preview-mindmap-frame * {
+  pointer-events: none;
+}
+
+.feishu-docs-local-preview-mindmap-frame {
+  min-height: 420px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--app-border) 82%, transparent);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 12% 12%, color-mix(in srgb, var(--app-primary) 12%, transparent), transparent 34%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--app-surface) 98%, transparent) 0%,
+      color-mix(in srgb, var(--app-surface-hover) 94%, transparent) 100%
+    );
+}
+
+.feishu-docs-local-preview-mindmap-frame.is-inline {
+  height: clamp(420px, 58vh, 760px);
+}
+
+.feishu-docs-local-preview-mindmap-frame.is-modal {
+  height: 100%;
+  min-height: 0;
+}
+
+.feishu-docs-local-preview-mindmap-host {
+  height: 100%;
+  padding: 18px 20px 24px;
+  --mindmap-canvas-bg: transparent;
+  --mindmap-root-bg: color-mix(in srgb, var(--app-text) 92%, black 8%);
+  --mindmap-root-text: #ffffff;
+  --mindmap-root-font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --mindmap-root-font-size: 18px;
+  --mindmap-root-font-weight: 680;
+  --mindmap-node-text: var(--app-text);
+  --mindmap-node-font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --mindmap-node-font-size: 14px;
+  --mindmap-node-font-weight: 460;
+  --mindmap-level1-font-size: 15px;
+  --mindmap-level1-font-weight: 620;
+  --mindmap-branch-1: #67b5ff;
+  --mindmap-branch-2: #9a8bff;
+  --mindmap-branch-3: #55c7c4;
+  --mindmap-branch-4: #79b7ff;
+}
+
+.feishu-docs-local-preview-mindmap-frame.is-modal .feishu-docs-local-preview-mindmap-host {
+  padding: 12px 14px 18px;
+  --mindmap-root-font-size: 20px;
+  --mindmap-node-font-size: 15px;
+  --mindmap-level1-font-size: 16px;
+}
+
+.feishu-docs-local-preview-mindmap-host svg {
+  max-width: none;
+  height: 100% !important;
+  margin: 0;
+}
+
+.feishu-docs-local-preview-mindmap-host .mindmap-container {
+  min-height: 360px;
+  height: 100%;
+}
+
+.feishu-docs-local-preview-mindmap-host .mindmap-svg {
+  width: 100%;
+  max-width: none;
+  height: 100% !important;
+  margin: 0;
+  background: transparent;
+}
+
+.feishu-docs-local-preview-mindmap-host .mindmap-edge {
+  stroke-width: 2.35px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.96;
+}
+
+.feishu-docs-local-preview-mindmap-host .mindmap-node-root .mindmap-node-bg {
+  fill: var(--mindmap-root-bg);
+  filter: drop-shadow(0 12px 24px color-mix(in srgb, var(--app-text) 12%, transparent));
+}
+
+.feishu-docs-local-preview-mindmap-host .mindmap-node-root .mindmap-node-text,
+.feishu-docs-local-preview-mindmap-host .mindmap-node-root .mindmap-node-text tspan {
+  fill: var(--mindmap-root-text) !important;
+}
+
+.feishu-docs-local-preview-mindmap-host .mindmap-node-child .mindmap-node-bg {
+  fill: transparent;
+}
+
+.feishu-docs-local-preview-mindmap-host .mindmap-node-child .mindmap-node-text,
+.feishu-docs-local-preview-mindmap-host .mindmap-node-child .mindmap-node-text tspan,
+.feishu-docs-local-preview-mindmap-host .mindmap-node-child .mindmap-multiline-text,
+.feishu-docs-local-preview-mindmap-host .mindmap-node-child .mindmap-multiline-text tspan {
+  fill: var(--app-text) !important;
+}
+
+.feishu-docs-local-preview-mindmap-host .mindmap-node-child .mindmap-node-underline {
+  stroke-width: 2.4px;
+}
+
+.feishu-docs-local-preview-mindmap-host .mindmap-node-child[data-branch-index="0"] .mindmap-node-underline,
+.feishu-docs-local-preview-mindmap-host .mindmap-edge[data-branch-index="0"] {
+  stroke: #4567c4;
+}
+
+.feishu-docs-local-preview-mindmap-host .mindmap-node-child[data-branch-index="1"] .mindmap-node-underline,
+.feishu-docs-local-preview-mindmap-host .mindmap-edge[data-branch-index="1"] {
+  stroke: #2f7a74;
+}
+
+.feishu-docs-local-preview-mindmap-host .mindmap-node-child[data-branch-index="2"] .mindmap-node-underline,
+.feishu-docs-local-preview-mindmap-host .mindmap-edge[data-branch-index="2"] {
+  stroke: #8a5a33;
+}
+
+.feishu-docs-local-preview-mindmap-host .mindmap-node-child[data-branch-index="3"] .mindmap-node-underline,
+.feishu-docs-local-preview-mindmap-host .mindmap-edge[data-branch-index="3"] {
+  stroke: #6d56a8;
+}
+
+.feishu-docs-local-preview-mindmap-host .mindmap-node-child[data-branch-index="4"] .mindmap-node-underline,
+.feishu-docs-local-preview-mindmap-host .mindmap-edge[data-branch-index="4"] {
+  stroke: #3d546f;
+}
+
+.feishu-docs-local-preview-mindmap-host .mindmap-node-child[data-branch-index="5"] .mindmap-node-underline,
+.feishu-docs-local-preview-mindmap-host .mindmap-edge[data-branch-index="5"] {
+  stroke: #476997;
+}
+
+.feishu-doc-diagram-stage {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+}
+
+.feishu-doc-diagram-stage.is-dragging .feishu-doc-diagram-viewport {
+  cursor: grabbing;
+}
+
+.feishu-doc-diagram-toolbar {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--app-border) 80%, transparent);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--app-surface) 88%, white 12%);
+  box-shadow: 0 18px 40px color-mix(in srgb, var(--app-text) 12%, transparent);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+
+.feishu-doc-diagram-toolbar-button,
+.feishu-doc-diagram-toolbar-zoom {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--app-text);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    transform 120ms ease;
+}
+
+.feishu-doc-diagram-toolbar-button:hover,
+.feishu-doc-diagram-toolbar-zoom:hover,
+.feishu-doc-diagram-toolbar-button:focus-visible,
+.feishu-doc-diagram-toolbar-zoom:focus-visible {
+  background: color-mix(in srgb, var(--app-primary) 10%, var(--app-surface));
+  color: var(--app-primary);
+  outline: 0;
+}
+
+.feishu-doc-diagram-toolbar-button:active,
+.feishu-doc-diagram-toolbar-zoom:active {
+  transform: translateY(1px);
+}
+
+.feishu-doc-diagram-toolbar-zoom {
+  min-width: 58px;
+  padding-inline: 12px;
+  color: var(--app-text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.feishu-doc-diagram-viewport {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--app-border) 82%, transparent);
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at 12% 10%, color-mix(in srgb, var(--app-primary) 12%, transparent), transparent 30%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--app-surface) 98%, transparent) 0%,
+      color-mix(in srgb, var(--app-surface-hover) 94%, transparent) 100%
+    );
+  cursor: grab;
+  touch-action: none;
+}
+
+.feishu-doc-diagram-canvas {
+  position: absolute;
+  inset: 0 auto auto 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.feishu-doc-diagram-stage.is-mindmap .feishu-doc-diagram-toolbar {
+  top: 16px;
+}
+
+.feishu-doc-diagram-stage.is-mindmap .mindmap-controls {
+  display: none;
+}
+
+.feishu-doc-diagram-stage.is-mindmap .feishu-docs-local-preview-mindmap-frame.is-modal {
+  flex: 1;
+}
+
+.feishu-doc-diagram-preview-modal .ant-modal {
+  max-width: calc(100vw - 32px);
+  padding-bottom: 16px;
+}
+
+.feishu-doc-diagram-preview-modal .ant-modal-content {
+  display: flex;
+  min-height: 0;
+  max-height: min(80vh, calc(100vh - 104px));
+  flex-direction: column;
+  overflow: hidden;
+  padding: 10px;
+}
+
+.feishu-doc-diagram-preview-modal .ant-modal-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  padding: 0;
+}
+
+.feishu-doc-diagram-preview-modal .ant-modal-close {
+  top: 12px;
+  inset-inline-end: 12px;
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--app-surface) 88%, white 12%);
+  color: var(--app-text-secondary);
+}
+
+.feishu-doc-diagram-preview-modal .ant-modal-close:hover,
+.feishu-doc-diagram-preview-modal .ant-modal-close:focus-visible {
+  background: color-mix(in srgb, var(--app-primary) 10%, var(--app-surface));
+  color: var(--app-primary);
+}
+
+.feishu-doc-diagram-preview-modal .ant-modal-close-x {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.feishu-doc-diagram-preview-modal-body {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: min(80vh, calc(100vh - 128px));
+  overflow: hidden;
 }
 
 .feishu-docs-local-preview-markdown img {
