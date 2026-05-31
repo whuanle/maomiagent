@@ -3814,7 +3814,7 @@ export function GitAiReviewWorkbenchNext(props: Props) {
 
   return (
     <Splitter
-      className={expandReviewSidebar ? "git-page-workbench git-ai-review-workbench has-review-results git-ai-review-workbench-splitter" : "git-page-workbench git-ai-review-workbench git-ai-review-workbench-splitter"}
+      className={expandReviewSidebar ? "git-ai-review-workbench has-review-results git-ai-review-workbench-splitter" : "git-ai-review-workbench git-ai-review-workbench-splitter"}
       onResize={handleSidebarResize}
     >
       <Splitter.Panel
