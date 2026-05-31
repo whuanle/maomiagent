@@ -42,6 +42,12 @@ import type { GitPageCopy } from "../i18n";
 import { WorkspaceDiffChanges } from "./diff-changes";
 import { GitDiffPreview } from "./diff-preview";
 import { WorkspaceFileIcon } from "./file-icon";
+import {
+  filterReviewableGitItems,
+  filterReviewableHistoryFiles,
+  filterReviewableWorkspacePaths,
+  isLikelyBinaryReviewPath,
+} from "./git-review-file-filter";
 import { resolveWorkspaceReviewStatusClass, splitWorkspaceReviewDirectory } from "./review-model";
 import {
   buildGitChangeTree,
@@ -1883,6 +1889,7 @@ async function loadWorkspaceAnalysisResults(input: {
   isCancelled: () => boolean;
   onProgress?: (completed: number, total: number) => void;
 }): Promise<ReviewLoadOutput<DesktopWorkspaceFileContentResult>> {
+  const reviewablePaths = filterReviewableWorkspacePaths(input.filePaths);
   const results: Record<string, DesktopWorkspaceFileContentResult> = {};
   const findingsByPath: Record<string, GitAiReviewFinding[]> = {};
   const reviewedPaths: string[] = [];
@@ -1894,17 +1901,20 @@ async function loadWorkspaceAnalysisResults(input: {
   let nextIndex = 0;
   const workerCount = Math.min(
     input.aiSelection ? AI_REVIEW_WORKER_COUNT : 6,
-    Math.max(input.filePaths.length, 1),
+    Math.max(reviewablePaths.length, 1),
   );
 
   async function worker() {
     while (!input.isCancelled()) {
       const currentIndex = nextIndex;
-      if (currentIndex >= input.filePaths.length) {
+      if (currentIndex >= reviewablePaths.length) {
         return;
       }
       nextIndex += 1;
-      const path = input.filePaths[currentIndex];
+      const path = reviewablePaths[currentIndex];
+      if (!path) {
+        return;
+      }
       try {
         const result = await getDesktopWorkspaceFileContent(input.workspaceId, path);
         results[path] = result;
@@ -1940,7 +1950,7 @@ async function loadWorkspaceAnalysisResults(input: {
         firstError ??= normalizeError(error);
       } finally {
         completed += 1;
-        input.onProgress?.(completed, input.filePaths.length);
+        input.onProgress?.(completed, reviewablePaths.length);
       }
     }
   }
@@ -1972,6 +1982,7 @@ async function loadCommitReviewResults(input: {
   isCancelled: () => boolean;
   onProgress?: (completed: number, total: number) => void;
 }): Promise<ReviewLoadOutput<DesktopGitReviewItem>> {
+  const reviewableFiles = filterReviewableHistoryFiles(input.files);
   const results: Record<string, DesktopGitReviewItem> = {};
   const findingsByPath: Record<string, GitAiReviewFinding[]> = {};
   const reviewedPaths: string[] = [];
@@ -1983,17 +1994,20 @@ async function loadCommitReviewResults(input: {
   let nextIndex = 0;
   const workerCount = Math.min(
     input.aiSelection ? AI_REVIEW_WORKER_COUNT : 6,
-    Math.max(input.files.length, 1),
+    Math.max(reviewableFiles.length, 1),
   );
 
   async function worker() {
     while (!input.isCancelled()) {
       const currentIndex = nextIndex;
-      if (currentIndex >= input.files.length) {
+      if (currentIndex >= reviewableFiles.length) {
         return;
       }
       nextIndex += 1;
-      const file = input.files[currentIndex];
+      const file = reviewableFiles[currentIndex];
+      if (!file) {
+        return;
+      }
       try {
         const result = await getDesktopGitReviewDetail(input.workspaceId, {
           path: file.path,
@@ -2036,7 +2050,7 @@ async function loadCommitReviewResults(input: {
         fallbackCount += 1;
       } finally {
         completed += 1;
-        input.onProgress?.(completed, input.files.length);
+        input.onProgress?.(completed, reviewableFiles.length);
       }
     }
   }
@@ -2066,6 +2080,7 @@ async function loadStagedReviewResults(input: {
   isCancelled: () => boolean;
   onProgress?: (completed: number, total: number) => void;
 }): Promise<ReviewLoadOutput<DesktopGitReviewItem>> {
+  const reviewableFiles = input.files.filter((file) => !isLikelyBinaryReviewPath(file.path));
   const results: Record<string, DesktopGitReviewItem> = {};
   const findingsByPath: Record<string, GitAiReviewFinding[]> = {};
   const reviewedPaths: string[] = [];
@@ -2077,17 +2092,20 @@ async function loadStagedReviewResults(input: {
   let nextIndex = 0;
   const workerCount = Math.min(
     input.aiSelection ? AI_REVIEW_WORKER_COUNT : 6,
-    Math.max(input.files.length, 1),
+    Math.max(reviewableFiles.length, 1),
   );
 
   async function worker() {
     while (!input.isCancelled()) {
       const currentIndex = nextIndex;
-      if (currentIndex >= input.files.length) {
+      if (currentIndex >= reviewableFiles.length) {
         return;
       }
       nextIndex += 1;
-      const file = input.files[currentIndex];
+      const file = reviewableFiles[currentIndex];
+      if (!file) {
+        return;
+      }
       try {
         const result = await getDesktopGitReviewDetail(input.workspaceId, {
           path: file.path,
@@ -2129,7 +2147,7 @@ async function loadStagedReviewResults(input: {
         fallbackCount += 1;
       } finally {
         completed += 1;
-        input.onProgress?.(completed, input.files.length);
+        input.onProgress?.(completed, reviewableFiles.length);
       }
     }
   }
@@ -2159,6 +2177,7 @@ async function loadCompareReviewResults(input: {
   isCancelled: () => boolean;
   onProgress?: (completed: number, total: number) => void;
 }): Promise<ReviewLoadOutput<DesktopGitReviewItem>> {
+  const reviewableItems = filterReviewableGitItems(input.items);
   const results: Record<string, DesktopGitReviewItem> = {};
   const findingsByPath: Record<string, GitAiReviewFinding[]> = {};
   const reviewedPaths: string[] = [];
@@ -2170,17 +2189,17 @@ async function loadCompareReviewResults(input: {
   let nextIndex = 0;
   const workerCount = Math.min(
     input.aiSelection ? AI_REVIEW_WORKER_COUNT : 6,
-    Math.max(input.items.length, 1),
+    Math.max(reviewableItems.length, 1),
   );
 
   async function worker() {
     while (!input.isCancelled()) {
       const currentIndex = nextIndex;
-      if (currentIndex >= input.items.length) {
+      if (currentIndex >= reviewableItems.length) {
         return;
       }
       nextIndex += 1;
-      const item = input.items[currentIndex];
+      const item = reviewableItems[currentIndex];
       if (!item) {
         return;
       }
@@ -2213,7 +2232,7 @@ async function loadCompareReviewResults(input: {
         firstError ??= normalizeError(error);
       } finally {
         completed += 1;
-        input.onProgress?.(completed, input.items.length);
+        input.onProgress?.(completed, reviewableItems.length);
       }
     }
   }
@@ -2927,7 +2946,7 @@ export function GitAiReviewWorkbenchNext(props: Props) {
 
     let cancelled = false;
     setGitReviewLoading(true);
-    setGitReviewProgress({ completed: 0, total: historyDetail.files.length });
+    setGitReviewProgress({ completed: 0, total: filterReviewableHistoryFiles(historyDetail.files).length });
     setGitReviewError(null);
     setGitReviewNotice(null);
 
@@ -3038,7 +3057,7 @@ export function GitAiReviewWorkbenchNext(props: Props) {
 
     let cancelled = false;
     setGitReviewLoading(true);
-    setGitReviewProgress({ completed: 0, total: stagedEntries.length });
+    setGitReviewProgress({ completed: 0, total: stagedEntries.filter((entry) => !isLikelyBinaryReviewPath(entry.path)).length });
     setGitReviewError(null);
     setGitReviewNotice(null);
 
@@ -3167,7 +3186,7 @@ export function GitAiReviewWorkbenchNext(props: Props) {
         }
 
         setPrCompareResult(result);
-        setGitReviewProgress({ completed: 0, total: result.items.length });
+        setGitReviewProgress({ completed: 0, total: filterReviewableGitItems(result.items).length });
 
         if (result.items.length === 0) {
           setGitReviewItemsByPath({});
@@ -3335,8 +3354,9 @@ export function GitAiReviewWorkbenchNext(props: Props) {
         if (cancelled) {
           return;
         }
-        setWorkspaceAnalysisProgress({ completed: 0, total: filePaths.length });
-        if (filePaths.length === 0) {
+        const reviewableFilePaths = filterReviewableWorkspacePaths(filePaths);
+        setWorkspaceAnalysisProgress({ completed: 0, total: reviewableFilePaths.length });
+        if (reviewableFilePaths.length === 0) {
           setWorkspaceFileResultByPath({});
           setWorkspaceFindingsByPathState({});
           setWorkspaceReviewedPaths([]);
