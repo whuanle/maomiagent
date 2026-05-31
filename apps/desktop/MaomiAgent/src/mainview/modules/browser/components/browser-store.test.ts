@@ -67,4 +67,30 @@ describe("browser store", () => {
     });
     expect(store.getState().tabs.map((tab) => tab.id)).toEqual(["tab-1", "tab-2"]);
   });
+
+  test("hydrating local tabs recomputes the next local tab id", () => {
+    const store = createBrowserStore(createSnapshot({
+      tabs: [createTab({ id: "local-tab-1" })],
+      activeTabId: "local-tab-1",
+    }));
+
+    store.replaceState(createSnapshot({
+      tabs: [
+        createTab({ id: "tab-1" }),
+        createTab({ id: "local-tab-3" }),
+        createTab({ id: "local-tab-7" }),
+      ],
+      activeTabId: "local-tab-7",
+    }));
+
+    const nextTab = store.createLocalTab();
+
+    expect(nextTab.id).toBe("local-tab-8");
+    expect(store.getState().tabs.map((tab) => tab.id)).toEqual([
+      "tab-1",
+      "local-tab-3",
+      "local-tab-7",
+      "local-tab-8",
+    ]);
+  });
 });

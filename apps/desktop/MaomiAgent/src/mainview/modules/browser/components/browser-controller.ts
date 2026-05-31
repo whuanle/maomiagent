@@ -7,12 +7,12 @@ import type {
   DesktopBrowserToolPanel,
 } from "../../../../shared/desktop-browser";
 import {
-  getDesktopBrowserBridge,
-  type DesktopBrowserBridge,
-} from "../../../lib/desktop-browser";
+  getBrowserBridge,
+  type BrowserBridge,
+} from "./browser-bridge";
 import type { BrowserStore } from "./browser-store";
 
-export type BrowserControllerRpc = DesktopBrowserBridge;
+export type BrowserControllerRpc = BrowserBridge;
 
 export type BrowserController = {
   getState: () => DesktopBrowserStateSnapshot;
@@ -38,7 +38,7 @@ export function createBrowserController(input: {
   store: BrowserStore;
   rpc?: BrowserControllerRpc;
 }): BrowserController {
-  const rpc = input.rpc ?? getDesktopBrowserBridge();
+  const rpc = input.rpc ?? getBrowserBridge();
 
   const syncSnapshot = (snapshot: DesktopBrowserStateSnapshot) => {
     return input.store.replaceState(snapshot);

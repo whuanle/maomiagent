@@ -23,7 +23,7 @@ export function createBrowserStore(
   initialState: DesktopBrowserStateSnapshot = createEmptyBrowserStateSnapshot(),
 ): BrowserStore {
   let state = cloneSnapshot(initialState);
-  let nextLocalTabNumber = state.tabs.length + 1;
+  let nextLocalTabNumber = resolveNextLocalTabNumber(state);
   const listeners = new Set<() => void>();
 
   function emit() {
@@ -47,12 +47,18 @@ export function createBrowserStore(
       };
     },
     replaceState(snapshot) {
-      return setState(cloneSnapshot(snapshot));
+      const nextState = cloneSnapshot(snapshot);
+      nextLocalTabNumber = resolveNextLocalTabNumber(nextState);
+      return setState(nextState);
     },
     createLocalTab(overrides = {}) {
       const tab = cloneTabState({
         ...createDefaultTabState(`local-tab-${nextLocalTabNumber++}`),
         ...overrides,
+      });
+      nextLocalTabNumber = resolveNextLocalTabNumber({
+        ...state,
+        tabs: [...state.tabs, tab],
       });
       setState({
         ...state,
@@ -134,4 +140,22 @@ function cloneTabState(tab: DesktopBrowserTabState): DesktopBrowserTabState {
       ? { ...tab.lastInteractionResult }
       : undefined,
   };
+}
+
+function resolveNextLocalTabNumber(snapshot: DesktopBrowserStateSnapshot): number {
+  let maxLocalTabNumber = 0;
+
+  for (const tab of snapshot.tabs) {
+    const match = /^local-tab-(\d+)$/.exec(tab.id);
+    if (!match) {
+      continue;
+    }
+
+    const tabNumber = Number.parseInt(match[1] ?? "", 10);
+    if (Number.isFinite(tabNumber) && tabNumber > maxLocalTabNumber) {
+      maxLocalTabNumber = tabNumber;
+    }
+  }
+
+  return maxLocalTabNumber + 1;
 }

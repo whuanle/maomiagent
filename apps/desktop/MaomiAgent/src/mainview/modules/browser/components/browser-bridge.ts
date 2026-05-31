@@ -4,10 +4,9 @@ import type {
   DesktopBrowserInteractionResult,
   DesktopBrowserScreenshotResult,
   DesktopBrowserStateSnapshot,
-} from "../../shared/desktop-browser";
-import { DESKTOP_WINDOW_BRIDGE_READY_EVENT } from "./desktop-window";
+} from "../../../../shared/desktop-browser";
 
-export type DesktopBrowserBridge = {
+export type BrowserBridge = {
   createTab: () => Promise<DesktopBrowserStateSnapshot>;
   activateTab: (tabId: string) => Promise<DesktopBrowserStateSnapshot>;
   closeTab: (tabId: string) => Promise<DesktopBrowserStateSnapshot>;
@@ -26,17 +25,11 @@ export type DesktopBrowserBridge = {
 
 declare global {
   interface Window {
-    maomiDesktopBrowser?: DesktopBrowserBridge;
+    maomiDesktopBrowser?: BrowserBridge;
   }
 }
 
-export const DESKTOP_BROWSER_BRIDGE_READY_EVENT = DESKTOP_WINDOW_BRIDGE_READY_EVENT;
-
-export function hasDesktopBrowserBridge(): boolean {
-  return Boolean(window.maomiDesktopBrowser);
-}
-
-export function getDesktopBrowserBridge(): DesktopBrowserBridge {
+export function getBrowserBridge(): BrowserBridge {
   const bridge = window.maomiDesktopBrowser;
   if (!bridge) {
     throw new Error("Desktop browser bridge is unavailable.");
