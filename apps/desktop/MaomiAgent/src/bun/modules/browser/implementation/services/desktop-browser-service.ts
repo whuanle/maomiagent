@@ -13,17 +13,22 @@ type BrowserTabHistory = {
   index: number;
 };
 
-const DEFAULT_TAB_URL = "about:blank";
+type DesktopBrowserServiceOptions = {
+  now?: () => string;
+};
+
+const DEFAULT_TAB_URL = "";
 const DEFAULT_TAB_TITLE = "New Tab";
 const DEFAULT_TOOL_PANEL = "closed";
 
 export class DesktopBrowserService implements DesktopBrowserServicePort {
   private nextTabNumber = 1;
-  private operationSequence = 0;
   private snapshot: DesktopBrowserStateSnapshot;
   private readonly tabHistories = new Map<string, BrowserTabHistory>();
+  private readonly now: () => string;
 
-  constructor() {
+  constructor(options: DesktopBrowserServiceOptions = {}) {
+    this.now = options.now ?? (() => new Date().toISOString());
     const initialTab = this.createDefaultTabState();
     this.tabHistories.set(initialTab.id, {
       entries: [initialTab.url],
@@ -118,7 +123,7 @@ export class DesktopBrowserService implements DesktopBrowserServicePort {
       title: deriveTitle(normalizedUrl),
       loading: false,
       ...toHistoryFlags(this.tabHistories.get(tabId)!),
-    });
+    }, { activate: true });
 
     return this.getSnapshot();
   }
@@ -185,12 +190,12 @@ export class DesktopBrowserService implements DesktopBrowserServicePort {
       links: tab.url === DEFAULT_TAB_URL
         ? []
         : [{ text: tab.title, url: tab.url }],
-      capturedAt: this.nextTimestamp(),
+      capturedAt: this.now(),
     };
 
     this.replaceTab(tabId, {
       lastExtractResult: result,
-    }, "extract");
+    });
 
     return result;
   }
@@ -200,12 +205,12 @@ export class DesktopBrowserService implements DesktopBrowserServicePort {
     const result: DesktopBrowserScreenshotResult = {
       tabId,
       dataUrl: `data:image/png;base64,${Buffer.from(`${tab.id}:${tab.url}`).toString("base64")}`,
-      capturedAt: this.nextTimestamp(),
+      capturedAt: this.now(),
     };
 
     this.replaceTab(tabId, {
       lastScreenshotResult: result,
-    }, "screenshot");
+    });
 
     return result;
   }
@@ -219,12 +224,12 @@ export class DesktopBrowserService implements DesktopBrowserServicePort {
       tabId,
       ok: true,
       message: describeInteraction(request),
-      capturedAt: this.nextTimestamp(),
+      capturedAt: this.now(),
     };
 
     this.replaceTab(tabId, {
       lastInteractionResult: result,
-    }, "interact");
+    });
 
     return result;
   }
@@ -264,21 +269,16 @@ export class DesktopBrowserService implements DesktopBrowserServicePort {
   private replaceTab(
     tabId: string,
     patch: Partial<DesktopBrowserTabState>,
-    toolPanel: DesktopBrowserStateSnapshot["toolPanel"] = this.snapshot.toolPanel,
+    options: {
+      activate?: boolean;
+    } = {},
   ): void {
     const previous = this.requireTab(tabId);
     this.snapshot = {
       ...this.snapshot,
-      activeTabId: tabId,
-      toolPanel,
+      activeTabId: options.activate ? tabId : this.snapshot.activeTabId,
       tabs: this.snapshot.tabs.map((tab) => tab.id === tabId ? { ...previous, ...patch } : tab),
     };
-  }
-
-  private nextTimestamp(): string {
-    const timestamp = new Date(Date.UTC(2026, 4, 31, 0, 0, this.operationSequence)).toISOString();
-    this.operationSequence += 1;
-    return timestamp;
   }
 }
 
@@ -291,7 +291,7 @@ function normalizeUrl(url: string): string {
 }
 
 function deriveTitle(url: string): string {
-  if (url === DEFAULT_TAB_URL) {
+  if (!url) {
     return DEFAULT_TAB_TITLE;
   }
 

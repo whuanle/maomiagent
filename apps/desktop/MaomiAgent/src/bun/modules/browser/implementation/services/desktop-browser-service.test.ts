@@ -68,6 +68,22 @@ function createInteractionResult(tabId: string): DesktopBrowserInteractionResult
   };
 }
 
+function expectFreshTab(tab: DesktopBrowserTabState) {
+  expect(tab).toEqual(
+    expect.objectContaining({
+      title: "New Tab",
+      url: "",
+      draftUrl: "",
+      loading: false,
+      canGoBack: false,
+      canGoForward: false,
+      lastExtractResult: undefined,
+      lastScreenshotResult: undefined,
+      lastInteractionResult: undefined,
+    }),
+  );
+}
+
 describe("desktop browser shared contract", () => {
   test("shared types describe one global active browser state", () => {
     const tab = createTabState();
@@ -224,45 +240,133 @@ describe("desktop browser shared contract", () => {
 });
 
 describe("DesktopBrowserService", () => {
-  test("navigate updates the selected tab snapshot and active tab", async () => {
+  test("fresh tabs use an empty-tab model on startup, createTab, and last-tab replacement", async () => {
     const service = new DesktopBrowserService();
     const initial = await service.getSnapshot();
-    const tabId = initial.tabs[0]!.id;
+    const initialTab = initial.tabs[0]!;
 
-    const snapshot = await service.navigate(tabId, "https://docs.example.com/guide");
-    const activeTab = snapshot.tabs.find((tab) => tab.id === snapshot.activeTabId);
+    expect(initial.tabs).toHaveLength(1);
+    expect(initial.activeTabId).toBe(initialTab.id);
+    expectFreshTab(initialTab);
 
-    expect(snapshot.activeTabId).toBe(tabId);
-    expect(activeTab).toEqual(
-      expect.objectContaining({
-        id: tabId,
-        url: "https://docs.example.com/guide",
-        draftUrl: "https://docs.example.com/guide",
-        loading: false,
-      }),
-    );
+    const created = await service.createTab();
+    const createdTab = created.tabs.find((tab) => tab.id === created.activeTabId)!;
+    expectFreshTab(createdTab);
+
+    const replaced = await service.closeTab(createdTab.id);
+    const refreshed = await service.closeTab(initialTab.id);
+    const replacementTab = refreshed.tabs[0]!;
+
+    expect(replaced.tabs).toHaveLength(1);
+    expect(refreshed.tabs).toHaveLength(1);
+    expect(refreshed.activeTabId).toBe(replacementTab.id);
+    expect(replacementTab.id).not.toBe(initialTab.id);
+    expectFreshTab(replacementTab);
   });
 
-  test("extract, screenshot, and interact attach results to the current tab context", async () => {
+  test("navigate, back, forward, and truncation keep history flags coherent", async () => {
     const service = new DesktopBrowserService();
     const initial = await service.getSnapshot();
     const tabId = initial.tabs[0]!.id;
 
-    const extract = await service.extract(tabId);
-    const screenshot = await service.screenshot(tabId);
-    const interaction = await service.interact(tabId, {
+    const afterFirstNavigate = await service.navigate(tabId, "https://example.com/a");
+    const firstTab = afterFirstNavigate.tabs[0]!;
+    expect(firstTab.url).toBe("https://example.com/a");
+    expect(firstTab.canGoBack).toBe(true);
+    expect(firstTab.canGoForward).toBe(false);
+
+    const afterSecondNavigate = await service.navigate(tabId, "https://example.com/b");
+    const secondTab = afterSecondNavigate.tabs[0]!;
+    expect(secondTab.url).toBe("https://example.com/b");
+    expect(secondTab.canGoBack).toBe(true);
+    expect(secondTab.canGoForward).toBe(false);
+
+    const afterBack = await service.goBack(tabId);
+    const backedTab = afterBack.tabs[0]!;
+    expect(backedTab.url).toBe("https://example.com/a");
+    expect(backedTab.canGoBack).toBe(true);
+    expect(backedTab.canGoForward).toBe(true);
+
+    const afterTruncateNavigate = await service.navigate(tabId, "https://example.com/c");
+    const truncatedTab = afterTruncateNavigate.tabs[0]!;
+    expect(truncatedTab.url).toBe("https://example.com/c");
+    expect(truncatedTab.canGoBack).toBe(true);
+    expect(truncatedTab.canGoForward).toBe(false);
+
+    const afterBackToA = await service.goBack(tabId);
+    expect(afterBackToA.tabs[0]!.url).toBe("https://example.com/a");
+    expect(afterBackToA.tabs[0]!.canGoForward).toBe(true);
+
+    const afterBackToEmpty = await service.goBack(tabId);
+    expect(afterBackToEmpty.tabs[0]!.url).toBe("");
+    expect(afterBackToEmpty.tabs[0]!.title).toBe("New Tab");
+    expect(afterBackToEmpty.tabs[0]!.canGoBack).toBe(false);
+    expect(afterBackToEmpty.tabs[0]!.canGoForward).toBe(true);
+
+    const afterForward = await service.goForward(tabId);
+    expect(afterForward.tabs[0]!.url).toBe("https://example.com/a");
+    expect(afterForward.tabs[0]!.canGoBack).toBe(true);
+    expect(afterForward.tabs[0]!.canGoForward).toBe(true);
+  });
+
+  test("tool methods attach results without changing renderer shell state", async () => {
+    const service = new DesktopBrowserService();
+    const initial = await service.getSnapshot();
+    const firstTabId = initial.tabs[0]!.id;
+    const created = await service.createTab();
+    const secondTabId = created.activeTabId!;
+
+    await service.activateTab(firstTabId);
+
+    const extract = await service.extract(secondTabId);
+    const screenshot = await service.screenshot(secondTabId);
+    const interaction = await service.interact(secondTabId, {
       kind: "click",
       selector: "[data-testid='submit']",
     });
     const snapshot = await service.getSnapshot();
-    const tab = snapshot.tabs.find((item) => item.id === tabId);
+    const secondTab = snapshot.tabs.find((tab) => tab.id === secondTabId);
 
-    expect(extract.tabId).toBe(tabId);
-    expect(screenshot.tabId).toBe(tabId);
-    expect(interaction.tabId).toBe(tabId);
-    expect(tab?.lastExtractResult).toEqual(extract);
-    expect(tab?.lastScreenshotResult).toEqual(screenshot);
-    expect(tab?.lastInteractionResult).toEqual(interaction);
+    expect(snapshot.activeTabId).toBe(firstTabId);
+    expect(snapshot.toolPanel).toBe("closed");
+    expect(extract.tabId).toBe(secondTabId);
+    expect(screenshot.tabId).toBe(secondTabId);
+    expect(interaction.tabId).toBe(secondTabId);
+    expect(secondTab?.lastExtractResult).toEqual(extract);
+    expect(secondTab?.lastScreenshotResult).toEqual(screenshot);
+    expect(secondTab?.lastInteractionResult).toEqual(interaction);
+  });
+
+  test("getSnapshot returns clones that cannot mutate service state", async () => {
+    const service = new DesktopBrowserService();
+    const initial = await service.getSnapshot();
+    const tabId = initial.tabs[0]!.id;
+
+    await service.navigate(tabId, "https://example.com/immutable");
+    await service.extract(tabId);
+
+    const snapshot = await service.getSnapshot();
+    snapshot.activeTabId = "mutated";
+    snapshot.tabs[0]!.url = "https://evil.example";
+    snapshot.tabs[0]!.draftUrl = "https://evil.example";
+    snapshot.tabs[0]!.lastExtractResult!.text = "mutated";
+    snapshot.tabs[0]!.lastExtractResult!.links.push({
+      text: "mutated",
+      url: "https://evil.example",
+    });
+
+    const fresh = await service.getSnapshot();
+
+    expect(fresh.activeTabId).toBe(tabId);
+    expect(fresh.tabs[0]!.url).toBe("https://example.com/immutable");
+    expect(fresh.tabs[0]!.draftUrl).toBe("https://example.com/immutable");
+    expect(fresh.tabs[0]!.lastExtractResult?.text).toBe("Stub extract for example.com");
+    expect(fresh.tabs[0]!.lastExtractResult?.links).toEqual([
+      {
+        text: "example.com",
+        url: "https://example.com/immutable",
+      },
+    ]);
   });
 
   test("tab lifecycle methods keep the snapshot coherent", async () => {
@@ -287,5 +391,23 @@ describe("DesktopBrowserService", () => {
     const closedLast = await service.closeTab(secondTabId!);
     expect(closedLast.tabs).toHaveLength(1);
     expect(closedLast.activeTabId).toBe(closedLast.tabs[0]!.id);
+    expectFreshTab(closedLast.tabs[0]!);
+  });
+
+  test("navigate rejects empty URLs", async () => {
+    const service = new DesktopBrowserService();
+    const tabId = (await service.getSnapshot()).tabs[0]!.id;
+
+    await expect(service.navigate(tabId, "   ")).rejects.toThrow(
+      "Browser navigation URL is required.",
+    );
+  });
+
+  test("tab-targeted methods reject invalid tab ids", async () => {
+    const service = new DesktopBrowserService();
+
+    await expect(service.extract("missing-tab")).rejects.toThrow(
+      "Browser tab not found: missing-tab",
+    );
   });
 });
