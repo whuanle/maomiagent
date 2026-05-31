@@ -1,4 +1,5 @@
 import type { FeishuTranslate as Translate } from "../types"
+import { hasDesktopWindowBridge, saveDesktopTextFileWithDialog } from "../../../lib/desktop-window"
 
 export function resolveFeishuDocPreviewText(
   t: Translate | undefined,
@@ -34,6 +35,30 @@ function ensureSvgNamespace(svgMarkup: string): string {
   return trimmed.replace("<svg", '<svg xmlns="http://www.w3.org/2000/svg"')
 }
 
+function isSerializableSvgElement(value: unknown): value is Element {
+  if (!value || typeof value !== "object") {
+    return false
+  }
+
+  const candidate = value as {
+    nodeType?: unknown
+    nodeName?: unknown
+    tagName?: unknown
+    getAttribute?: unknown
+    setAttribute?: unknown
+  }
+  const nodeName = typeof candidate.nodeName === "string"
+    ? candidate.nodeName
+    : typeof candidate.tagName === "string"
+      ? candidate.tagName
+      : ""
+
+  return candidate.nodeType === 1
+    && nodeName.toLowerCase() === "svg"
+    && typeof candidate.getAttribute === "function"
+    && typeof candidate.setAttribute === "function"
+}
+
 export function serializeFeishuDocPreviewSvgElement(
   svgElement: SVGSVGElement | null | undefined,
 ): string {
@@ -42,7 +67,7 @@ export function serializeFeishuDocPreviewSvgElement(
   }
 
   const clone = svgElement.cloneNode(true)
-  if (!(clone instanceof SVGSVGElement)) {
+  if (!isSerializableSvgElement(clone)) {
     return ""
   }
   if (!clone.getAttribute("xmlns")) {
@@ -55,8 +80,25 @@ export function serializeFeishuDocPreviewSvgElement(
   return ensureSvgNamespace(new XMLSerializer().serializeToString(clone))
 }
 
-export function downloadFeishuDocPreviewSvg(fileName: string, svgMarkup: string) {
-  if (!svgMarkup.trim()) {
+export async function downloadFeishuDocPreviewSvg(fileName: string, svgMarkup: string) {
+  const normalizedSvgMarkup = ensureSvgNamespace(svgMarkup)
+  if (!normalizedSvgMarkup.trim()) {
+    return
+  }
+
+  if (hasDesktopWindowBridge()) {
+    try {
+      await saveDesktopTextFileWithDialog({
+        suggestedName: fileName,
+        content: normalizedSvgMarkup,
+        filters: [{
+          name: "SVG Image",
+          extensions: ["svg"],
+        }],
+      })
+    } catch (error) {
+      console.error("Failed to save SVG through desktop dialog.", error)
+    }
     return
   }
   if (typeof document === "undefined" || typeof Blob === "undefined") {
@@ -66,7 +108,7 @@ export function downloadFeishuDocPreviewSvg(fileName: string, svgMarkup: string)
     return
   }
 
-  const blob = new Blob([ensureSvgNamespace(svgMarkup)], {
+  const blob = new Blob([normalizedSvgMarkup], {
     type: "image/svg+xml;charset=utf-8",
   })
   const objectUrl = URL.createObjectURL(blob)

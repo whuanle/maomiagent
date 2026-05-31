@@ -13,8 +13,10 @@ describe("FeishuDocBoardPreview", () => {
   test("renders local board svg surfaces instead of remote preview images", async () => {
     const previewSource = await boardPreviewSource()
 
-    expect(previewSource).toContain('className="feishu-docs-local-preview-diagram-trigger is-board"')
+    expect(previewSource).toContain('const centeredClassName = props.align === "1" ? " is-page-centered" : ""')
+    expect(previewSource).toContain('className={`feishu-docs-local-preview-diagram-trigger is-board${centeredClassName}`}')
     expect(previewSource).toContain('<BoardSvgSurface snapshot={snapshot} mode="inline" />')
+    expect(previewSource).toContain('<FeishuDocMermaidPreview source={snapshot.mermaidSource} t={props.t} />')
     expect(previewSource).toContain('className="feishu-doc-board-viewport"')
     expect(previewSource).toContain('className="feishu-doc-board-canvas"')
     expect(previewSource).toContain("FeishuDocDiagramToolbar")
@@ -35,5 +37,12 @@ describe("FeishuDocBoardPreview", () => {
     expect(nodeRendererSource).toContain('strokeDasharray="8 6"')
     expect(nodeRendererSource).toContain('node.kind === "connector"')
     expect(nodeRendererSource).toContain('node.kind === "shape"')
+  })
+
+  test("supports page-centered board blocks via align prop", async () => {
+    const previewSource = await boardPreviewSource()
+
+    expect(previewSource).toContain("align?: string")
+    expect(previewSource).toContain('props.align === "1" ? " is-page-centered" : ""')
   })
 })

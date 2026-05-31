@@ -258,6 +258,23 @@ export type DesktopDirectoryDialogOptions = {
   startingFolder?: string;
 };
 
+export type DesktopSaveTextFileDialogFilter = {
+  name: string;
+  extensions: string[];
+};
+
+export type DesktopSaveTextFileDialogInput = {
+  suggestedName: string;
+  content: string;
+  startingFolder?: string;
+  filters?: DesktopSaveTextFileDialogFilter[];
+};
+
+export type DesktopSaveTextFileDialogResult = {
+  saved: boolean;
+  path?: string;
+};
+
 export type DesktopOpenPathInFileManagerInput = {
   path: string;
 };
@@ -295,6 +312,10 @@ export type DesktopRendererRPC = {
       chooseDirectory: {
         params: DesktopDirectoryDialogOptions | undefined;
         response: string | null;
+      };
+      saveTextFileWithDialog: {
+        params: DesktopSaveTextFileDialogInput;
+        response: DesktopSaveTextFileDialogResult;
       };
       openPathInFileManager: {
         params: DesktopOpenPathInFileManagerInput;

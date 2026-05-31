@@ -330,6 +330,66 @@ function hasCompleteBoardSnapshotCoverage(
   return tokens.every((token) => Boolean(boardSnapshots[token]));
 }
 
+function hasLikelyStaleBoardSnapshotData(
+  boardSnapshots?: Record<string, FeishuDocBoardSnapshot>,
+): boolean {
+  if (!boardSnapshots) {
+    return false;
+  }
+
+  return Object.values(boardSnapshots).some((snapshot) => {
+    if (snapshot.mermaidSource?.trim()) {
+      return false;
+    }
+
+    const hasLifeLine = snapshot.nodes.some((node) => node.rawType === "life_line");
+    if (!hasLifeLine) {
+      return false;
+    }
+
+    const connectors = snapshot.nodes.filter((node) => node.kind === "connector");
+    if (connectors.length === 0) {
+      return false;
+    }
+
+    return connectors.every((node) => !node.text?.content?.trim());
+  });
+}
+
+function augmentBoardSnapshotsWithReversibleMermaid(
+  boardSnapshots: Record<string, FeishuDocBoardSnapshot> | undefined,
+  ir: FeishuDocIR,
+): Record<string, FeishuDocBoardSnapshot> | undefined {
+  if (!boardSnapshots) {
+    return undefined;
+  }
+
+  let changed = false;
+  const nextEntries = Object.entries(boardSnapshots).map(([token, snapshot]) => {
+    if (snapshot.mermaidSource?.trim()) {
+      return [token, snapshot] as const;
+    }
+
+    const reversible = ir.assets[token]?.reversible;
+    if (
+      !reversible
+      || reversible.format !== "mermaid"
+      || reversible.state !== "mermaid"
+      || !reversible.source.trim()
+    ) {
+      return [token, snapshot] as const;
+    }
+
+    changed = true;
+    return [token, {
+      ...snapshot,
+      mermaidSource: reversible.source,
+    }] as const;
+  });
+
+  return changed ? Object.fromEntries(nextEntries) : boardSnapshots;
+}
+
 function looksLikeFeishuDocsMermaidSource(source: string): boolean {
   const normalized = source.trimStart();
   if (!normalized) {
@@ -1395,6 +1455,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
     const markdown = reusedWhiteboardTokens.length > 0 || !bundle?.content.markdown?.trim()
       ? feishuDocIRToSourceMarkdown(finalIR).trimEnd()
       : bundle.content.markdown.trimEnd();
+    const boardSnapshots = augmentBoardSnapshotsWithReversibleMermaid(bundle?.content.boardSnapshots, finalIR);
     const diagnostics = adjustPullDiagnosticsAfterCachedWhiteboardReuse(
       bundle?.content.diagnostics?.latestPull,
       reusedWhiteboardTokens,
@@ -1405,7 +1466,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       markdown,
       title: bundle?.content.title || finalIR.document.title || input.docId,
       workspaceRoot,
-      ...(bundle?.content.boardSnapshots ? { boardSnapshots: bundle.content.boardSnapshots } : {}),
+      ...(boardSnapshots ? { boardSnapshots } : {}),
       requestedDocId: trimText(bundle?.source?.requestedDocId) ?? input.docId,
       resolvedDocId: trimText(bundle?.source?.document.document_id)
         ?? trimText(finalIR.document.id)
@@ -2316,7 +2377,10 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
   }
 
   private shouldRefreshCachedBoardSnapshots(item: FeishuDocContentView | null | undefined): boolean {
-    return !!item && !hasCompleteBoardSnapshotCoverage(item.markdown, item.boardSnapshots);
+    return !!item && (
+      !hasCompleteBoardSnapshotCoverage(item.markdown, item.boardSnapshots)
+      || hasLikelyStaleBoardSnapshotData(item.boardSnapshots)
+    );
   }
 
   private async readWorkspaceRemoteDoc(input: FeishuWorkspaceDocInput): Promise<FeishuDocContentView | null> {

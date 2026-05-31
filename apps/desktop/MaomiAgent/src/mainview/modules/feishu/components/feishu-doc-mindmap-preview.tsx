@@ -139,7 +139,7 @@ function MindmapModalSurface(props: {
 
   function handleExportSvg() {
     const svgElement = hostRef.current?.querySelector<SVGSVGElement>(".mindmap-svg")
-    downloadFeishuDocPreviewSvg(
+    void downloadFeishuDocPreviewSvg(
       "feishu-mindmap-diagram.svg",
       serializeFeishuDocPreviewSvgElement(svgElement),
     )

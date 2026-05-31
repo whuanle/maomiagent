@@ -149,6 +149,88 @@ describe("feishu-doc-board-snapshot", () => {
     }));
   });
 
+  test("reads connector text from nested connector payloads when raw nodes do not expose node.text", () => {
+    const snapshot = normalizeFeishuDocBoardSnapshot({
+      whiteboardToken: "wb_4",
+      blockType: "board",
+      pulledAt: "2026-05-30T00:00:00.000Z",
+      rawNodes: [{
+        id: "connector_text_1",
+        type: "connector",
+        x: 60,
+        y: 175,
+        width: 356,
+        height: 0,
+        connector: {
+          shape: "straight",
+          text: {
+            content: "帮我查一下北京今天天气",
+          },
+        },
+        style: {},
+      }],
+    });
+
+    expect(snapshot.nodes[0]).toEqual(expect.objectContaining({
+      kind: "connector",
+      text: expect.objectContaining({
+        content: "帮我查一下北京今天天气",
+      }),
+    }));
+  });
+
+  test("reads connector text from label strings and rich-text elements", () => {
+    const snapshot = normalizeFeishuDocBoardSnapshot({
+      whiteboardToken: "wb_5",
+      blockType: "board",
+      pulledAt: "2026-05-30T00:00:00.000Z",
+      rawNodes: [
+        {
+          id: "connector_text_2",
+          type: "connector",
+          x: 60,
+          y: 175,
+          width: 356,
+          height: 0,
+          connector: {
+            shape: "straight",
+            label: "调用天气查询 API",
+          },
+          style: {},
+        },
+        {
+          id: "connector_text_3",
+          type: "connector",
+          x: 60,
+          y: 220,
+          width: 356,
+          height: 0,
+          connector: {
+            shape: "straight",
+            text: {
+              elements: [
+                { text_run: { content: "参数: " } },
+                { text_run: { content: "北京" } },
+              ],
+            },
+          },
+          style: {},
+        },
+      ],
+    });
+
+    expect(snapshot.nodes[0]).toEqual(expect.objectContaining({
+      text: expect.objectContaining({
+        content: "调用天气查询 API",
+      }),
+    }));
+    expect(snapshot.nodes[1]).toEqual(expect.objectContaining({
+      text: expect.objectContaining({
+        content: "参数:北京",
+      }),
+    }));
+  });
+
   test("creates a local error snapshot when raw board fetch fails", () => {
     const snapshot = createFeishuDocBoardErrorSnapshot({
       whiteboardToken: "wb_3",

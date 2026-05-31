@@ -1071,6 +1071,7 @@ export type FeishuDocBoardSnapshot = {
   token: string
   blockType: FeishuDocBoardBlockType
   nodes: FeishuDocBoardNodeSnapshot[]
+  mermaidSource?: string
   viewport: {
     width: number
     height: number

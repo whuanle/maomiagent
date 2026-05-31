@@ -60,6 +60,7 @@ export function installElectrobunWindowBridge() {
       }),
       refreshMainView: () => rpc.request.refreshMainView(),
       chooseDirectory: (options) => rpc.request.chooseDirectory(options),
+      saveTextFileWithDialog: (input) => rpc.request.saveTextFileWithDialog(input),
       openPathInFileManager: (path) => rpc.request.openPathInFileManager({ path }),
       openExternalUrl: (url) => rpc.request.openExternalUrl({ url }),
     };

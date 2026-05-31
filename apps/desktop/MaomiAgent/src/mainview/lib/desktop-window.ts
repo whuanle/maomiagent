@@ -9,6 +9,8 @@ export type DesktopWindowDragPointer = {
 import type {
   DesktopDirectoryDialogOptions,
   DesktopMainViewRefreshResult,
+  DesktopSaveTextFileDialogInput,
+  DesktopSaveTextFileDialogResult,
 } from "../../shared/desktop-rpc";
 
 export const DESKTOP_WINDOW_BRIDGE_READY_EVENT = "maomi:desktop-window-bridge-ready";
@@ -21,6 +23,7 @@ type DesktopWindowBridge = {
   ) => Promise<{ maximized: boolean }>;
   refreshMainView: () => Promise<DesktopMainViewRefreshResult>;
   chooseDirectory: (options?: DesktopDirectoryDialogOptions) => Promise<string | null>;
+  saveTextFileWithDialog: (input: DesktopSaveTextFileDialogInput) => Promise<DesktopSaveTextFileDialogResult>;
   openPathInFileManager: (path: string) => Promise<{ opened: boolean }>;
   openExternalUrl: (url: string) => Promise<{ opened: boolean }>;
 };
@@ -80,6 +83,17 @@ export async function chooseDesktopDirectory(
   }
 
   return bridge.chooseDirectory(options);
+}
+
+export async function saveDesktopTextFileWithDialog(
+  input: DesktopSaveTextFileDialogInput,
+): Promise<DesktopSaveTextFileDialogResult> {
+  const bridge = window.maomiDesktopWindow;
+  if (!bridge) {
+    throw new Error("Desktop window bridge is unavailable.");
+  }
+
+  return bridge.saveTextFileWithDialog(input);
 }
 
 export async function openDesktopPathInFileManager(path: string): Promise<void> {

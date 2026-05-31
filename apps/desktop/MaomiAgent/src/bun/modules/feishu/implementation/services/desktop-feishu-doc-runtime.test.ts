@@ -2383,6 +2383,207 @@ describe("DesktopFeishuDocRuntime", () => {
     }
   });
 
+  test("openWorkspaceDoc refreshes likely-stale sequence board snapshots that have life lines but no connector labels", async () => {
+    const snapshot = createSnapshot();
+    const nodeToken = "node_board_sequence";
+    const resolvedDocId = "doc_board_sequence";
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-open-refreshes-stale-sequence-board-"));
+    const boardMarkdown = '<board blockId="board_1" token="wb_1" />';
+    const staleBoardSnapshots = {
+      wb_1: {
+        ...createBoardSnapshot("wb_1"),
+        nodes: [
+          {
+            id: "r2:1",
+            kind: "unsupported",
+            rawType: "life_line",
+            supported: false,
+            bounds: { x: 0, y: 20, width: 120, height: 60 },
+            zIndex: 1,
+            style: {},
+            text: { content: "用户" },
+            unsupportedReason: "unsupported node: life_line",
+          },
+          {
+            id: "c2:1",
+            kind: "connector",
+            rawType: "connector",
+            supported: true,
+            bounds: { x: 60, y: 175, width: 356, height: 0 },
+            zIndex: 2,
+            style: {},
+            routing: {
+              shape: "straight",
+              points: [],
+              startAttachment: { position: { x: 60, y: 175 } },
+              endAttachment: { position: { x: 416, y: 175 } },
+            },
+          },
+        ],
+        supportedNodeCount: 1,
+        unsupportedNodeCount: 1,
+      },
+    };
+    const freshBoardSnapshots = {
+      wb_1: {
+        ...staleBoardSnapshots.wb_1,
+        nodes: staleBoardSnapshots.wb_1.nodes.map((node) => (
+          node.id === "c2:1"
+            ? {
+              ...node,
+              text: {
+                content: "帮我查一下北京今天天气",
+              },
+            }
+            : node
+        )),
+      },
+    };
+
+    try {
+      const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
+      const seedRuntime = createRuntimeWithContentSource(
+        snapshot,
+        {
+          readDocumentContent: async () => ({
+            ...createContentView(resolvedDocId, "Board Doc", boardMarkdown),
+            boardSnapshots: staleBoardSnapshots,
+          }),
+          readDocumentBundle: async () => ({
+            content: {
+              ...createContentView(resolvedDocId, "Board Doc", boardMarkdown),
+              boardSnapshots: staleBoardSnapshots,
+            },
+            ir: createDocumentIRWithBoardToken({
+              resolvedDocId,
+              whiteboardToken: "wb_1",
+            }),
+            source: createSourceSnapshot(nodeToken, "Board Doc", resolvedDocId),
+          }),
+        },
+        workspaceQuery,
+      );
+
+      await seedRuntime.pullWorkspaceDoc({
+        workspaceId: "ws_1",
+        docId: nodeToken,
+      });
+      delete snapshot.docs[nodeToken];
+
+      let bundleReads = 0;
+      const reopenRuntime = createRuntimeWithContentSource(
+        snapshot,
+        {
+          readDocumentContent: async () => createContentView(resolvedDocId, "Board Doc", boardMarkdown),
+          readDocumentBundle: async () => {
+            bundleReads += 1;
+            return {
+              content: {
+                ...createContentView(resolvedDocId, "Board Doc", boardMarkdown),
+                boardSnapshots: freshBoardSnapshots,
+              },
+              ir: createDocumentIRWithBoardToken({
+                resolvedDocId,
+                whiteboardToken: "wb_1",
+              }),
+              source: createSourceSnapshot(nodeToken, "Board Doc", resolvedDocId),
+            };
+          },
+        },
+        workspaceQuery,
+      );
+
+      const reopened = await reopenRuntime.openWorkspaceDoc({
+        workspaceId: "ws_1",
+        docId: nodeToken,
+      });
+
+      expect(bundleReads).toBe(1);
+      expect(reopened.boardSnapshots?.wb_1?.nodes.find((node) => node.id === "c2:1")).toEqual(
+        expect.objectContaining({
+          text: expect.objectContaining({
+            content: "帮我查一下北京今天天气",
+          }),
+        }),
+      );
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("openWorkspaceDoc attaches reusable Mermaid source onto board snapshots when IR already restored it", async () => {
+    const snapshot = createSnapshot();
+    const nodeToken = "node_mermaid_1";
+    const resolvedDocId = "doc_mermaid_1";
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-open-mermaid-board-"));
+    const boardMarkdown = '# Mermaid Board\n\n<board blockId="board_1" token="wb_1" align="1" />';
+    const mermaidSource = [
+      "sequenceDiagram",
+      "participant U as User",
+      "participant A as Agent",
+      "U->>A: hi",
+    ].join("\n");
+    const boardSnapshots = {
+      wb_1: {
+        token: "wb_1",
+        blockType: "board" as const,
+        pulledAt: "2026-05-31T00:00:00.000Z",
+        viewport: { width: 800, height: 600 },
+        supportedNodeCount: 1,
+        unsupportedNodeCount: 0,
+        nodes: [
+          {
+            id: "c2:1",
+            kind: "connector" as const,
+            rawType: "connector",
+            supported: true,
+            bounds: { x: 60, y: 175, width: 356, height: 0 },
+            zIndex: 2,
+            style: {},
+            routing: {
+              shape: "straight" as const,
+              points: [],
+              startAttachment: { position: { x: 60, y: 175 } },
+              endAttachment: { position: { x: 416, y: 175 } },
+            },
+          },
+        ],
+      },
+    };
+
+    try {
+      const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
+      const runtime = createRuntimeWithContentSource(
+        snapshot,
+        {
+          readDocumentContent: async () => createContentView(resolvedDocId, "Mermaid Board", boardMarkdown),
+          readDocumentBundle: async () => ({
+            content: {
+              ...createContentView(resolvedDocId, "Mermaid Board", boardMarkdown),
+              boardSnapshots,
+            },
+            ir: createDocumentIRWithReversibleMermaid({
+              resolvedDocId,
+              whiteboardToken: "wb_1",
+              source: mermaidSource,
+            }),
+            source: createSourceSnapshot(nodeToken, "Mermaid Board", resolvedDocId),
+          }),
+        },
+        workspaceQuery,
+      );
+
+      const reopened = await runtime.openWorkspaceDoc({
+        workspaceId: "ws_1",
+        docId: nodeToken,
+      });
+
+      expect(reopened.boardSnapshots?.wb_1?.mermaidSource).toBe(mermaidSource);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
   test("pushWorkspaceDoc keeps pulled native board source docs as noop when content is unchanged", async () => {
     const snapshot = createSnapshot();
     const nodeToken = "node_1";

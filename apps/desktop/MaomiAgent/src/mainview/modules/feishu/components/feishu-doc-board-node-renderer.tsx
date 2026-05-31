@@ -1,11 +1,16 @@
-import type {
-  FeishuDocBoardAttachmentSnapshot,
-  FeishuDocBoardNodeSnapshot,
-} from "../../../../shared/desktop-feishu";
+import type { FeishuDocBoardNodeSnapshot } from "../../../../shared/desktop-feishu";
+
+import { buildConnectorPath } from "./feishu-doc-board-rendering";
 
 type Props = {
   node: FeishuDocBoardNodeSnapshot
   nodesById: Map<string, FeishuDocBoardNodeSnapshot>
+  viewport: {
+    minX: number
+    minY: number
+    width: number
+    height: number
+  }
 }
 
 const DEFAULT_SHAPE_FILL = "#ffffff"
@@ -29,7 +34,14 @@ function readBorderWidth(style: Record<string, unknown>) {
 }
 
 function readStrokeDasharray(style: Record<string, unknown>) {
-  return readStyleString(style, "border_style") === "dash" ? "8 6" : undefined
+  const borderStyle = readStyleString(style, "border_style")
+  if (borderStyle === "dash") {
+    return "8 6"
+  }
+  if (borderStyle === "dot") {
+    return "4 4"
+  }
+  return undefined
 }
 
 function readTextAnchor(horizontalAlign: string | undefined) {
@@ -181,55 +193,90 @@ function renderShape(node: FeishuDocBoardNodeSnapshot) {
   )
 }
 
-function resolveAttachmentPoint(
-  attachment: FeishuDocBoardAttachmentSnapshot | undefined,
-  nodesById: Map<string, FeishuDocBoardNodeSnapshot>,
-): { x: number; y: number } | null {
-  if (!attachment?.objectId) {
-    return null
-  }
-  const target = nodesById.get(attachment.objectId)
-  if (!target) {
-    return null
-  }
-  const ratioX = attachment.position?.x ?? 0.5
-  const ratioY = attachment.position?.y ?? 0.5
-  return {
-    x: target.bounds.x + target.bounds.width * ratioX,
-    y: target.bounds.y + target.bounds.height * ratioY,
-  }
+function renderNoteShape(node: FeishuDocBoardNodeSnapshot) {
+  const fill = readStyleString(node.style, "fill_color") || "#fef1ce"
+  const stroke = readStyleString(node.style, "border_color") || "#000000"
+  const strokeWidth = readBorderWidth(node.style)
+  const x = node.bounds.x
+  const y = node.bounds.y
+  const width = node.bounds.width
+  const height = node.bounds.height
+  const foldSize = Math.max(12, Math.min(18, width * 0.14, height * 0.42))
+  const mainPath = [
+    `M ${x} ${y}`,
+    `H ${x + width - foldSize}`,
+    `L ${x + width} ${y + foldSize}`,
+    `V ${y + height}`,
+    `H ${x}`,
+    "Z",
+  ].join(" ")
+  const foldPath = [
+    `M ${x + width - foldSize} ${y}`,
+    `L ${x + width - foldSize} ${y + foldSize}`,
+    `L ${x + width} ${y + foldSize}`,
+    "Z",
+  ].join(" ")
+
+  return (
+    <g className="feishu-doc-board-node feishu-doc-board-node-note">
+      <path
+        d={mainPath}
+        fill={fill}
+        stroke={stroke}
+        strokeWidth={strokeWidth}
+        className="feishu-doc-board-note"
+      />
+      <path
+        d={foldPath}
+        fill="rgba(255, 255, 255, 0.38)"
+        stroke={stroke}
+        strokeWidth={Math.max(1, strokeWidth * 0.9)}
+        className="feishu-doc-board-note-fold"
+      />
+      {renderNodeText(node)}
+    </g>
+  )
 }
 
-function buildConnectorPath(node: FeishuDocBoardNodeSnapshot, nodesById: Map<string, FeishuDocBoardNodeSnapshot>) {
-  const startPoint = resolveAttachmentPoint(node.routing?.startAttachment, nodesById)
-  const endPoint = resolveAttachmentPoint(node.routing?.endAttachment, nodesById)
-  const middlePoints = node.routing?.points ?? []
-  const points = [
-    ...(startPoint ? [startPoint] : []),
-    ...middlePoints,
-    ...(endPoint ? [endPoint] : []),
-  ]
-  if (points.length === 0) {
-    return ""
-  }
+function renderLifeLine(node: FeishuDocBoardNodeSnapshot, viewport: Props["viewport"]) {
+  const fill = readStyleString(node.style, "fill_color") || "#f0f4fc"
+  const stroke = readStyleString(node.style, "border_color") || "#000000"
+  const strokeWidth = readBorderWidth(node.style)
+  const dasharray = readStrokeDasharray({ border_style: "dot" })
+  const centerX = node.bounds.x + node.bounds.width / 2
+  const lineStartY = node.bounds.y + node.bounds.height
+  const lineEndY = Math.max(
+    lineStartY + 24,
+    viewport.minY + viewport.height - 24,
+  )
 
-  if (node.routing?.shape === "curve" && points.length >= 3) {
-    let path = `M ${points[0]!.x} ${points[0]!.y}`
-    for (let index = 1; index < points.length - 1; index += 1) {
-      const current = points[index]!
-      const next = points[index + 1]!
-      const controlX = (current.x + next.x) / 2
-      const controlY = (current.y + next.y) / 2
-      path += ` Q ${current.x} ${current.y} ${controlX} ${controlY}`
-    }
-    const last = points[points.length - 1]!
-    path += ` T ${last.x} ${last.y}`
-    return path
-  }
-
-  return points.reduce((path, point, index) => (
-    `${path}${index === 0 ? "M" : " L"} ${point.x} ${point.y}`
-  ), "")
+  return (
+    <g className="feishu-doc-board-node feishu-doc-board-node-lifeline">
+      <rect
+        x={node.bounds.x}
+        y={node.bounds.y}
+        width={node.bounds.width}
+        height={node.bounds.height}
+        rx={8}
+        ry={8}
+        fill={fill}
+        stroke={stroke}
+        strokeWidth={strokeWidth}
+        className="feishu-doc-board-lifeline-head"
+      />
+      <line
+        x1={centerX}
+        y1={lineStartY}
+        x2={centerX}
+        y2={lineEndY}
+        stroke={stroke}
+        strokeWidth={strokeWidth}
+        strokeDasharray={dasharray}
+        className="feishu-doc-board-lifeline-spine"
+      />
+      {renderNodeText(node)}
+    </g>
+  )
 }
 
 function resolveArrowMarker(value: string | undefined) {
@@ -310,6 +357,12 @@ export function FeishuDocBoardNodeRenderer(props: Props) {
   }
   if (props.node.kind === "text") {
     return renderNodeText(props.node)
+  }
+  if (props.node.rawType === "life_line") {
+    return renderLifeLine(props.node, props.viewport)
+  }
+  if (props.node.rawType === "composite_shape" && props.node.shapeType === "note_shape") {
+    return renderNoteShape(props.node)
   }
   return renderUnsupported(props.node)
 }

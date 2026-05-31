@@ -276,7 +276,7 @@ function MermaidModalSurface(props: {
   }
 
   function handleExportSvg() {
-    downloadFeishuDocPreviewSvg("feishu-mermaid-diagram.svg", props.svg)
+    void downloadFeishuDocPreviewSvg("feishu-mermaid-diagram.svg", props.svg)
   }
 
   useEffect(() => {

@@ -23,6 +23,48 @@ function readString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function readTextContent(value: unknown): string {
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => readTextContent(item))
+      .filter((item) => item.length > 0)
+      .join("");
+  }
+  if (!isRecord(value)) {
+    return "";
+  }
+  if (Array.isArray(value.elements)) {
+    const content = value.elements
+      .map((element) => (
+        isRecord(element)
+          ? readTextContent(
+            element.text_run
+            ?? element.text
+            ?? element.content
+            ?? element.label
+            ?? element.title,
+          )
+          : ""
+      ))
+      .filter((item) => item.length > 0)
+      .join("");
+    if (content) {
+      return content;
+    }
+  }
+  return readString(value.text)
+    || readString(value.content)
+    || readString(value.plain_text)
+    || readString(value.label)
+    || readString(value.title)
+    || readString(value.name)
+    || readString(value.description)
+    || readString(value.desc);
+}
+
 function normalizeBounds(node: Record<string, unknown>) {
   return {
     x: readNumber(node.x),
@@ -89,16 +131,31 @@ function normalizeRouting(node: Record<string, unknown>): FeishuDocBoardRoutingS
 }
 
 function normalizeText(node: Record<string, unknown>): FeishuDocBoardTextSnapshot | undefined {
-  const text = isRecord(node.text) ? node.text : null;
-  if (!text) {
-    return undefined;
-  }
-
-  const content = readString(text.text);
+  const connector = isRecord(node.connector) ? node.connector : null;
+  const candidates: unknown[] = [
+    node.text,
+    node.label,
+    node.content,
+    node.title,
+    node.name,
+    node.description,
+    connector?.text,
+    connector?.label,
+    connector?.content,
+    connector?.title,
+    connector?.name,
+    connector?.description,
+    connector?.display_text,
+    connector?.caption,
+  ];
+  const content = candidates
+    .map((candidate) => readTextContent(candidate))
+    .find((candidate) => candidate.length > 0)
+    ?? "";
   if (!content) {
     return undefined;
   }
-
+  const text = candidates.find(isRecord) ?? {};
   const fontSize = readNumber(text.font_size);
   const fontWeight = readString(text.font_weight);
   const color = readString(text.text_color);

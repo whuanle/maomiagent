@@ -1,4 +1,5 @@
 import { BrowserWindow, Updater, Utils, defineElectrobunRPC } from "electrobun/bun";
+import { writeFile } from "node:fs/promises";
 
 import {
   checkDesktopAppUpdate,
@@ -339,6 +340,129 @@ async function chooseDirectory(startingFolder?: string): Promise<string | null> 
     .find(Boolean);
 
   return directoryPath ?? null;
+}
+
+function sanitizeSuggestedFileName(fileName: string): string {
+  const normalized = fileName.trim().replace(/[<>:"/\\|?*\u0000-\u001F]+/g, "_");
+  return normalized || "export.svg";
+}
+
+function escapePowerShellLiteral(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+function buildDialogFilterString(filters: Array<{ name: string; extensions: string[] }> | undefined): string {
+  if (!filters || filters.length === 0) {
+    return "All Files (*.*)|*.*";
+  }
+
+  const normalized = filters
+    .map((filter) => {
+      const extensions = filter.extensions
+        .map((extension) => extension.trim().replace(/^\./, ""))
+        .filter(Boolean);
+      if (extensions.length === 0) {
+        return null;
+      }
+
+      return `${filter.name} (${extensions.map((extension) => `*.${extension}`).join(", ")})|${extensions.map((extension) => `*.${extension}`).join(";")}`;
+    })
+    .filter((value): value is string => Boolean(value));
+
+  return normalized.length > 0 ? normalized.join("|") : "All Files (*.*)|*.*";
+}
+
+async function runCommandForStdout(command: string[]): Promise<{ exitCode: number; stdout: string }> {
+  const processHandle = Bun.spawn({
+    cmd: command,
+    cwd: process.cwd(),
+    env: Bun.env,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+
+  const stdout = await new Response(processHandle.stdout).text();
+  const exitCode = await processHandle.exited;
+  return {
+    exitCode,
+    stdout: stdout.trim(),
+  };
+}
+
+async function chooseSaveFilePath(input: {
+  suggestedName: string;
+  startingFolder?: string;
+  filters?: Array<{ name: string; extensions: string[] }>;
+}): Promise<string | null> {
+  const suggestedName = sanitizeSuggestedFileName(input.suggestedName);
+  const startingFolder = input.startingFolder?.trim();
+
+  if (process.platform === "win32") {
+    const filter = buildDialogFilterString(input.filters);
+    const script = [
+      "Add-Type -AssemblyName System.Windows.Forms",
+      "$dialog = New-Object System.Windows.Forms.SaveFileDialog",
+      `$dialog.FileName = '${escapePowerShellLiteral(suggestedName)}'`,
+      `$dialog.Filter = '${escapePowerShellLiteral(filter)}'`,
+      "$dialog.OverwritePrompt = $true",
+      "$dialog.AddExtension = $true",
+      ...(startingFolder ? [`$dialog.InitialDirectory = '${escapePowerShellLiteral(startingFolder)}'`] : []),
+      "if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $dialog.FileName }",
+    ].join("; ");
+    const result = await runCommandForStdout(["powershell", "-NoProfile", "-STA", "-Command", script]);
+    return result.exitCode === 0 && result.stdout ? result.stdout : null;
+  }
+
+  if (process.platform === "darwin") {
+    const defaultLocation = startingFolder
+      ? ` default location POSIX file "${startingFolder.replace(/"/g, '\\"')}"`
+      : "";
+    const script = `POSIX path of (choose file name with prompt "Save SVG" default name "${suggestedName.replace(/"/g, '\\"')}"${defaultLocation})`;
+    const result = await runCommandForStdout(["osascript", "-e", script]);
+    return result.exitCode === 0 && result.stdout ? result.stdout : null;
+  }
+
+  const zenityPath = Bun.which("zenity");
+  if (zenityPath) {
+    const fileName = startingFolder
+      ? `${startingFolder.replace(/\\/g, "/").replace(/\/?$/, "/")}${suggestedName}`
+      : suggestedName;
+    const result = await runCommandForStdout([
+      zenityPath,
+      "--file-selection",
+      "--save",
+      "--confirm-overwrite",
+      "--filename",
+      fileName,
+    ]);
+    return result.exitCode === 0 && result.stdout ? result.stdout : null;
+  }
+
+  throw new Error("Save dialog is unavailable on this platform.");
+}
+
+async function saveTextFileWithDialog(input: {
+  suggestedName: string;
+  content: string;
+  startingFolder?: string;
+  filters?: Array<{ name: string; extensions: string[] }>;
+}): Promise<{ saved: boolean; path?: string }> {
+  const targetPath = await chooseSaveFilePath({
+    suggestedName: input.suggestedName,
+    startingFolder: input.startingFolder,
+    filters: input.filters,
+  });
+
+  if (!targetPath) {
+    return { saved: false };
+  }
+
+  await writeFile(targetPath, input.content, "utf8");
+  return {
+    saved: true,
+    path: targetPath,
+  };
 }
 
 async function openPathInFileManager(targetPath: string): Promise<{ opened: boolean }> {
@@ -694,6 +818,7 @@ try {
             windowControl: ({ action, dragPointer }) => handleWindowAction(window, action, dragPointer),
             refreshMainView: () => refreshMainView(window, channel),
             chooseDirectory: (options) => chooseDirectory(options?.startingFolder),
+            saveTextFileWithDialog: (input) => saveTextFileWithDialog(input),
             openPathInFileManager: ({ path }) => openPathInFileManager(path),
             openExternalUrl: ({ url }) => openExternalUrl(url),
             checkDesktopAppUpdate: () => checkDesktopAppUpdate(),

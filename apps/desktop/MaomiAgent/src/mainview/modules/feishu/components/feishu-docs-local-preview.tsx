@@ -2143,6 +2143,31 @@ function renderPreviewNodes(
   })
 }
 
+function extractNativePreviewSource(nodes: FeishuDocsPreviewNode[]): string {
+  return nodes
+    .map((node) => node.kind === "markdown" ? node.markdown : node.raw)
+    .join("\n")
+    .trim()
+}
+
+function renderMermaidNativePreview(input: {
+  source: string
+  align?: string
+  t?: Translate
+  language?: LanguageCode
+}) {
+  const centeredClassName = input.align === "1" ? " is-page-centered" : ""
+  return (
+    <div className={`feishu-doc-board-mermaid-fallback${centeredClassName}`}>
+      {looksLikeMermaidMindmapSource(input.source) ? (
+        <FeishuDocMindmapPreview source={input.source} t={input.t} language={input.language} />
+      ) : (
+        <FeishuDocMermaidPreview source={input.source} t={input.t} />
+      )}
+    </div>
+  )
+}
+
 function pushNativeProp(
   items: NativePropItem[],
   label: string,
@@ -2630,10 +2655,24 @@ function FeishuDocsNativeBlockPreview(input: {
     )
     const boardTitle = readPreferredFeishuDocsAttribute(attributes, ["name", "title"])
       || title
+    const boardAlign = readPreferredFeishuDocsAttribute(attributes, ["align"])
+    const boardType = readPreferredFeishuDocsAttribute(attributes, ["type"])
+    const mermaidSource = boardType === "mermaid"
+      ? extractNativePreviewSource(input.childrenNodes)
+      : ""
+    if (mermaidSource) {
+      return renderMermaidNativePreview({
+        source: mermaidSource,
+        align: boardAlign,
+        t: input.t,
+        language: input.language,
+      })
+    }
     return (
       <FeishuDocBoardPreview
         title={boardTitle}
         snapshot={token ? input.boardSnapshots?.[token] : undefined}
+        align={boardAlign}
         t={input.t}
       />
     )
@@ -3429,10 +3468,24 @@ function FeishuDocsMdxBlockPreview(input: {
     )
     const boardTitle = readPreferredFeishuDocsAttribute(input.attributes, ["name", "title"])
       || title
+    const boardAlign = readPreferredFeishuDocsAttribute(input.attributes, ["align"])
+    const boardType = readPreferredFeishuDocsAttribute(input.attributes, ["type"])
+    const mermaidSource = boardType === "mermaid"
+      ? input.childMarkdown.trim()
+      : ""
+    if (mermaidSource) {
+      return renderMermaidNativePreview({
+        source: mermaidSource,
+        align: boardAlign,
+        t: input.t,
+        language: input.language,
+      })
+    }
     return (
       <FeishuDocBoardPreview
         title={boardTitle}
         snapshot={token ? input.boardSnapshots?.[token] : undefined}
+        align={boardAlign}
         t={input.t}
       />
     )
