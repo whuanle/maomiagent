@@ -20,6 +20,7 @@ export function FeishuDocPreviewRouter(props: Props) {
   const preview = useFeishuDocPreviewState({
     conversationWorkspaceId: props.conversationWorkspaceId,
     workspaceId: props.workspaceId,
+    docId: props.docId,
     path: props.path,
     fallbackPath: props.fallbackPath,
   });
@@ -52,9 +53,7 @@ export function FeishuDocPreviewRouter(props: Props) {
       mdx={preview.markdown}
       mediaPreviewUrls={preview.mediaPreviewUrls}
       mediaPreviewErrors={preview.mediaPreviewErrors}
-      whiteboardPreviewUrls={preview.whiteboardPreviewUrls}
-      whiteboardPreviewFocusRects={preview.whiteboardPreviewFocusRects}
-      whiteboardPreviewErrors={preview.whiteboardPreviewErrors}
+      boardSnapshots={preview.boardSnapshots}
       onChange={noop}
     />
   );

@@ -3,7 +3,6 @@ import { readFile } from "node:fs/promises"
 
 import {
   resolveDesktopFeishuDocMediaPreviewUrl,
-  resolveDesktopFeishuDocWhiteboardPreviewUrl,
 } from "../../../../shared/desktop-feishu-oauth"
 import { normalizeFeishuDocsPreviewHref } from "./feishu-docs-render-utils"
 
@@ -27,8 +26,6 @@ describe("FeishuDocsLocalPreview", () => {
   test("accepts loopback preview urls for pulled feishu media", () => {
     expect(normalizeFeishuDocsPreviewHref(resolveDesktopFeishuDocMediaPreviewUrl("img_token")))
       .toBe(resolveDesktopFeishuDocMediaPreviewUrl("img_token"))
-    expect(normalizeFeishuDocsPreviewHref(resolveDesktopFeishuDocWhiteboardPreviewUrl("board_token")))
-      .toBe(resolveDesktopFeishuDocWhiteboardPreviewUrl("board_token"))
     expect(normalizeFeishuDocsPreviewHref("file:///E:/workspace/cache/img.png"))
       .toBe("file:///E:/workspace/cache/img.png")
   })
@@ -81,11 +78,13 @@ describe("FeishuDocsLocalPreview", () => {
     expect(previewSource).toContain('["token", "mindnote-token", "mindnote_token"]')
     expect(previewSource).toContain('["token", "diagram-token", "diagram_token"]')
     expect(previewSource).toContain('["token", "whiteboard-token", "whiteboard_token"]')
-    expect(previewSource).toContain('className="feishu-docs-local-preview-plain-media is-image is-board-preview"')
-    expect(previewSource).toContain("const FEISHU_DOCS_BOARD_PREVIEW_MAX_WIDTH = 700")
-    expect(previewSource).toContain("const FEISHU_DOCS_BOARD_PREVIEW_MAX_HEIGHT = 700")
-    expect(previewSource).toContain("preferredWidth={FEISHU_DOCS_BOARD_PREVIEW_MAX_WIDTH}")
-    expect(previewSource).toContain("preferredHeight={FEISHU_DOCS_BOARD_PREVIEW_MAX_HEIGHT}")
+    expect(previewSource).toContain('import { FeishuDocBoardPreview } from "./feishu-doc-board-preview"')
+    expect(previewSource).toContain("<FeishuDocBoardPreview")
+    expect(previewSource).toContain('snapshot={token ? input.boardSnapshots?.[token] : undefined}')
+    expect(previewSource).not.toContain('className="feishu-docs-local-preview-plain-media is-image is-board-preview"')
+    expect(previewSource).not.toContain("whiteboardPreviewUrls")
+    expect(previewSource).not.toContain("whiteboardPreviewFocusRects")
+    expect(previewSource).not.toContain("whiteboardPreviewErrors")
   })
 
   test("renders mermaid diagrams inline, recognizes flowchart sources and falls back from broken preview images", async () => {
@@ -114,7 +113,10 @@ describe("FeishuDocsLocalPreview", () => {
     expect(mermaidPreviewSource).toContain("FeishuDocDiagramToolbar")
     expect(mermaidPreviewSource).toContain("downloadFeishuDocPreviewSvg")
     expect(mermaidPreviewSource).toContain('className="feishu-doc-diagram-viewport"')
-    expect(mermaidPreviewSource).toContain('className="feishu-docs-local-preview-diagram-trigger"')
+    expect(mermaidPreviewSource).toContain('width: size ? `${size.width}px` : undefined')
+    expect(mermaidPreviewSource).toContain('height: size ? `${size.height}px` : undefined')
+    expect(mermaidPreviewSource).toContain('className="feishu-docs-local-preview-diagram-trigger is-mermaid"')
+    expect(mermaidPreviewSource).not.toContain('className="feishu-docs-local-preview-mermaid-shell"')
 
     expect(mindmapPreviewSource).toContain('import { MindMapViewer, type MindMapViewerRef } from "@xiangfa/mindmap/viewer"')
     expect(mindmapPreviewSource).toContain("buildConversationMindmapPreviewData")
@@ -124,6 +126,9 @@ describe("FeishuDocsLocalPreview", () => {
     expect(mindmapPreviewSource).toContain("serializeFeishuDocPreviewSvgElement")
     expect(mindmapPreviewSource).toContain("downloadFeishuDocPreviewSvg")
     expect(mindmapPreviewSource).toContain('className="feishu-docs-local-preview-diagram-trigger is-mindmap"')
+    expect(mindmapPreviewSource).toContain('className={`feishu-docs-local-preview-mindmap-host is-${props.mode}`}') 
+    expect(mindmapPreviewSource).not.toContain('className="feishu-docs-local-preview-mindmap-shell"')
+    expect(mindmapPreviewSource).not.toContain('className={`feishu-docs-local-preview-mindmap-frame is-${props.mode}`}') 
     expect(mindmapPreviewSource).toContain("FeishuDocDiagramPreviewModal")
 
     expect(modalSource).toContain("title={null}")

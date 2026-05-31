@@ -461,6 +461,27 @@ export function FeishuPage(props: Props) {
       return
     }
 
+    let closedChecker: number | null = null
+    let finished = false
+    const clearChecker = () => {
+      if (closedChecker !== null) {
+        window.clearInterval(closedChecker)
+        closedChecker = null
+      }
+    }
+    // 检查弹窗是否被关闭
+    const startClosedChecker = () => {
+      closedChecker = window.setInterval(() => {
+        // @ts-ignore
+        if (authWindow && authWindow["popup"] && authWindow["popup"].closed && !finished) {
+          finished = true
+          clearChecker()
+          setAuthorizing(false)
+          notifier.warning("授权已取消或弹窗被关闭")
+        }
+      }, 500)
+    }
+
     try {
       setAuthorizing(true)
       let nextState = state
@@ -490,6 +511,9 @@ export function FeishuPage(props: Props) {
         notifier.warning(props.t("飞书页.反馈.授权页被拦截"))
       } else {
         notifier.success(props.t("飞书页.反馈.授权页已打开"))
+        // 启动弹窗关闭检测
+        // @ts-ignore
+        authWindow["popup"] && startClosedChecker()
       }
     } catch (error) {
       authWindow.close()
@@ -497,7 +521,10 @@ export function FeishuPage(props: Props) {
         错误: error instanceof Error ? error.message : String(error),
       }))
     } finally {
-      setAuthorizing(false)
+      if (!finished) {
+        setAuthorizing(false)
+        clearChecker()
+      }
     }
   }, [
     assistantAppId,

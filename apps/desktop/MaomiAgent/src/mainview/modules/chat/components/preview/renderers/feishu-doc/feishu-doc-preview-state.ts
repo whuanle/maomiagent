@@ -6,17 +6,17 @@ import {
 } from "../../../../../../lib/desktop-conversation";
 import { getDesktopWorkspaceFileContent } from "../../../../../../lib/desktop-workspace";
 import {
+  fetchFeishuWorkspaceDocLocalDraft,
   fetchFeishuDocMediaPreviewUrls,
-  fetchFeishuDocWhiteboardPreviewUrls,
 } from "../../../../../../lib/feishu";
 import type {
   DesktopConversationRuntimeEventsUpdateEvent,
   DesktopConversationSessionDetailUpdateEvent,
 } from "../../../../../../../shared/desktop-conversation";
+import type { FeishuDocBoardSnapshot } from "../../../../../../../shared/desktop-feishu";
 import type { DesktopWorkspaceFileContentResult } from "../../../../../../../shared/desktop-workspace";
 import {
   extractFeishuMediaTokens,
-  extractFeishuWhiteboardTokens,
 } from "../../../../../feishu/components/feishu-doc-preview-support";
 import {
   normalizeFeishuDocPreviewPaths,
@@ -27,6 +27,7 @@ import {
 type Input = {
   conversationWorkspaceId?: string;
   workspaceId: string;
+  docId: string;
   path: string;
   fallbackPath?: string;
 };
@@ -37,9 +38,7 @@ export function useFeishuDocPreviewState(input: Input) {
   const [error, setError] = useState<string | null>(null);
   const [mediaPreviewUrls, setMediaPreviewUrls] = useState<Record<string, string>>({});
   const [mediaPreviewErrors, setMediaPreviewErrors] = useState<Record<string, string>>({});
-  const [whiteboardPreviewUrls, setWhiteboardPreviewUrls] = useState<Record<string, string>>({});
-  const [whiteboardPreviewFocusRects, setWhiteboardPreviewFocusRects] = useState<Record<string, { left: number; top: number; width: number; height: number }>>({});
-  const [whiteboardPreviewErrors, setWhiteboardPreviewErrors] = useState<Record<string, string>>({});
+  const [boardSnapshots, setBoardSnapshots] = useState<Record<string, FeishuDocBoardSnapshot>>({});
   const loadPaths = useMemo(
     () => [...new Set([
       input.path.trim().replaceAll("\\", "/"),
@@ -60,13 +59,11 @@ export function useFeishuDocPreviewState(input: Input) {
   );
   const latestRefreshFingerprintRef = useRef("");
   const mediaPreviewRequestIdRef = useRef(0);
-  const whiteboardPreviewRequestIdRef = useRef(0);
+  const boardSnapshotsRequestIdRef = useRef(0);
 
   const markdown = result?.content ?? "";
   const mediaTokens = useMemo(() => extractFeishuMediaTokens(markdown), [markdown]);
   const mediaTokenKey = useMemo(() => mediaTokens.join("|"), [mediaTokens]);
-  const whiteboardTokens = useMemo(() => extractFeishuWhiteboardTokens(markdown), [markdown]);
-  const whiteboardTokenKey = useMemo(() => whiteboardTokens.join("|"), [whiteboardTokens]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -83,6 +80,19 @@ export function useFeishuDocPreviewState(input: Input) {
 
           setResult(nextResult);
           setError(null);
+          const boardRequestId = boardSnapshotsRequestIdRef.current + 1;
+          boardSnapshotsRequestIdRef.current = boardRequestId;
+          void fetchFeishuWorkspaceDocLocalDraft("", input.workspaceId, input.docId).then((item) => {
+            if (boardSnapshotsRequestIdRef.current !== boardRequestId) {
+              return;
+            }
+            setBoardSnapshots(item.boardSnapshots ?? {});
+          }).catch(() => {
+            if (boardSnapshotsRequestIdRef.current !== boardRequestId) {
+              return;
+            }
+            setBoardSnapshots({});
+          });
           return;
         } catch (loadError) {
           lastError = loadError;
@@ -91,12 +101,14 @@ export function useFeishuDocPreviewState(input: Input) {
 
       throw lastError ?? new Error("无法读取飞书文档预览");
     } catch (loadError) {
+      boardSnapshotsRequestIdRef.current += 1;
       setError(loadError instanceof Error ? loadError.message : String(loadError));
       setResult(null);
+      setBoardSnapshots({});
     } finally {
       setLoading(false);
     }
-  }, [input.workspaceId, loadPaths]);
+  }, [input.docId, input.workspaceId, loadPaths]);
 
   useEffect(() => {
     void load();
@@ -104,7 +116,7 @@ export function useFeishuDocPreviewState(input: Input) {
 
   useEffect(() => {
     latestRefreshFingerprintRef.current = "";
-  }, [input.conversationWorkspaceId, input.fallbackPath, input.path, input.workspaceId]);
+  }, [input.conversationWorkspaceId, input.docId, input.fallbackPath, input.path, input.workspaceId]);
 
   useEffect(() => {
     const refreshForFingerprint = (fingerprint: string) => {
@@ -179,45 +191,6 @@ export function useFeishuDocPreviewState(input: Input) {
     });
   }, [mediaTokenKey, mediaTokens]);
 
-  useEffect(() => {
-    if (whiteboardTokens.length === 0) {
-      whiteboardPreviewRequestIdRef.current += 1;
-      setWhiteboardPreviewUrls({});
-      setWhiteboardPreviewFocusRects({});
-      setWhiteboardPreviewErrors({});
-      return;
-    }
-
-    const requestId = whiteboardPreviewRequestIdRef.current + 1;
-    whiteboardPreviewRequestIdRef.current = requestId;
-
-    void fetchFeishuDocWhiteboardPreviewUrls("", {
-      whiteboardTokens,
-    }).then((response) => {
-      if (whiteboardPreviewRequestIdRef.current !== requestId) {
-        return;
-      }
-
-      setWhiteboardPreviewUrls(Object.fromEntries(response.items.map((item) => [item.whiteboardToken, item.tmpDownloadUrl])));
-      setWhiteboardPreviewFocusRects(Object.fromEntries(
-        response.items
-          .filter((item): item is typeof item & {
-            focusRect: { left: number; top: number; width: number; height: number };
-          } => Boolean(item.focusRect))
-          .map((item) => [item.whiteboardToken, item.focusRect]),
-      ));
-      setWhiteboardPreviewErrors(Object.fromEntries(response.errors.map((item) => [item.whiteboardToken, item.message])));
-    }).catch(() => {
-      if (whiteboardPreviewRequestIdRef.current !== requestId) {
-        return;
-      }
-
-      setWhiteboardPreviewUrls({});
-      setWhiteboardPreviewFocusRects({});
-      setWhiteboardPreviewErrors({});
-    });
-  }, [whiteboardTokenKey, whiteboardTokens]);
-
   return {
     result,
     markdown,
@@ -225,8 +198,6 @@ export function useFeishuDocPreviewState(input: Input) {
     error,
     mediaPreviewUrls,
     mediaPreviewErrors,
-    whiteboardPreviewUrls,
-    whiteboardPreviewFocusRects,
-    whiteboardPreviewErrors,
+    boardSnapshots,
   };
 }

@@ -31,6 +31,7 @@ import { toMarkdown } from "mdast-util-to-markdown"
 import { Fragment, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react"
 import type { Root, RootContent } from "mdast"
 import type { LanguageCode } from "../../../config/titlebar"
+import type { FeishuDocBoardSnapshot } from "../../../../shared/desktop-feishu"
 import type { FeishuI18nKey as I18nKey, FeishuTranslate as Translate } from "../types"
 import { looksLikeMermaidMindmapSource } from "../../../lib/conversation-mindmap-preview"
 import {
@@ -51,6 +52,7 @@ import {
 import { shouldRenderFeishuDocsMermaidBlock } from "./feishu-docs-mermaid"
 import { FeishuDocMermaidPreview } from "./feishu-doc-mermaid-preview"
 import { FeishuDocMindmapPreview } from "./feishu-doc-mindmap-preview"
+import { FeishuDocBoardPreview } from "./feishu-doc-board-preview"
 import { renderHighlightedFeishuDocsCode, resolveFeishuDocsHighlightLanguage } from "./feishu-docs-markdown-highlight"
 import { parseFeishuDocsLocalPreview, type FeishuDocsPreviewNode } from "./feishu-docs-local-preview-model"
 import {
@@ -79,9 +81,7 @@ type FeishuDocsLocalPreviewProps = {
   markdown: string
   mediaPreviewUrls?: Record<string, string>
   mediaPreviewErrors?: Record<string, string>
-  whiteboardPreviewUrls?: Record<string, string>
-  whiteboardPreviewFocusRects?: Record<string, { left: number; top: number; width: number; height: number }>
-  whiteboardPreviewErrors?: Record<string, string>
+  boardSnapshots?: Record<string, FeishuDocBoardSnapshot>
 }
 
 type NativePropItem = {
@@ -160,9 +160,7 @@ export type FeishuDocsMdxPreviewContext = {
   language: LanguageCode
   mediaPreviewUrls?: Record<string, string>
   mediaPreviewErrors?: Record<string, string>
-  whiteboardPreviewUrls?: Record<string, string>
-  whiteboardPreviewFocusRects?: Record<string, { left: number; top: number; width: number; height: number }>
-  whiteboardPreviewErrors?: Record<string, string>
+  boardSnapshots?: Record<string, FeishuDocBoardSnapshot>
 }
 
 type FeishuDocsMdxMarkdownProps = FeishuDocsMdxPreviewContext & {
@@ -171,9 +169,6 @@ type FeishuDocsMdxMarkdownProps = FeishuDocsMdxPreviewContext & {
 }
 
 type FeishuDocsMdxJsxNode = JsxEditorProps["mdastNode"]
-
-const FEISHU_DOCS_BOARD_PREVIEW_MAX_WIDTH = 700
-const FEISHU_DOCS_BOARD_PREVIEW_MAX_HEIGHT = 700
 
 export const FEISHU_DOCS_MARKDOWN_CODE_BLOCK_LANGUAGE_LABELS: Record<string, string> = {
   bash: "Bash",
@@ -2115,9 +2110,7 @@ function renderPreviewNodes(
   nodes: FeishuDocsPreviewNode[],
   mediaPreviewUrls?: Record<string, string>,
   mediaPreviewErrors?: Record<string, string>,
-  whiteboardPreviewUrls?: Record<string, string>,
-  whiteboardPreviewFocusRects?: Record<string, { left: number; top: number; width: number; height: number }>,
-  whiteboardPreviewErrors?: Record<string, string>,
+  boardSnapshots?: Record<string, FeishuDocBoardSnapshot>,
   t?: Translate,
   language: LanguageCode = "zh-CN",
   headingSlugCounts?: Map<string, number>,
@@ -2141,9 +2134,7 @@ function renderPreviewNodes(
         childrenNodes={node.children}
         mediaPreviewUrls={mediaPreviewUrls}
         mediaPreviewErrors={mediaPreviewErrors}
-        whiteboardPreviewUrls={whiteboardPreviewUrls}
-        whiteboardPreviewFocusRects={whiteboardPreviewFocusRects}
-        whiteboardPreviewErrors={whiteboardPreviewErrors}
+        boardSnapshots={boardSnapshots}
         t={t}
         language={language}
         headingSlugCounts={context.headingSlugCounts}
@@ -2318,9 +2309,7 @@ function FeishuDocsNativeBlockPreview(input: {
   headingSlugCounts?: Map<string, number>
   mediaPreviewUrls?: Record<string, string>
   mediaPreviewErrors?: Record<string, string>
-  whiteboardPreviewUrls?: Record<string, string>
-  whiteboardPreviewFocusRects?: Record<string, { left: number; top: number; width: number; height: number }>
-  whiteboardPreviewErrors?: Record<string, string>
+  boardSnapshots?: Record<string, FeishuDocBoardSnapshot>
 }) {
   const previewBlockName = resolveFeishuDocsPreviewBlockName({
     name: input.name,
@@ -2370,9 +2359,7 @@ function FeishuDocsNativeBlockPreview(input: {
             input.childrenNodes,
             input.mediaPreviewUrls,
             input.mediaPreviewErrors,
-            input.whiteboardPreviewUrls,
-            input.whiteboardPreviewFocusRects,
-            input.whiteboardPreviewErrors,
+            input.boardSnapshots,
             input.t,
             input.language,
             input.headingSlugCounts,
@@ -2422,9 +2409,7 @@ function FeishuDocsNativeBlockPreview(input: {
                 columnNode.children,
                 input.mediaPreviewUrls,
                 input.mediaPreviewErrors,
-                input.whiteboardPreviewUrls,
-                input.whiteboardPreviewFocusRects,
-                input.whiteboardPreviewErrors,
+                input.boardSnapshots,
                 input.t,
                 input.language,
                 input.headingSlugCounts,
@@ -2442,9 +2427,7 @@ function FeishuDocsNativeBlockPreview(input: {
               otherNodes,
               input.mediaPreviewUrls,
               input.mediaPreviewErrors,
-              input.whiteboardPreviewUrls,
-              input.whiteboardPreviewFocusRects,
-              input.whiteboardPreviewErrors,
+              input.boardSnapshots,
               input.t,
               input.language,
               input.headingSlugCounts,
@@ -2463,9 +2446,7 @@ function FeishuDocsNativeBlockPreview(input: {
           input.childrenNodes,
           input.mediaPreviewUrls,
           input.mediaPreviewErrors,
-          input.whiteboardPreviewUrls,
-          input.whiteboardPreviewFocusRects,
-          input.whiteboardPreviewErrors,
+          input.boardSnapshots,
           input.t,
           input.language,
           input.headingSlugCounts,
@@ -2490,9 +2471,7 @@ function FeishuDocsNativeBlockPreview(input: {
             cell.children,
             input.mediaPreviewUrls,
             input.mediaPreviewErrors,
-            input.whiteboardPreviewUrls,
-            input.whiteboardPreviewFocusRects,
-            input.whiteboardPreviewErrors,
+            input.boardSnapshots,
             input.t,
             input.language,
             input.headingSlugCounts,
@@ -2546,9 +2525,7 @@ function FeishuDocsNativeBlockPreview(input: {
             cell.children,
             input.mediaPreviewUrls,
             input.mediaPreviewErrors,
-            input.whiteboardPreviewUrls,
-            input.whiteboardPreviewFocusRects,
-            input.whiteboardPreviewErrors,
+            input.boardSnapshots,
             input.t,
             input.language,
             input.headingSlugCounts,
@@ -2651,42 +2628,14 @@ function FeishuDocsNativeBlockPreview(input: {
           ? ["token", "diagram-token", "diagram_token"]
           : ["token", "whiteboard-token", "whiteboard_token"],
     )
-    const previewError = token ? input.whiteboardPreviewErrors?.[token] ?? "" : ""
-    const imageUrl =
-      (token ? input.whiteboardPreviewUrls?.[token] ?? "" : "")
-      || readPreferredFeishuDocsAttribute(attributes, ["src", "url", "href", "tmp-download-url", "tmp_download_url"])
-      || ""
-    const safeImageUrl = normalizeFeishuDocsPreviewHref(imageUrl)
     const boardTitle = readPreferredFeishuDocsAttribute(attributes, ["name", "title"])
       || title
-    const focusRect = input.name === "board" || input.name === "whiteboard"
-      ? (token ? input.whiteboardPreviewFocusRects?.[token] : undefined)
-      : undefined
     return (
-      <section className="feishu-docs-local-preview-plain-media is-image is-board-preview">
-        {safeImageUrl ? (
-          <FeishuDocsPreviewImage
-            src={safeImageUrl}
-            alt={boardTitle}
-            displayMode="board"
-            plain
-            preferredWidth={FEISHU_DOCS_BOARD_PREVIEW_MAX_WIDTH}
-            preferredHeight={FEISHU_DOCS_BOARD_PREVIEW_MAX_HEIGHT}
-            focusRect={focusRect}
-            t={input.t}
-          />
-        ) : (
-          <div className="feishu-docs-local-preview-image-placeholder is-plain">
-            <PictureOutlined />
-            <Text type="secondary">{previewError || boardTitle}</Text>
-          </div>
-        )}
-        {safeImageUrl && previewError ? (
-          <Text type="secondary" className="feishu-docs-local-preview-plain-media-note">
-            {previewError}
-          </Text>
-        ) : null}
-      </section>
+      <FeishuDocBoardPreview
+        title={boardTitle}
+        snapshot={token ? input.boardSnapshots?.[token] : undefined}
+        t={input.t}
+      />
     )
   }
 
@@ -2703,9 +2652,7 @@ function FeishuDocsNativeBlockPreview(input: {
         input.childrenNodes,
         input.mediaPreviewUrls,
         input.mediaPreviewErrors,
-        input.whiteboardPreviewUrls,
-        input.whiteboardPreviewFocusRects,
-        input.whiteboardPreviewErrors,
+        input.boardSnapshots,
         input.t,
         input.language,
         input.headingSlugCounts,
@@ -2913,9 +2860,7 @@ function FeishuDocsNativeBlockPreview(input: {
               input.childrenNodes,
               input.mediaPreviewUrls,
               input.mediaPreviewErrors,
-              input.whiteboardPreviewUrls,
-              input.whiteboardPreviewFocusRects,
-              input.whiteboardPreviewErrors,
+              input.boardSnapshots,
               input.t,
               input.language,
               input.headingSlugCounts,
@@ -3068,13 +3013,11 @@ function FeishuDocsReadonlyMdxMarkdown(props: FeishuDocsMdxMarkdownProps) {
   }), [props.t])
 
   const jsxComponentDescriptors = useMemo<JsxComponentDescriptor[]>(() => createFeishuDocsJsxComponentDescriptors(props), [
+    props.boardSnapshots,
     props.language,
     props.mediaPreviewErrors,
     props.mediaPreviewUrls,
     props.t,
-    props.whiteboardPreviewErrors,
-    props.whiteboardPreviewFocusRects,
-    props.whiteboardPreviewUrls,
   ])
 
   const plugins = useMemo(() => [
@@ -3122,9 +3065,7 @@ export function createFeishuDocsJsxComponentDescriptors(
           language={input.language}
           mediaPreviewUrls={input.mediaPreviewUrls}
           mediaPreviewErrors={input.mediaPreviewErrors}
-          whiteboardPreviewUrls={input.whiteboardPreviewUrls}
-          whiteboardPreviewFocusRects={input.whiteboardPreviewFocusRects}
-          whiteboardPreviewErrors={input.whiteboardPreviewErrors}
+          boardSnapshots={input.boardSnapshots}
         />
       ),
     },
@@ -3145,9 +3086,7 @@ function FeishuDocsMdxChildrenPreview(props: {
       language={props.language}
       mediaPreviewUrls={props.mediaPreviewUrls}
       mediaPreviewErrors={props.mediaPreviewErrors}
-      whiteboardPreviewUrls={props.whiteboardPreviewUrls}
-      whiteboardPreviewFocusRects={props.whiteboardPreviewFocusRects}
-      whiteboardPreviewErrors={props.whiteboardPreviewErrors}
+      boardSnapshots={props.boardSnapshots}
       className="is-nested"
     />
   )
@@ -3208,9 +3147,7 @@ function FeishuDocsMdxJsxPreviewNode(props: {
       language={props.language}
       mediaPreviewUrls={props.mediaPreviewUrls}
       mediaPreviewErrors={props.mediaPreviewErrors}
-      whiteboardPreviewUrls={props.whiteboardPreviewUrls}
-      whiteboardPreviewFocusRects={props.whiteboardPreviewFocusRects}
-      whiteboardPreviewErrors={props.whiteboardPreviewErrors}
+      boardSnapshots={props.boardSnapshots}
     />
   )
 }
@@ -3252,9 +3189,7 @@ function FeishuDocsMdxBlockPreview(input: {
       language={input.language}
       mediaPreviewUrls={input.mediaPreviewUrls}
       mediaPreviewErrors={input.mediaPreviewErrors}
-      whiteboardPreviewUrls={input.whiteboardPreviewUrls}
-      whiteboardPreviewFocusRects={input.whiteboardPreviewFocusRects}
-      whiteboardPreviewErrors={input.whiteboardPreviewErrors}
+      boardSnapshots={input.boardSnapshots}
     />
   )
 
@@ -3334,9 +3269,7 @@ function FeishuDocsMdxBlockPreview(input: {
                 language={input.language}
                 mediaPreviewUrls={input.mediaPreviewUrls}
                 mediaPreviewErrors={input.mediaPreviewErrors}
-                whiteboardPreviewUrls={input.whiteboardPreviewUrls}
-                whiteboardPreviewFocusRects={input.whiteboardPreviewFocusRects}
-                whiteboardPreviewErrors={input.whiteboardPreviewErrors}
+                boardSnapshots={input.boardSnapshots}
               />
             </div>
           ))}
@@ -3349,9 +3282,7 @@ function FeishuDocsMdxBlockPreview(input: {
               language={input.language}
               mediaPreviewUrls={input.mediaPreviewUrls}
               mediaPreviewErrors={input.mediaPreviewErrors}
-              whiteboardPreviewUrls={input.whiteboardPreviewUrls}
-              whiteboardPreviewFocusRects={input.whiteboardPreviewFocusRects}
-              whiteboardPreviewErrors={input.whiteboardPreviewErrors}
+              boardSnapshots={input.boardSnapshots}
             />
           </div>
         ) : null}
@@ -3437,9 +3368,7 @@ function FeishuDocsMdxBlockPreview(input: {
             cell.children,
             input.mediaPreviewUrls,
             input.mediaPreviewErrors,
-            input.whiteboardPreviewUrls,
-            input.whiteboardPreviewFocusRects,
-            input.whiteboardPreviewErrors,
+            input.boardSnapshots,
             input.t,
             input.language,
           )
@@ -3498,42 +3427,14 @@ function FeishuDocsMdxBlockPreview(input: {
           ? ["token", "diagram-token", "diagram_token"]
           : ["token", "whiteboard-token", "whiteboard_token"],
     )
-    const previewError = token ? input.whiteboardPreviewErrors?.[token] ?? "" : ""
-    const imageUrl =
-      (token ? input.whiteboardPreviewUrls?.[token] ?? "" : "")
-      || readPreferredFeishuDocsAttribute(input.attributes, ["src", "url", "href", "tmp-download-url", "tmp_download_url"])
-      || ""
-    const safeImageUrl = normalizeFeishuDocsPreviewHref(imageUrl)
     const boardTitle = readPreferredFeishuDocsAttribute(input.attributes, ["name", "title"])
       || title
-    const focusRect = input.name === "board" || input.name === "whiteboard"
-      ? (token ? input.whiteboardPreviewFocusRects?.[token] : undefined)
-      : undefined
     return (
-      <section className="feishu-docs-local-preview-plain-media is-image is-board-preview">
-        {safeImageUrl ? (
-          <FeishuDocsPreviewImage
-            src={safeImageUrl}
-            alt={boardTitle}
-            displayMode="board"
-            plain
-            preferredWidth={FEISHU_DOCS_BOARD_PREVIEW_MAX_WIDTH}
-            preferredHeight={FEISHU_DOCS_BOARD_PREVIEW_MAX_HEIGHT}
-            focusRect={focusRect}
-            t={input.t}
-          />
-        ) : (
-          <div className="feishu-docs-local-preview-image-placeholder is-plain">
-            <PictureOutlined />
-            <Text type="secondary">{previewError || boardTitle}</Text>
-          </div>
-        )}
-        {safeImageUrl && previewError ? (
-          <Text type="secondary" className="feishu-docs-local-preview-plain-media-note">
-            {previewError}
-          </Text>
-        ) : null}
-      </section>
+      <FeishuDocBoardPreview
+        title={boardTitle}
+        snapshot={token ? input.boardSnapshots?.[token] : undefined}
+        t={input.t}
+      />
     )
   }
 
@@ -3772,9 +3673,7 @@ export function FeishuDocsLocalPreview(props: FeishuDocsLocalPreviewProps) {
             fallbackNodes,
             props.mediaPreviewUrls,
             props.mediaPreviewErrors,
-            props.whiteboardPreviewUrls,
-            props.whiteboardPreviewFocusRects,
-            props.whiteboardPreviewErrors,
+            props.boardSnapshots,
             props.t,
             language,
           )

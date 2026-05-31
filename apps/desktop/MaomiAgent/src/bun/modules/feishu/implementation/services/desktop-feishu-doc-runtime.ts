@@ -3,6 +3,7 @@ import { access, rename } from "node:fs/promises";
 import { join } from "node:path";
 
 import type {
+  FeishuDocBoardSnapshot,
   FeishuDocCacheStateView,
   FeishuDocContentView,
   FeishuDocMediaPreviewResult,
@@ -127,6 +128,7 @@ type FeishuWorkspaceRemoteContent = {
   markdown: string;
   title: string;
   workspaceRoot: string;
+  boardSnapshots?: Record<string, FeishuDocBoardSnapshot>;
   requestedDocId?: string;
   resolvedDocId?: string;
   documentIdType?: "document_id" | "wiki_node_token";
@@ -208,6 +210,7 @@ const FEISHU_DOCS_AI_INCOMPATIBLE_NATIVE_MARKDOWN_TAG_PATTERN = new RegExp(
   `<\\/?(?:feishu-)?(?:${FEISHU_DOCS_AI_INCOMPATIBLE_NATIVE_MARKDOWN_TAG_NAMES.map((name) => escapeRegExp(name)).join("|")})\\b`,
   "i",
 );
+const FEISHU_RENDERABLE_BOARD_TAG_PATTERN = /<(?:feishu-)?(?:board|whiteboard|mindnote|diagram)\b([^>]*)>/gi;
 const FEISHU_WORKING_COPY_MARKER_PATTERN = /<!--feishu:block:[^>]+-->/i;
 const MARKDOWN_IMAGE_PATTERN = /!\[[^\]]*]\(([^)\r\n]+)\)/;
 const FEISHU_DOCS_AI_OVERWRITE_STRATEGY = "docs_ai_markdown_overwrite";
@@ -294,6 +297,37 @@ function normalizeDocsAiWhiteboardPlaceholders(markdown: string): string {
   return markdown
     .replace(/<(?:board|whiteboard)\b([^>]*)\/>/gi, (match, attrs: string) => rewritePlaceholder(attrs, match))
     .replace(/<(?:board|whiteboard)\b([^>]*)>\s*<\/(?:board|whiteboard)>/gi, (match, attrs: string) => rewritePlaceholder(attrs, match));
+}
+
+function extractRenderableBoardTokens(markdown: string): string[] {
+  const tokens = new Set<string>();
+
+  for (const match of markdown.matchAll(FEISHU_RENDERABLE_BOARD_TAG_PATTERN)) {
+    const attrs = match[1] ?? "";
+    const token = extractMarkdownAttribute(attrs, "token")
+      ?? extractMarkdownAttribute(attrs, "whiteboard_token")
+      ?? extractMarkdownAttribute(attrs, "whiteboardToken");
+    if (token) {
+      tokens.add(token);
+    }
+  }
+
+  return Array.from(tokens);
+}
+
+function hasCompleteBoardSnapshotCoverage(
+  markdown: string,
+  boardSnapshots?: Record<string, FeishuDocBoardSnapshot>,
+): boolean {
+  const tokens = extractRenderableBoardTokens(markdown);
+  if (tokens.length === 0) {
+    return true;
+  }
+  if (!boardSnapshots) {
+    return false;
+  }
+
+  return tokens.every((token) => Boolean(boardSnapshots[token]));
 }
 
 function looksLikeFeishuDocsMermaidSource(source: string): boolean {
@@ -1064,6 +1098,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
     cache?: FeishuDocCacheStateView;
     message?: string;
     diagnostics?: FeishuDocContentView["diagnostics"];
+    boardSnapshots?: FeishuDocContentView["boardSnapshots"];
   }): FeishuDocContentView {
     const title = input.title?.trim()
       ? input.title.trim()
@@ -1074,6 +1109,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
     const message = input.message ?? input.existing?.message;
     const cache = input.cache ?? input.existing?.cache;
     const diagnostics = input.diagnostics ?? input.existing?.diagnostics;
+    const boardSnapshots = input.boardSnapshots ?? input.existing?.boardSnapshots;
     const resolvedDocId = trimText(input.resolvedDocId)
       ?? trimText(cache?.resolvedDocId)
       ?? trimText(input.existing?.resolvedDocId);
@@ -1099,6 +1135,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       ...(message ? { message } : {}),
       ...(cache ? { cache } : {}),
       ...(diagnostics ? { diagnostics } : {}),
+      ...(boardSnapshots ? { boardSnapshots } : {}),
     };
   }
 
@@ -1368,6 +1405,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       markdown,
       title: bundle?.content.title || finalIR.document.title || input.docId,
       workspaceRoot,
+      ...(bundle?.content.boardSnapshots ? { boardSnapshots: bundle.content.boardSnapshots } : {}),
       requestedDocId: trimText(bundle?.source?.requestedDocId) ?? input.docId,
       resolvedDocId: trimText(bundle?.source?.document.document_id)
         ?? trimText(finalIR.document.id)
@@ -1558,12 +1596,14 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
           baselineMarkdown: input.remote.markdown,
           lastPulledAt: new Date().toISOString(),
           diagnostics: input.remote.diagnostics ? { latestPull: input.remote.diagnostics } : undefined,
+          boardSnapshots: input.remote.boardSnapshots,
         }) ?? this.createDocContentView({
           docId: input.docId,
           resolvedDocId: input.remote.resolvedDocId,
           title: input.remote.title,
           markdown: input.remote.markdown,
           diagnostics: input.remote.diagnostics ? { latestPull: input.remote.diagnostics } : undefined,
+          boardSnapshots: input.remote.boardSnapshots,
         })
       : this.createDocContentView({
           docId: input.docId,
@@ -1583,6 +1623,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
             lastPulledAt: new Date().toISOString(),
           }),
           diagnostics: input.remote.diagnostics ? { latestPull: input.remote.diagnostics } : undefined,
+          boardSnapshots: input.remote.boardSnapshots,
         });
     const remoteSourceChecksum = nextOriginalState?.document?.checksum ?? nextSourceState?.document?.checksum ?? "";
     const pullStatus = !currentDraftState?.document && !currentOriginalState?.document && !currentSourceState?.document
@@ -1592,7 +1633,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
           && (!currentDraftState?.document || currentDraftState.document.markdown === input.remote.markdown)
         ? "noop"
         : "updated";
-    if (nextItem.diagnostics) {
+    if (nextItem.diagnostics || nextItem.boardSnapshots) {
       await this.persistDoc(nextItem);
     }
 
@@ -2274,6 +2315,10 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
     return item;
   }
 
+  private shouldRefreshCachedBoardSnapshots(item: FeishuDocContentView | null | undefined): boolean {
+    return !!item && !hasCompleteBoardSnapshotCoverage(item.markdown, item.boardSnapshots);
+  }
+
   private async readWorkspaceRemoteDoc(input: FeishuWorkspaceDocInput): Promise<FeishuDocContentView | null> {
     if (!this.contentSource || !this.accessToken) {
       return null;
@@ -2295,6 +2340,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
     lastPulledAt?: string;
     lastPushedAt?: string;
     diagnostics?: FeishuDocContentView["diagnostics"];
+    boardSnapshots?: FeishuDocContentView["boardSnapshots"];
   }): Promise<FeishuDocContentView | null> {
     const [originalState, draftState, sourceState, irState] = await Promise.all([
       this.readWorkspaceOriginalMarkdownState(input.workspaceId, input.docId),
@@ -2315,6 +2361,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       markdown: document.markdown,
       existing: current,
       diagnostics: input.diagnostics,
+      boardSnapshots: input.boardSnapshots,
       cache: this.buildWorkspaceCacheState({
         workspaceId: input.workspaceId,
         original: originalState?.document,
@@ -2331,7 +2378,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
         lastPushedAt: input.lastPushedAt,
       }),
     });
-    if (item.diagnostics) {
+    if (item.diagnostics || item.boardSnapshots) {
       await this.persistDoc(item);
     }
     return item;
@@ -2485,7 +2532,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
 
   async openWorkspaceDoc(input: FeishuWorkspaceDocInput): Promise<FeishuDocContentView> {
     const cached = await this.readWorkspaceDocFromCache(input);
-    if (cached) {
+    if (cached && !this.shouldRefreshCachedBoardSnapshots(cached)) {
       return cached;
     }
 
@@ -2522,11 +2569,25 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
           title: remoteFromIR.title,
           markdown: remoteFromIR.markdown,
           diagnostics: remoteFromIR.diagnostics ? { latestPull: remoteFromIR.diagnostics } : undefined,
+          boardSnapshots: remoteFromIR.boardSnapshots,
         });
-        return await this.readWorkspaceDocFromCache(input, seededItem) ?? seededItem;
+        const reopened = await this.readWorkspaceDocFromCache(input, seededItem) ?? seededItem;
+        if (reopened.diagnostics || reopened.boardSnapshots) {
+          await this.persistDoc(reopened);
+        }
+
+        return reopened;
       }
     } catch {
+      if (cached) {
+        return cached;
+      }
+
       // Fall back to markdown-only readers below.
+    }
+
+    if (cached) {
+      return cached;
     }
 
     const remote = await this.readWorkspaceRemoteDoc(input);
@@ -2544,7 +2605,12 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
   }
 
   async getWorkspaceDocLocalDraft(input: FeishuWorkspaceDocInput): Promise<FeishuDocContentView> {
-    return await this.readWorkspaceDocFromCache(input) ?? this.openWorkspaceDoc(input);
+    const cached = await this.readWorkspaceDocFromCache(input);
+    if (cached && !this.shouldRefreshCachedBoardSnapshots(cached)) {
+      return cached;
+    }
+
+    return this.openWorkspaceDoc(input);
   }
 
   async saveWorkspaceDocLocalDraft(input: {
@@ -2610,6 +2676,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
             baselineMarkdown: remote.markdown,
             lastPulledAt: new Date().toISOString(),
             diagnostics: remote.diagnostics,
+            boardSnapshots: remote.boardSnapshots,
           }) ?? remote
         : remote,
       pullStatus: !currentDraftState?.document && !currentSourceState?.document

@@ -66,32 +66,30 @@ function MindmapSurface(props: {
     : `${previewResult.data.text} 思维导图预览`
 
   return (
-    <div className={`feishu-docs-local-preview-mindmap-frame is-${props.mode}`}>
-      <div
-        ref={props.hostRef}
-        className="feishu-docs-local-preview-mindmap-host"
-        role="img"
-        aria-label={ariaLabel}
-      >
-        <MindMapViewer
-          key={`${props.mode}:${props.source}`}
-          ref={viewerRef}
-          data={previewResult.data}
-          defaultDirection="both"
-          theme={viewerTheme}
-          locale={props.language === "en-US" ? "en-US" : "zh-CN"}
-          toolbar={props.toolbar ?? false}
-          onEvent={(event) => {
-            if (
-              event.type === "zoomChange"
-              && typeof event.zoom === "number"
-              && props.onZoomChange
-            ) {
-              props.onZoomChange(`${Math.round(event.zoom * 100)}%`)
-            }
-          }}
-        />
-      </div>
+    <div
+      ref={props.hostRef}
+      className={`feishu-docs-local-preview-mindmap-host is-${props.mode}`}
+      role="img"
+      aria-label={ariaLabel}
+    >
+      <MindMapViewer
+        key={`${props.mode}:${props.source}`}
+        ref={viewerRef}
+        data={previewResult.data}
+        defaultDirection="both"
+        theme={viewerTheme}
+        locale={props.language === "en-US" ? "en-US" : "zh-CN"}
+        toolbar={props.toolbar ?? false}
+        onEvent={(event) => {
+          if (
+            event.type === "zoomChange"
+            && typeof event.zoom === "number"
+            && props.onZoomChange
+          ) {
+            props.onZoomChange(`${Math.round(event.zoom * 100)}%`)
+          }
+        }}
+      />
     </div>
   )
 }
@@ -201,7 +199,7 @@ export function FeishuDocMindmapPreview(props: {
   }, [source])
 
   return (
-    <div className="feishu-docs-local-preview-mindmap-shell">
+    <>
       {previewResult.ok ? (
         <button
           type="button"
@@ -242,6 +240,6 @@ export function FeishuDocMindmapPreview(props: {
           </pre>
         )}
       </FeishuDocDiagramPreviewModal>
-    </div>
+    </>
   )
 }

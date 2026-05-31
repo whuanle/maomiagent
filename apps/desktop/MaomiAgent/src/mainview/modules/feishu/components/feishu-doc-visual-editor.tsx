@@ -24,6 +24,7 @@ import {
   type MDXEditorMethods,
 } from "@mdxeditor/editor"
 import type { FeishuDocIR } from "../../../../shared/desktop-feishu-doc-ir"
+import type { FeishuDocBoardSnapshot } from "../../../../shared/desktop-feishu"
 import { Typography } from "antd"
 import { useEffect, useMemo, useRef, useState } from "react"
 import type { FeishuTranslate as Translate } from "../types"
@@ -111,9 +112,7 @@ export function FeishuDocVisualEditor(props: {
   t?: Translate
   mediaPreviewUrls?: Record<string, string>
   mediaPreviewErrors?: Record<string, string>
-  whiteboardPreviewUrls?: Record<string, string>
-  whiteboardPreviewFocusRects?: Record<string, { left: number; top: number; width: number; height: number }>
-  whiteboardPreviewErrors?: Record<string, string>
+  boardSnapshots?: Record<string, FeishuDocBoardSnapshot>
   onChange: (mdx: string) => void
 }) {
   const previewScrollRef = useRef<HTMLDivElement | null>(null)
@@ -130,17 +129,13 @@ export function FeishuDocVisualEditor(props: {
       language: "zh-CN",
       mediaPreviewUrls: props.mediaPreviewUrls,
       mediaPreviewErrors: props.mediaPreviewErrors,
-      whiteboardPreviewUrls: props.whiteboardPreviewUrls,
-      whiteboardPreviewFocusRects: props.whiteboardPreviewFocusRects,
-      whiteboardPreviewErrors: props.whiteboardPreviewErrors,
+      boardSnapshots: props.boardSnapshots,
     }),
     [
+      props.boardSnapshots,
       props.mediaPreviewErrors,
       props.mediaPreviewUrls,
       props.t,
-      props.whiteboardPreviewErrors,
-      props.whiteboardPreviewFocusRects,
-      props.whiteboardPreviewUrls,
     ],
   )
 
@@ -306,9 +301,7 @@ export function FeishuDocVisualEditor(props: {
             t={props.t}
             mediaPreviewUrls={props.mediaPreviewUrls}
             mediaPreviewErrors={props.mediaPreviewErrors}
-            whiteboardPreviewUrls={props.whiteboardPreviewUrls}
-            whiteboardPreviewFocusRects={props.whiteboardPreviewFocusRects}
-            whiteboardPreviewErrors={props.whiteboardPreviewErrors}
+            boardSnapshots={props.boardSnapshots}
           />
         )}
       </div>

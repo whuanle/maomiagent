@@ -326,6 +326,8 @@ function MermaidModalSurface(props: {
         <div
           className="feishu-doc-diagram-canvas"
           style={{
+            width: size ? `${size.width}px` : undefined,
+            height: size ? `${size.height}px` : undefined,
             transform: `translate(${viewState.panX}px, ${viewState.panY}px) scale(${viewState.scale})`,
           }}
         >
@@ -408,11 +410,11 @@ export function FeishuDocMermaidPreview(props: {
   }, [mermaidTheme, renderId, source])
 
   return (
-    <div className="feishu-docs-local-preview-mermaid-shell">
+    <>
       {svg ? (
         <button
           type="button"
-          className="feishu-docs-local-preview-diagram-trigger"
+          className="feishu-docs-local-preview-diagram-trigger is-mermaid"
           aria-label={previewActionLabel}
           title={previewActionLabel}
           onClick={() => setPreviewOpen(true)}
@@ -445,6 +447,6 @@ export function FeishuDocMermaidPreview(props: {
           </pre>
         )}
       </FeishuDocDiagramPreviewModal>
-    </div>
+    </>
   )
 }

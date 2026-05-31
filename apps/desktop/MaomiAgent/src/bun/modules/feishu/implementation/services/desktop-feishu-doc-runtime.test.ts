@@ -6,6 +6,7 @@ import { describe, expect, test } from "bun:test";
 
 import type {
   FeishuBotStateView,
+  FeishuDocBoardSnapshot,
   FeishuDocContentView,
   FeishuDocTreeBranchInput,
   FeishuDocTreeBranchResult,
@@ -151,6 +152,23 @@ function createContentView(
       riskyBlockMode: "safe",
     },
     ...(diagnostics ? { diagnostics } : {}),
+  };
+}
+
+function createBoardSnapshot(token: string): FeishuDocBoardSnapshot {
+  return {
+    token,
+    blockType: "board",
+    nodes: [],
+    viewport: {
+      width: 800,
+      height: 600,
+      minX: 0,
+      minY: 0,
+    },
+    supportedNodeCount: 0,
+    unsupportedNodeCount: 0,
+    pulledAt: "2026-05-30T00:00:00.000Z",
   };
 }
 
@@ -2286,6 +2304,85 @@ describe("DesktopFeishuDocRuntime", () => {
     }
   });
 
+  test("openWorkspaceDoc refreshes native board snapshots when cached markdown outlives store metadata", async () => {
+    const snapshot = createSnapshot();
+    const nodeToken = "node_board";
+    const resolvedDocId = "doc_board";
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-open-restores-board-snapshots-"));
+    const boardMarkdown = '<board blockId="board_1" token="wb_1" />';
+    const boardSnapshots = {
+      wb_1: createBoardSnapshot("wb_1"),
+    };
+
+    try {
+      const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
+      const seedRuntime = createRuntimeWithContentSource(
+        snapshot,
+        {
+          readDocumentContent: async () => ({
+            ...createContentView(resolvedDocId, "Board Doc", boardMarkdown),
+            boardSnapshots,
+          }),
+          readDocumentBundle: async () => ({
+            content: {
+              ...createContentView(resolvedDocId, "Board Doc", boardMarkdown),
+              boardSnapshots,
+            },
+            ir: createDocumentIRWithBoardToken({
+              resolvedDocId,
+              whiteboardToken: "wb_1",
+            }),
+            source: createSourceSnapshot(nodeToken, "Board Doc", resolvedDocId),
+          }),
+        },
+        workspaceQuery,
+      );
+
+      const seeded = await seedRuntime.pullWorkspaceDoc({
+        workspaceId: "ws_1",
+        docId: nodeToken,
+      });
+      expect(seeded.item.boardSnapshots?.wb_1?.token).toBe("wb_1");
+
+      delete snapshot.docs[nodeToken];
+
+      let bundleReads = 0;
+      const reopenRuntime = createRuntimeWithContentSource(
+        snapshot,
+        {
+          readDocumentContent: async () => createContentView(resolvedDocId, "Board Doc", boardMarkdown),
+          readDocumentBundle: async () => {
+            bundleReads += 1;
+            return {
+              content: {
+                ...createContentView(resolvedDocId, "Board Doc", boardMarkdown),
+                boardSnapshots,
+              },
+              ir: createDocumentIRWithBoardToken({
+                resolvedDocId,
+                whiteboardToken: "wb_1",
+              }),
+              source: createSourceSnapshot(nodeToken, "Board Doc", resolvedDocId),
+            };
+          },
+        },
+        workspaceQuery,
+      );
+
+      const reopened = await reopenRuntime.openWorkspaceDoc({
+        workspaceId: "ws_1",
+        docId: nodeToken,
+      });
+
+      expect(bundleReads).toBe(1);
+      expect(reopened.markdown).toBe(boardMarkdown);
+      expect(reopened.boardSnapshots?.wb_1?.token).toBe("wb_1");
+      expect(snapshot.docs[nodeToken]?.boardSnapshots?.wb_1?.token).toBe("wb_1");
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
   test("pushWorkspaceDoc keeps pulled native board source docs as noop when content is unchanged", async () => {
     const snapshot = createSnapshot();
     const nodeToken = "node_1";
@@ -2364,12 +2461,20 @@ describe("DesktopFeishuDocRuntime", () => {
             }
 
             return {
-              content: createContentView(
+              content: {
+                ...createContentView(
+                  resolvedDocId,
+                  "Remote Doc",
+                  '# Remote Doc\n\n<board blockId="board_1" token="wb_1" />\n\n<table blockId="table_1"></table>',
+                ),
+                boardSnapshots: {
+                  wb_1: createBoardSnapshot("wb_1"),
+                },
+              },
+              ir: createDocumentIRWithBoardToken({
                 resolvedDocId,
-                "Remote Doc",
-                '# Remote Doc\n\n<board blockId="board_1" token="wb_1" />\n\n<table blockId="table_1"></table>',
-              ),
-              ir: createDocumentIRWithText(resolvedDocId, "Remote Doc", "# Remote Doc"),
+                whiteboardToken: "wb_1",
+              }),
               source: createSourceSnapshot(nodeToken, "Remote Doc", resolvedDocId),
             };
           },

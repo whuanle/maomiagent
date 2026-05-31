@@ -5,7 +5,10 @@ type RequestRecord = { url: string; token: string };
 
 function createSource(
   responses: Record<string, unknown>,
-  optionsOrRequests: { whiteboard?: Record<string, { format: string; source: string } | null | Error> } | RequestRecord[] = [],
+  optionsOrRequests: {
+    whiteboard?: Record<string, { format: string; source: string } | null | Error>;
+    rawNodes?: Record<string, unknown[] | Error>;
+  } | RequestRecord[] = [],
   requests: RequestRecord[] = [],
 ) {
   const options = Array.isArray(optionsOrRequests) ? {} : optionsOrRequests;
@@ -33,6 +36,13 @@ function createSource(
           throw value;
         }
         return value ?? null;
+      },
+      queryWhiteboardRawNodes: async ({ whiteboardToken }) => {
+        const value = options.rawNodes?.[whiteboardToken];
+        if (value instanceof Error) {
+          throw value;
+        }
+        return value ?? [];
       },
     },
   );
@@ -366,6 +376,22 @@ describe("FeishuDocTreeRemoteSource", () => {
       "/docx/v1/documents/doc_1": {
         document: { document_id: "doc_1", title: "Board Doc", revision_id: 7 },
       },
+    }, {
+      rawNodes: {
+        whiteboard_token_1: [
+          {
+            id: "shape_1",
+            type: "composite_shape",
+            x: 12,
+            y: 24,
+            width: 140,
+            height: 72,
+            composite_shape: { type: "round_rect" },
+            text: { text: "Board node" },
+            style: {},
+          },
+        ],
+      },
     });
 
     const bundle = await source.readDocumentBundle("access", "doc_1");
@@ -374,6 +400,39 @@ describe("FeishuDocTreeRemoteSource", () => {
     expect(bundle.ir.assets.whiteboard_token_1).toEqual(expect.objectContaining({
       token: "whiteboard_token_1",
       kind: "whiteboard",
+    }));
+    expect(bundle.content.boardSnapshots?.whiteboard_token_1).toEqual(expect.objectContaining({
+      token: "whiteboard_token_1",
+      blockType: "board",
+      supportedNodeCount: 1,
+    }));
+  });
+
+  test("readDocumentBundle creates local board placeholders when raw-node fetch fails", async () => {
+    const source = createSource({
+      "/docx/v1/documents/doc_1/blocks": {
+        items: [
+          { block_id: "doc_1", block_type: 1, children: ["board_1"] },
+          { block_id: "board_1", parent_id: "doc_1", block_type: 43, board: { token: "whiteboard_token_1" } },
+        ],
+      },
+      "/docx/v1/documents/doc_1": {
+        document: { document_id: "doc_1", title: "Board Doc", revision_id: 7 },
+      },
+    }, {
+      rawNodes: {
+        whiteboard_token_1: new Error("Feishu API HTTP error 403 (code 2890005): forbidden"),
+      },
+    });
+
+    const bundle = await source.readDocumentBundle("access", "doc_1");
+
+    expect(bundle.content.markdown).toContain('<board blockId="board_1" token="whiteboard_token_1" />');
+    expect(bundle.content.boardSnapshots?.whiteboard_token_1).toEqual(expect.objectContaining({
+      token: "whiteboard_token_1",
+      blockType: "board",
+      loadError: "Feishu API HTTP error 403 (code 2890005): forbidden",
+      unsupportedNodeCount: 1,
     }));
   });
 

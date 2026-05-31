@@ -1,4 +1,5 @@
 import type {
+  FeishuDocBoardSnapshot,
   FeishuDocContentView,
   FeishuDocPullDiagnosticsView,
   FeishuDocTreeNode,
@@ -8,6 +9,11 @@ import type { FeishuDocIR } from "../../../../../shared/desktop-feishu-doc-ir";
 import { feishuDocIRToSourceMarkdown } from "./feishu-doc-source-markdown-codec";
 import type { FeishuDocSourceSnapshot } from "./feishu-doc-source-workspace-cache";
 import { applyRecoveredMermaidWhiteboards } from "./feishu-doc-whiteboard-reversible";
+import {
+  createFeishuDocBoardErrorSnapshot,
+  normalizeFeishuDocBoardBlockType,
+  normalizeFeishuDocBoardSnapshot,
+} from "./feishu-doc-board-snapshot";
 import {
   classifyFeishuDocDiagnosticError,
   summarizeWhiteboardRecoveryDiagnostics,
@@ -23,6 +29,7 @@ export type FeishuOpenApiReader = {
 
 type FeishuWhiteboardCodeReader = {
   queryWhiteboardCode(input: { whiteboardToken: string }): Promise<{ format: string; source: string } | null>;
+  queryWhiteboardRawNodes?(input: { whiteboardToken: string }): Promise<unknown[]>;
 };
 
 type FeishuDocTreeRemoteSourceOptions = {
@@ -298,6 +305,10 @@ export class FeishuDocTreeRemoteSource {
       ir,
       pulledAt,
     });
+    const boardSnapshots = await this.buildBoardSnapshots({
+      ir: reversed.ir,
+      pulledAt,
+    });
     const markdown = feishuDocIRToSourceMarkdown(reversed.ir).trimEnd();
     const riskyBlocks = Object.values(reversed.ir.blocks)
       .filter((block) => block.type === "undefined")
@@ -323,6 +334,7 @@ export class FeishuDocTreeRemoteSource {
         offset: 0,
         updatedAt: new Date().toISOString(),
         blocks,
+        ...(Object.keys(boardSnapshots).length > 0 ? { boardSnapshots } : {}),
         ...(reversed.diagnostics ? { diagnostics: { latestPull: reversed.diagnostics } } : {}),
         analysis: {
           riskyBlocks,
@@ -378,6 +390,32 @@ export class FeishuDocTreeRemoteSource {
           }
         : undefined,
     };
+  }
+
+  private async buildBoardSnapshots(input: {
+    ir: FeishuDocIR;
+    pulledAt: string;
+  }): Promise<Record<string, FeishuDocBoardSnapshot>> {
+    if (!this.whiteboardApi?.queryWhiteboardRawNodes) {
+      return {};
+    }
+
+    const targets = collectWhiteboardSnapshotTargets(input.ir);
+    if (targets.length === 0) {
+      return {};
+    }
+
+    const attempts = await this.mapWithConcurrency(targets, async (target) =>
+      this.recoverBoardSnapshot({
+        whiteboardToken: target.whiteboardToken,
+        blockType: target.blockType,
+        pulledAt: input.pulledAt,
+      }),
+    );
+
+    return Object.fromEntries(
+      attempts.map((snapshot) => [snapshot.token, snapshot]),
+    );
   }
 
   private async recoverWhiteboardToken(input: {
@@ -456,6 +494,46 @@ export class FeishuDocTreeRemoteSource {
     for (;;) {
       try {
         return await this.whiteboardApi?.queryWhiteboardCode({ whiteboardToken }) ?? null;
+      } catch (error) {
+        const delayMs = this.whiteboardCodeRetryDelaysMs[retryIndex];
+        if (delayMs == null || !isRetryableWhiteboardCodeError(error)) {
+          throw error;
+        }
+        retryIndex += 1;
+        await this.sleep(delayMs);
+      }
+    }
+  }
+
+  private async recoverBoardSnapshot(input: {
+    whiteboardToken: string;
+    blockType: "board" | "whiteboard" | "diagram" | "mindnote";
+    pulledAt: string;
+  }): Promise<FeishuDocBoardSnapshot> {
+    try {
+      const rawNodes = await this.queryWhiteboardRawNodesWithRetry(input.whiteboardToken);
+      return normalizeFeishuDocBoardSnapshot({
+        whiteboardToken: input.whiteboardToken,
+        blockType: input.blockType,
+        rawNodes,
+        pulledAt: input.pulledAt,
+      });
+    } catch (error) {
+      const classified = classifyFeishuDocDiagnosticError(error);
+      return createFeishuDocBoardErrorSnapshot({
+        whiteboardToken: input.whiteboardToken,
+        blockType: input.blockType,
+        pulledAt: input.pulledAt,
+        loadError: classified.message,
+      });
+    }
+  }
+
+  private async queryWhiteboardRawNodesWithRetry(whiteboardToken: string): Promise<unknown[]> {
+    let retryIndex = 0;
+    for (;;) {
+      try {
+        return await this.whiteboardApi?.queryWhiteboardRawNodes?.({ whiteboardToken }) ?? [];
       } catch (error) {
         const delayMs = this.whiteboardCodeRetryDelaysMs[retryIndex];
         if (delayMs == null || !isRetryableWhiteboardCodeError(error)) {
@@ -591,7 +669,7 @@ export class FeishuDocTreeRemoteSource {
 }
 
 function isWhiteboardLike(type: string): boolean {
-  return type === "whiteboard" || type === "board" || type === "diagram";
+  return type === "whiteboard" || type === "board" || type === "diagram" || type === "mindnote";
 }
 
 function looksLikeMermaidSource(source: string): boolean {
@@ -601,4 +679,35 @@ function looksLikeMermaidSource(source: string): boolean {
   }
 
   return FEISHU_MERMAID_SOURCE_MARKERS.some((marker) => normalized.startsWith(marker));
+}
+
+function collectWhiteboardSnapshotTargets(ir: FeishuDocIR): Array<{
+  whiteboardToken: string;
+  blockType: "board" | "whiteboard" | "diagram" | "mindnote";
+}> {
+  const targets: Array<{
+    whiteboardToken: string;
+    blockType: "board" | "whiteboard" | "diagram" | "mindnote";
+  }> = [];
+  const seen = new Set<string>();
+
+  for (const block of Object.values(ir.blocks)) {
+    if (!isWhiteboardLike(block.type) || !block.resource?.token) {
+      continue;
+    }
+    if (ir.assets[block.resource.token]?.reversible?.format === "mermaid") {
+      continue;
+    }
+    if (seen.has(block.resource.token)) {
+      continue;
+    }
+
+    seen.add(block.resource.token);
+    targets.push({
+      whiteboardToken: block.resource.token,
+      blockType: normalizeFeishuDocBoardBlockType(block.type),
+    });
+  }
+
+  return targets;
 }

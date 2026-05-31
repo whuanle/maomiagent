@@ -19,6 +19,11 @@ type WhiteboardCodeResponse = {
   content?: string;
 };
 
+type WhiteboardRawNodesResponse = {
+  nodes?: unknown[];
+  items?: unknown[];
+};
+
 type WhiteboardUpdateResponse = {
   result?: string;
 };
@@ -51,6 +56,28 @@ export class FeishuDocRemoteWhiteboardApi {
       format: trimText(response.format) || trimText(response.output_format) || "unknown",
       source,
     };
+  }
+
+  async queryWhiteboardRawNodes(input: {
+    whiteboardToken: string;
+  }): Promise<unknown[]> {
+    const url = new URL(
+      `${this.deps.baseUrl}/board/v1/whiteboards/${encodeURIComponent(input.whiteboardToken)}/nodes`,
+    );
+    url.searchParams.set("output_as", "raw");
+
+    const response = await this.requestWithRefresh((accessToken) => this.deps.client.getJson<WhiteboardRawNodesResponse>(
+      url.toString(),
+      accessToken,
+    ));
+
+    if (Array.isArray(response.nodes)) {
+      return response.nodes;
+    }
+    if (Array.isArray(response.items)) {
+      return response.items;
+    }
+    return [];
   }
 
   async updateWhiteboard(input: {

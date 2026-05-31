@@ -72,7 +72,8 @@ describe("Feishu docs workbench IR loading bridge", () => {
     expect(workbench).not.toContain("whiteboardTokens.length === 0 || !hasPreviewAuth");
     expect(workbench).not.toContain("resolvePublishRecommendationText(");
     expect(workbench).toContain("if (currentDoc?.cache?.hasLocalChanges)");
-    expect(workbench).toContain("void fetchFeishuDocWhiteboardPreviewUrls(props.baseUrl, {");
+    expect(workbench).toContain("boardSnapshots={currentDoc.boardSnapshots}");
+    expect(workbench).not.toContain("fetchFeishuDocWhiteboardPreviewUrls");
     expect(workbench).toContain("createSession: true");
     expect(workbench).toContain("void loadTree(treeRootDocId, { forceRefresh: true, preloadSubtree: true })");
     expect(workbench).toContain("void loadTree(nextRoot, { forceRefresh: true, preloadSubtree: true })");

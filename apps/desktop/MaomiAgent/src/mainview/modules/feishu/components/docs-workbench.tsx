@@ -32,7 +32,6 @@ import type {
   FeishuDocMediaPreviewErrorItem,
   FeishuDocPermissionInspectView,
   FeishuDocPullDiagnosticsView,
-  FeishuDocWhiteboardPreviewErrorItem,
   FeishuDocSummary,
   FeishuDocTreeNode,
   FeishuDocTreeSnapshotNode,
@@ -43,7 +42,6 @@ import type { FeishuTranslate as Translate } from "../types"
 import {
   fetchFeishuDocContent,
   fetchFeishuDocMediaPreviewUrls,
-  fetchFeishuDocWhiteboardPreviewUrls,
   fetchFeishuDocsCapabilities,
   fetchFeishuWorkspaceDocLocalDraft,
   inspectFeishuWorkspaceDocPermissions,
@@ -63,7 +61,6 @@ import { FeishuDocVisualEditor } from "./feishu-doc-visual-editor"
 import {
   createFeishuDocPreviewIR,
   extractFeishuMediaTokens,
-  extractFeishuWhiteboardTokens,
 } from "./feishu-doc-preview-support"
 import { buildFeishuDocChatDraftText } from "./feishu-doc-chat-draft"
 import { FeishuDocPermissionInspectModal } from "./feishu-doc-permission-inspect-modal"
@@ -408,11 +405,6 @@ export function FeishuDocsWorkbench(props: Props) {
   const [workspaceViewMode, setWorkspaceViewMode] = useState<FeishuDocWorkspaceViewMode>("preview")
   const [mediaPreviewUrls, setMediaPreviewUrls] = useState<Record<string, string>>({})
   const [mediaPreviewErrors, setMediaPreviewErrors] = useState<FeishuDocMediaPreviewErrorItem[]>([])
-  const [whiteboardPreviewUrls, setWhiteboardPreviewUrls] = useState<Record<string, string>>({})
-  const [whiteboardPreviewFocusRects, setWhiteboardPreviewFocusRects] = useState<
-    Record<string, { left: number; top: number; width: number; height: number }>
-  >({})
-  const [whiteboardPreviewErrors, setWhiteboardPreviewErrors] = useState<FeishuDocWhiteboardPreviewErrorItem[]>([])
   const [permissionInspectOpen, setPermissionInspectOpen] = useState(false)
   const [permissionInspectLoading, setPermissionInspectLoading] = useState(false)
   const [permissionInspectError, setPermissionInspectError] = useState("")
@@ -425,7 +417,6 @@ export function FeishuDocsWorkbench(props: Props) {
   const hasPendingEditChangesRef = useRef(false)
   const activeDocIdRef = useRef("")
   const mediaPreviewRequestIdRef = useRef(0)
-  const whiteboardPreviewRequestIdRef = useRef(0)
   const lastLoadErrorNoticeRef = useRef("")
   const lastAccessNoticeRef = useRef("")
   const lastPullDiagnosticNoticeRef = useRef("")
@@ -1189,15 +1180,9 @@ export function FeishuDocsWorkbench(props: Props) {
   const activeDocId = currentDoc?.docId ?? activeDoc?.docId ?? activeDoc?.id ?? ""
   const mediaTokens = useMemo(() => extractFeishuMediaTokens(draft), [draft])
   const mediaTokenKey = useMemo(() => mediaTokens.join("|"), [mediaTokens])
-  const whiteboardTokens = useMemo(() => extractFeishuWhiteboardTokens(draft), [draft])
-  const whiteboardTokenKey = useMemo(() => whiteboardTokens.join("|"), [whiteboardTokens])
   const mediaPreviewErrorMap = useMemo(
     () => Object.fromEntries(mediaPreviewErrors.map((item) => [item.fileToken, item.message])),
     [mediaPreviewErrors],
-  )
-  const whiteboardPreviewErrorMap = useMemo(
-    () => Object.fromEntries(whiteboardPreviewErrors.map((item) => [item.whiteboardToken, item.message])),
-    [whiteboardPreviewErrors],
   )
   const draftDocIR = useMemo(
     () => currentDoc ? createFeishuDocPreviewIR({
@@ -1251,64 +1236,6 @@ export function FeishuDocsWorkbench(props: Props) {
       setMediaPreviewErrors([])
     })
   }, [mediaTokenKey, mediaTokens, props.baseUrl])
-
-  useEffect(() => {
-    const activeTokens = new Set(whiteboardTokens)
-    setWhiteboardPreviewUrls((previous) => {
-      const nextEntries = Object.entries(previous).filter(([token]) => activeTokens.has(token))
-      if (nextEntries.length === Object.keys(previous).length) {
-        return previous
-      }
-      return Object.fromEntries(nextEntries)
-    })
-    setWhiteboardPreviewFocusRects((previous) => {
-      const nextEntries = Object.entries(previous).filter(([token]) => activeTokens.has(token))
-      if (nextEntries.length === Object.keys(previous).length) {
-        return previous
-      }
-      return Object.fromEntries(nextEntries)
-    })
-    setWhiteboardPreviewErrors((previous) => previous.filter((item) => activeTokens.has(item.whiteboardToken)))
-
-    if (!props.baseUrl || whiteboardTokens.length === 0) {
-      whiteboardPreviewRequestIdRef.current += 1
-      setWhiteboardPreviewUrls((previous) => (Object.keys(previous).length === 0 ? previous : {}))
-      setWhiteboardPreviewFocusRects((previous) => (Object.keys(previous).length === 0 ? previous : {}))
-      setWhiteboardPreviewErrors([])
-      return
-    }
-
-    const requestId = whiteboardPreviewRequestIdRef.current + 1
-    whiteboardPreviewRequestIdRef.current = requestId
-
-    void fetchFeishuDocWhiteboardPreviewUrls(props.baseUrl, {
-      whiteboardTokens,
-    }).then((result) => {
-      if (whiteboardPreviewRequestIdRef.current !== requestId) {
-        return
-      }
-      setWhiteboardPreviewUrls((previous) => ({
-        ...previous,
-        ...Object.fromEntries(result.items.map((item) => [item.whiteboardToken, item.tmpDownloadUrl])),
-      }))
-      setWhiteboardPreviewFocusRects((previous) => ({
-        ...previous,
-        ...Object.fromEntries(
-          result.items
-            .filter((item): item is typeof item & {
-              focusRect: { left: number; top: number; width: number; height: number }
-            } => Boolean(item.focusRect))
-            .map((item) => [item.whiteboardToken, item.focusRect]),
-        ),
-      }))
-      setWhiteboardPreviewErrors(result.errors)
-    }).catch(() => {
-      if (whiteboardPreviewRequestIdRef.current !== requestId) {
-        return
-      }
-      setWhiteboardPreviewErrors([])
-    })
-  }, [props.baseUrl, whiteboardTokenKey, whiteboardTokens])
 
   useEffect(() => {
     if (!props.baseUrl || !props.workspaceId) {
@@ -1908,9 +1835,7 @@ export function FeishuDocsWorkbench(props: Props) {
                               t={props.t}
                               mediaPreviewUrls={mediaPreviewUrls}
                               mediaPreviewErrors={mediaPreviewErrorMap}
-                              whiteboardPreviewUrls={whiteboardPreviewUrls}
-                              whiteboardPreviewFocusRects={whiteboardPreviewFocusRects}
-                              whiteboardPreviewErrors={whiteboardPreviewErrorMap}
+                              boardSnapshots={currentDoc.boardSnapshots}
                               onChange={setDraft}
                             />
                           </div>

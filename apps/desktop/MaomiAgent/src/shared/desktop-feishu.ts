@@ -1018,6 +1018,82 @@ export type FeishuDocMediaPreviewResult = {
   errors: FeishuDocMediaPreviewErrorItem[]
 }
 
+export type FeishuDocBoardBlockType = "board" | "whiteboard" | "diagram" | "mindnote"
+
+export type FeishuDocBoardTextSnapshot = {
+  content: string
+  fontSize?: number
+  fontWeight?: string
+  color?: string
+  horizontalAlign?: string
+  verticalAlign?: string
+}
+
+export type FeishuDocBoardAttachmentSnapshot = {
+  objectId?: string
+  position?: {
+    x: number
+    y: number
+  }
+  snapTo?: string
+}
+
+export type FeishuDocBoardRoutingSnapshot = {
+  shape?: string
+  points: Array<{ x: number; y: number }>
+  startArrow?: string
+  endArrow?: string
+  startAttachment?: FeishuDocBoardAttachmentSnapshot
+  endAttachment?: FeishuDocBoardAttachmentSnapshot
+}
+
+export type FeishuDocBoardNodeSnapshot = {
+  id: string
+  kind: "shape" | "connector" | "text" | "unsupported"
+  rawType: string
+  supported: boolean
+  bounds: {
+    x: number
+    y: number
+    width: number
+    height: number
+  }
+  zIndex: number
+  angle?: number
+  shapeType?: string
+  style: Record<string, unknown>
+  text?: FeishuDocBoardTextSnapshot
+  routing?: FeishuDocBoardRoutingSnapshot
+  unsupportedReason?: string
+}
+
+export type FeishuDocBoardSnapshot = {
+  token: string
+  blockType: FeishuDocBoardBlockType
+  nodes: FeishuDocBoardNodeSnapshot[]
+  viewport: {
+    width: number
+    height: number
+    minX: number
+    minY: number
+  }
+  supportedNodeCount: number
+  unsupportedNodeCount: number
+  pulledAt: string
+  loadError?: string
+}
+
+export type FeishuDocBoardSnapshotErrorItem = {
+  whiteboardToken: string
+  code?: string
+  message: string
+}
+
+export type FeishuDocBoardSnapshotResult = {
+  items: FeishuDocBoardSnapshot[]
+  errors: FeishuDocBoardSnapshotErrorItem[]
+}
+
 export type FeishuDocWhiteboardPreviewItem = {
   whiteboardToken: string
   tmpDownloadUrl: string
@@ -1157,6 +1233,7 @@ export type FeishuDocContentView = {
   analysis: FeishuDocContentAnalysis
   cache?: FeishuDocCacheStateView
   diagnostics?: FeishuDocStoredDiagnosticsView
+  boardSnapshots?: Record<string, FeishuDocBoardSnapshot>
 }
 
 export type FeishuWorkspaceDocInput = {

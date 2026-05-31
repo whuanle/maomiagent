@@ -35,6 +35,39 @@ describe("FeishuDocRemoteWhiteboardApi", () => {
     });
   });
 
+  test("queries whiteboard raw nodes through the board nodes endpoint", async () => {
+    const client = new DesktopFeishuOpenApiClient({
+      fetch: (async (url, init) => {
+        expect(init?.method).toBe("GET");
+        expect(String(init?.headers && (init.headers as Record<string, string>).authorization)).toBe("Bearer access");
+
+        const target = new URL(String(url));
+        expect(target.pathname).toBe("/open-apis/board/v1/whiteboards/wb_1/nodes");
+        expect(target.searchParams.get("output_as")).toBe("raw");
+
+        return new Response(JSON.stringify({
+          code: 0,
+          data: {
+            nodes: [
+              { id: "o1", type: "composite_shape" },
+              { id: "c1", type: "connector" },
+            ],
+          },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }) as typeof fetch,
+    });
+    const api = new FeishuDocRemoteWhiteboardApi({
+      client,
+      baseUrl: "https://open.feishu.cn/open-apis",
+      accessToken: async () => "access",
+    });
+
+    await expect(api.queryWhiteboardRawNodes({ whiteboardToken: "wb_1" })).resolves.toEqual([
+      { id: "o1", type: "composite_shape" },
+      { id: "c1", type: "connector" },
+    ]);
+  });
+
   test("updates whiteboard Mermaid source with overwrite semantics", async () => {
     const client = new DesktopFeishuOpenApiClient({
       fetch: (async (url, init) => {
