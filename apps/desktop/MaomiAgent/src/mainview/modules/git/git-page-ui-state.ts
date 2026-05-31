@@ -96,6 +96,10 @@ function hasGitPageUiStateValue(state: GitPageUiState): boolean {
   return Boolean(state.workspaceId || state.activeTab || state.commitReview || state.codeReview);
 }
 
+function clearLegacyGitPageUiState(): void {
+  window.sessionStorage?.removeItem(GIT_PAGE_UI_STATE_KEY);
+}
+
 export function readGitPageUiState(): GitPageUiState | null {
   if (typeof window === "undefined") {
     return null;
@@ -110,7 +114,7 @@ export function readGitPageUiState(): GitPageUiState | null {
       }
 
       const normalizedLegacyState = normalizeGitPageUiState(JSON.parse(legacyRaw));
-      window.sessionStorage.removeItem(GIT_PAGE_UI_STATE_KEY);
+      clearLegacyGitPageUiState();
 
       if (!hasGitPageUiStateValue(normalizedLegacyState)) {
         window.localStorage.removeItem(GIT_PAGE_UI_STATE_KEY);
@@ -121,8 +125,11 @@ export function readGitPageUiState(): GitPageUiState | null {
       return normalizedLegacyState;
     }
 
-    return normalizeGitPageUiState(JSON.parse(raw));
+    const normalizedState = normalizeGitPageUiState(JSON.parse(raw));
+    clearLegacyGitPageUiState();
+    return normalizedState;
   } catch {
+    clearLegacyGitPageUiState();
     return null;
   }
 }
@@ -138,6 +145,8 @@ export function writeGitPageUiState(state: GitPageUiState): void {
     commitReview: normalizeCommitReviewState(state.commitReview),
     codeReview: normalizeCodeReviewState(state.codeReview),
   };
+
+  clearLegacyGitPageUiState();
 
   if (!hasGitPageUiStateValue(normalized)) {
     window.localStorage.removeItem(GIT_PAGE_UI_STATE_KEY);

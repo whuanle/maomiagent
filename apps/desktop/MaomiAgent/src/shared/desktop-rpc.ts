@@ -692,6 +692,14 @@ export type DesktopRendererRPC = {
         };
         response: DesktopWorkspaceFileContentResult;
       };
+      writeDesktopWorkspaceTextFile: {
+        params: {
+          workspaceId: string;
+          path: string;
+          content: string;
+        };
+        response: DesktopWorkspaceFileContentResult;
+      };
       getDesktopGitIgnore: {
         params: {
           workspaceId: string;
@@ -1125,6 +1133,14 @@ export type DesktopRendererRPC = {
           workspaceId: string;
         };
         response: DesktopWorkspaceItem | null;
+      };
+      writeDesktopWorkspaceTextFile: {
+        params: {
+          workspaceId: string;
+          path: string;
+          content: string;
+        };
+        response: DesktopWorkspaceFileContentResult;
       };
       createDesktopWorkspace: {
         params: DesktopWorkspaceCreateInput;

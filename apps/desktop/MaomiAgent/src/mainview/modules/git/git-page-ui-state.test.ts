@@ -102,6 +102,55 @@ describe("git-page-ui-state", () => {
     expect(window.sessionStorage.getItem(STORAGE_KEY)).toBeNull();
   });
 
+  test("does not resurrect stale legacy sessionStorage data after a new local write", () => {
+    const legacyState: GitPageUiState = {
+      workspaceId: "workspace-legacy",
+      activeTab: "changes",
+    };
+    const durableState: GitPageUiState = {
+      workspaceId: "workspace-current",
+      activeTab: "code-review",
+      codeReview: {
+        scopeType: "project",
+      },
+    };
+
+    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(legacyState));
+
+    writeGitPageUiState(durableState);
+    expect(window.sessionStorage.getItem(STORAGE_KEY)).toBeNull();
+
+    window.localStorage.removeItem(STORAGE_KEY);
+
+    expect(readGitPageUiState()).toBeNull();
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  test("prefers durable localStorage state and clears stale legacy sessionStorage on read", () => {
+    const durableState: GitPageUiState = {
+      workspaceId: "workspace-current",
+      activeTab: "commit-review",
+      commitReview: {
+        targetType: "pr",
+        selectedTargetId: "pr-202",
+      },
+    };
+    const legacyState: GitPageUiState = {
+      workspaceId: "workspace-stale",
+      activeTab: "changes",
+    };
+
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(durableState));
+    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(legacyState));
+
+    expect(readGitPageUiState()).toEqual(durableState);
+    expect(window.sessionStorage.getItem(STORAGE_KEY)).toBeNull();
+
+    window.localStorage.removeItem(STORAGE_KEY);
+
+    expect(readGitPageUiState()).toBeNull();
+  });
+
   test("drops unknown legacy tab values and keeps a safe fallback shape", () => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
       workspaceId: "workspace-1",
@@ -115,6 +164,13 @@ describe("git-page-ui-state", () => {
       commitReview: undefined,
       codeReview: undefined,
     });
+  });
+
+  test("clears malformed legacy sessionStorage data after a safe read failure", () => {
+    window.sessionStorage.setItem(STORAGE_KEY, "{not-valid-json");
+
+    expect(readGitPageUiState()).toBeNull();
+    expect(window.sessionStorage.getItem(STORAGE_KEY)).toBeNull();
   });
 
   test("removes the storage entry when the normalized state is empty", () => {

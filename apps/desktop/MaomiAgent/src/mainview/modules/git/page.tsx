@@ -13,6 +13,7 @@ import {
   useEffect,
   useImperativeHandle,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -54,6 +55,8 @@ type WorkspaceOption = {
   value: string;
 };
 
+type RenderedGitTabKey = "changes" | "branches" | "commit-review";
+
 function normalizeError(error: unknown): string {
   if (error instanceof Error && error.message) {
     return error.message;
@@ -69,6 +72,28 @@ function buildWorkspaceOptions(items: Awaited<ReturnType<typeof listDesktopWorks
   }));
 }
 
+function resolveWorkspaceId(
+  options: WorkspaceOption[],
+  currentWorkspaceId: string | undefined,
+  restoredWorkspaceId: string | undefined,
+): string | undefined {
+  if (currentWorkspaceId && options.some((item) => item.value === currentWorkspaceId)) {
+    return currentWorkspaceId;
+  }
+
+  if (restoredWorkspaceId && options.some((item) => item.value === restoredWorkspaceId)) {
+    return restoredWorkspaceId;
+  }
+
+  return options[0]?.value;
+}
+
+function normalizeRenderedGitTab(value: GitTabKey | undefined): RenderedGitTabKey {
+  return value === "branches" || value === "commit-review"
+    ? value
+    : "changes";
+}
+
 export const GitPage = forwardRef<GitPageHandle, Props>(function GitPage(props, ref) {
   const { message } = AntdApp.useApp();
   const [modal, modalContextHolder] = Modal.useModal();
@@ -76,6 +101,8 @@ export const GitPage = forwardRef<GitPageHandle, Props>(function GitPage(props, 
   const branchCopy = useMemo(() => createGitBranchCopy(props.language), [props.language]);
   const [bridgeReady, setBridgeReady] = useState(() => hasDesktopGitBridge());
   const [workspaceOptions, setWorkspaceOptions] = useState<WorkspaceOption[]>([]);
+  const [workspaceRestoreReady, setWorkspaceRestoreReady] = useState(false);
+  const [workspaceOptionsLoaded, setWorkspaceOptionsLoaded] = useState(false);
   const [restoredWorkspaceId, setRestoredWorkspaceId] = useState<string | undefined>(undefined);
   const [workspaceId, setWorkspaceId] = useState<string | undefined>(undefined);
   const [activeTab, setActiveTab] = useState<GitTabKey>("changes");
@@ -83,6 +110,8 @@ export const GitPage = forwardRef<GitPageHandle, Props>(function GitPage(props, 
   const [snapshot, setSnapshot] = useState<DesktopGitModuleSnapshotResult | null>(null);
   const [snapshotLoading, setSnapshotLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const workspaceLoadCycleRef = useRef(0);
+  const workspaceLoadRequestRef = useRef(0);
 
   useEffect(() => {
     const syncBridgeState = () => {
@@ -95,38 +124,52 @@ export const GitPage = forwardRef<GitPageHandle, Props>(function GitPage(props, 
   }, []);
 
   useEffect(() => {
+    workspaceLoadCycleRef.current += 1;
+    workspaceLoadRequestRef.current += 1;
+
     if (!props.active) {
+      setWorkspaceId(undefined);
+      setWorkspaceRestoreReady(false);
+      setWorkspaceOptionsLoaded(false);
       return;
     }
 
+    setWorkspaceId(undefined);
+    setWorkspaceOptionsLoaded(false);
     const restored = readGitPageUiState();
     setRestoredWorkspaceId(restored?.workspaceId);
-    setActiveTab(restored?.activeTab ?? "changes");
+    setActiveTab(normalizeRenderedGitTab(restored?.activeTab));
     setCommitReviewState(restored?.commitReview);
+    setWorkspaceRestoreReady(true);
   }, [props.active]);
 
   const loadWorkspaces = useCallback(async () => {
-    if (!props.active || !bridgeReady) {
+    if (!props.active || !bridgeReady || !workspaceRestoreReady) {
       return;
     }
 
+    const loadCycle = workspaceLoadCycleRef.current;
+    const requestId = ++workspaceLoadRequestRef.current;
+
     try {
       const response = await listDesktopWorkspaces({ limit: 200, offset: 0 });
+
+      if (workspaceLoadCycleRef.current !== loadCycle || workspaceLoadRequestRef.current !== requestId) {
+        return;
+      }
+
       const options = buildWorkspaceOptions(response.items);
       setWorkspaceOptions(options);
-      setWorkspaceId((current) => {
-        if (current && options.some((item) => item.value === current)) {
-          return current;
-        }
-        if (restoredWorkspaceId && options.some((item) => item.value === restoredWorkspaceId)) {
-          return restoredWorkspaceId;
-        }
-        return options[0]?.value;
-      });
+      setWorkspaceId((current) => resolveWorkspaceId(options, current, restoredWorkspaceId));
+      setWorkspaceOptionsLoaded(true);
     } catch (error) {
+      if (workspaceLoadCycleRef.current !== loadCycle || workspaceLoadRequestRef.current !== requestId) {
+        return;
+      }
+
       message.error(`${copy.loadFailed}: ${normalizeError(error)}`);
     }
-  }, [bridgeReady, copy.loadFailed, message, props.active, restoredWorkspaceId]);
+  }, [bridgeReady, copy.loadFailed, message, props.active, restoredWorkspaceId, workspaceRestoreReady]);
 
   const loadSnapshot = useCallback(async (silent = false) => {
     if (!props.active || !bridgeReady || !workspaceId) {
@@ -162,12 +205,20 @@ export const GitPage = forwardRef<GitPageHandle, Props>(function GitPage(props, 
   }, [loadSnapshot, workspaceId]);
 
   useEffect(() => {
+    const canPersistWorkspace = workspaceRestoreReady
+      && workspaceOptionsLoaded
+      && (workspaceOptions.length === 0 || Boolean(workspaceId));
+
+    if (!canPersistWorkspace) {
+      return;
+    }
+
     writeGitPageUiState({
       workspaceId,
       activeTab,
       commitReview: commitReviewState,
     });
-  }, [activeTab, commitReviewState, workspaceId]);
+  }, [activeTab, commitReviewState, workspaceId, workspaceOptions.length, workspaceOptionsLoaded, workspaceRestoreReady]);
 
   useImperativeHandle(ref, () => ({
     async confirmLeavePage() {

@@ -16,6 +16,11 @@ type DesktopWorkspaceBridge = {
   getDesktopWorkspace: (workspaceId: string) => Promise<DesktopWorkspaceItem | null>;
   getDesktopWorkspaceFileTree: (workspaceId: string, path?: string) => Promise<DesktopWorkspaceFileTreeResult>;
   getDesktopWorkspaceFileContent: (workspaceId: string, path: string) => Promise<DesktopWorkspaceFileContentResult>;
+  writeDesktopWorkspaceTextFile: (
+    workspaceId: string,
+    path: string,
+    content: string,
+  ) => Promise<DesktopWorkspaceFileContentResult>;
   createDesktopWorkspace: (input: DesktopWorkspaceCreateInput) => Promise<DesktopWorkspaceCreateResponse>;
   updateDesktopWorkspace: (
     workspaceId: string,
@@ -69,6 +74,14 @@ export function getDesktopWorkspaceFileContent(
   path: string,
 ): Promise<DesktopWorkspaceFileContentResult> {
   return getDesktopWorkspaceBridge().getDesktopWorkspaceFileContent(workspaceId, path);
+}
+
+export function writeDesktopWorkspaceTextFile(
+  workspaceId: string,
+  path: string,
+  content: string,
+): Promise<DesktopWorkspaceFileContentResult> {
+  return getDesktopWorkspaceBridge().writeDesktopWorkspaceTextFile(workspaceId, path, content);
 }
 
 export function createDesktopWorkspace(

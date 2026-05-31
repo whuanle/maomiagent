@@ -189,6 +189,15 @@ describe("DesktopWorkspaceService", () => {
       expect(written.binary).toBe(false);
       expect(written.path).toBe("docs/plan.md");
       expect(written.content).toContain("Ship it.");
+
+      const reviewCache = await workspace.writeTextFile(
+        created.item.workspaceId,
+        ".maomi/git-review/commit/example.json",
+        "{\"version\":1}",
+      );
+      expect(reviewCache.binary).toBe(false);
+      expect(reviewCache.path).toBe(".maomi/git-review/commit/example.json");
+      expect(reviewCache.content).toContain("\"version\":1");
     } finally {
       database.dispose();
       await rm(tempRoot, { recursive: true, force: true });

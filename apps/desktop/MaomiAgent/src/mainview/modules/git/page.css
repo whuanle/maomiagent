@@ -152,6 +152,27 @@
   background: transparent;
 }
 
+.git-ai-review-workbench.git-ai-review-workbench-splitter,
+.git-ai-review-workbench.git-ai-review-workbench-splitter > .ant-splitter-panel.git-ai-review-splitter-panel {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.git-ai-review-workbench.git-ai-review-workbench-splitter > .ant-splitter-bar {
+  width: 4px;
+  min-width: 4px;
+  background: var(--app-border-soft);
+}
+
+.git-ai-review-workbench.git-ai-review-workbench-splitter > .ant-splitter-bar:hover,
+.git-ai-review-workbench.git-ai-review-workbench-splitter > .ant-splitter-bar-active {
+  background: var(--app-border);
+}
+
 .git-ai-review-sidebar,
 .git-ai-review-detail {
   background: color-mix(in srgb, var(--app-surface) 96%, transparent);
@@ -206,6 +227,35 @@
 
 .git-ai-review-toolbar-status.is-error {
   color: var(--chat-danger-text);
+}
+
+.git-ai-review-toolbar-status.is-warning {
+  color: var(--chat-warning-text);
+}
+
+.git-ai-review-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+}
+
+.git-ai-review-progress-row .ant-progress {
+  flex: 1 1 auto;
+  min-width: 120px;
+  margin: 0;
+}
+
+.git-ai-review-progress-row .ant-progress-inner {
+  background: color-mix(in srgb, var(--app-surface-muted) 84%, transparent);
+}
+
+.git-ai-review-progress-label {
+  flex: 0 0 auto;
+  color: var(--app-text-secondary);
+  font-size: 12px;
+  line-height: 1;
 }
 
 .git-ai-review-toolbar-action {
@@ -828,6 +878,15 @@
   padding: 24px;
 }
 
+.git-ai-review-cache-banner {
+  padding: 10px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--chat-warning-soft) 72%, transparent);
+  background: color-mix(in srgb, var(--chat-warning-soft) 42%, transparent);
+  color: var(--chat-warning-text);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .git-ai-review-diagnostic-list {
   display: flex;
   flex-wrap: wrap;
@@ -950,14 +1009,6 @@
   display: grid;
   grid-template-columns: 360px minmax(0, 1fr);
   overflow: hidden;
-}
-
-.git-page-workbench.git-ai-review-workbench {
-  grid-template-columns: 304px minmax(0, 1fr);
-}
-
-.git-page-workbench.git-ai-review-workbench.has-review-results {
-  grid-template-columns: 436px minmax(0, 1fr);
 }
 
 .git-page-workbench-sidebar,

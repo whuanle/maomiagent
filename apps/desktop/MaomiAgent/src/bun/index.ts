@@ -945,6 +945,8 @@ try {
               resolveDesktopWorkspaceQueryPort(host).getFileTree(workspaceId, path),
             getDesktopWorkspaceFileContent: ({ workspaceId, path }) =>
               resolveDesktopWorkspaceQueryPort(host).getFileContent(workspaceId, path),
+            writeDesktopWorkspaceTextFile: ({ workspaceId, path, content }) =>
+              resolveDesktopWorkspaceCommandPort(host).writeTextFile(workspaceId, path, content),
             getDesktopGitIgnore: ({ workspaceId }) =>
               resolveDesktopGitQueryPort(host).getGitIgnore(workspaceId),
             getDesktopGitChanges: ({ workspaceId }) =>
@@ -1117,6 +1119,8 @@ try {
               resolveDesktopTerminalsCommandPort(host).close(sessionId),
             getDesktopWorkspace: ({ workspaceId }) =>
               resolveDesktopWorkspaceQueryPort(host).get(workspaceId),
+            writeDesktopWorkspaceTextFile: ({ workspaceId, path, content }) =>
+              resolveDesktopWorkspaceCommandPort(host).writeTextFile(workspaceId, path, content),
             createDesktopWorkspace: (input) =>
               resolveDesktopWorkspaceCommandPort(host).create(input),
             updateDesktopWorkspace: ({ workspaceId, input }) =>

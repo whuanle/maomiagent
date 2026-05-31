@@ -181,6 +181,11 @@ export function installElectrobunWindowBridge() {
         workspaceId,
         path,
       }),
+      writeDesktopWorkspaceTextFile: (workspaceId, path, content) => rpc.request.writeDesktopWorkspaceTextFile({
+        workspaceId,
+        path,
+        content,
+      }),
       createDesktopWorkspace: (input) => rpc.request.createDesktopWorkspace(input),
       updateDesktopWorkspace: (workspaceId, input) => rpc.request.updateDesktopWorkspace({
         workspaceId,
