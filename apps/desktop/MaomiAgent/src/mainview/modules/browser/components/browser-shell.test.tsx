@@ -159,7 +159,7 @@ function createRpc(store: BrowserStore) {
           ...current.tabs,
           createTab({
             id: nextId,
-            title: "新建标签页",
+            title: "新建页卡",
             url: "",
             draftUrl: "",
           }),
@@ -313,17 +313,6 @@ async function clickElement(element: HTMLElement) {
   await flushTasks();
 }
 
-async function clickButtonByText(container: HTMLElement, label: string) {
-  const button = Array.from(container.querySelectorAll("button"))
-    .find((node) => node.textContent?.replace(/\s+/g, " ").trim() === label);
-
-  if (!(button instanceof HTMLElement)) {
-    throw new Error(`Button not found: ${label}`);
-  }
-
-  await clickElement(button);
-}
-
 async function clickButtonByAriaLabel(container: HTMLElement, label: string) {
   const button = Array.from(container.querySelectorAll("button"))
     .find((node) => node.getAttribute("aria-label") === label);
@@ -398,6 +387,24 @@ afterEach(() => {
 });
 
 describe("BrowserShell", () => {
+  test("renders a codex-style blank browser shell when no tab exists", async () => {
+    installDomWindow();
+
+    const { container, root } = await renderBrowserShell({
+      tabs: [],
+      activeTabId: null,
+      toolPanel: "closed",
+    });
+
+    expect(container.querySelector(".browser-webview-empty-card")).toBeNull();
+    expect(container.querySelector(".browser-webview-empty-state")).not.toBeNull();
+    expect(container.textContent).toContain("开始浏览");
+    expect(container.textContent).toContain("输入 URL 以打开页面");
+    expect(container.querySelector('input[placeholder="输入 URL"]')).not.toBeNull();
+
+    await cleanup(root, container);
+  });
+
   test("uses the shared browser state for tabs and new-tab actions", async () => {
     installDomWindow();
 
@@ -412,14 +419,17 @@ describe("BrowserShell", () => {
     const { container, root, store, rpc } = await renderBrowserShell(initialState);
 
     expect(getAddressInput(container).value).toBe("https://docs.example.com");
+    expect(getAddressInput(container).getAttribute("placeholder")).toBe("输入 URL");
     expect(container.textContent).not.toContain("浏览器会话");
+    expect(container.querySelector(".browser-tab-url")).toBeNull();
+    expect(container.querySelector(".browser-tab-add-icon")).not.toBeNull();
 
     await clickTab(container, "首页");
     expect(rpc.activateTab).toHaveBeenCalledWith("tab-1");
     expect(store.getState().activeTabId).toBe("tab-1");
     expect(getAddressInput(container).value).toBe("https://example.com");
 
-    await clickButtonByText(container, "新建标签页");
+    await clickButtonByAriaLabel(container, "新建页卡");
     expect(rpc.createTab).toHaveBeenCalledTimes(1);
     expect(store.getState().tabs).toHaveLength(3);
     expect(store.getState().activeTabId).toBe("tab-3");
@@ -427,7 +437,7 @@ describe("BrowserShell", () => {
     await cleanup(root, container);
   });
 
-  test("drives navigation and tool actions through the shared controller", async () => {
+  test("drives navigation through the shared controller", async () => {
     installDomWindow();
 
     const initialState = createSnapshot({
@@ -459,32 +469,6 @@ describe("BrowserShell", () => {
 
     await clickButtonByAriaLabel(container, "刷新");
     expect(rpc.refresh).toHaveBeenCalledWith("tab-1");
-
-    await clickButtonByText(container, "提取");
-    expect(store.getState().toolPanel).toBe("extract");
-    await clickButtonByText(container, "执行提取");
-    expect(rpc.extract).toHaveBeenCalledWith("tab-1");
-    expect(container.textContent).toContain("Bun docs text");
-
-    await clickButtonByText(container, "截图");
-    await clickButtonByText(container, "执行截图");
-    expect(rpc.screenshot).toHaveBeenCalledWith("tab-1");
-    expect(container.querySelector(".browser-tool-panel-image")).not.toBeNull();
-
-    await clickButtonByText(container, "交互");
-    const selectorInput = Array.from(container.querySelectorAll(".browser-tool-panel input"))
-      .find((node) => node.getAttribute("placeholder") === "选择器");
-    if (!(selectorInput instanceof HTMLInputElement)) {
-      throw new Error("Selector input not found.");
-    }
-
-    await typeIntoInput(selectorInput, "#run");
-    await clickButtonByText(container, "执行交互");
-    expect(rpc.interact).toHaveBeenCalledWith("tab-1", {
-      kind: "click",
-      selector: "#run",
-    });
-    expect(container.textContent).toContain("click #run");
 
     await cleanup(root, container);
   });

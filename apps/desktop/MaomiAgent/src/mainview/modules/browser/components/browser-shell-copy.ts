@@ -3,6 +3,8 @@ import type { LanguageCode } from "../../../config/titlebar";
 export type BrowserShellCopy = {
   newTab: string;
   noTab: string;
+  startBrowsing: string;
+  openPageHint: string;
   blankPage: string;
   loading: string;
   ready: string;
@@ -42,13 +44,15 @@ export function createBrowserShellCopy(language: LanguageCode): BrowserShellCopy
     return {
       newTab: "New Tab",
       noTab: "No tabs",
+      startBrowsing: "Start browsing",
+      openPageHint: "Enter a URL to open a page",
       blankPage: "No page",
       loading: "Loading",
       ready: "Ready",
       back: "Back",
       forward: "Forward",
       refresh: "Refresh",
-      addressPlaceholder: "Enter address",
+      addressPlaceholder: "Enter URL",
       addressLabel: "Address bar",
       extract: "Extract",
       screenshot: "Screenshot",
@@ -78,15 +82,17 @@ export function createBrowserShellCopy(language: LanguageCode): BrowserShellCopy
   }
 
   return {
-    newTab: "新建标签页",
+    newTab: "新建页卡",
     noTab: "暂无标签页",
+    startBrowsing: "开始浏览",
+    openPageHint: "输入 URL 以打开页面",
     blankPage: "未打开页面",
     loading: "正在加载",
     ready: "就绪",
     back: "后退",
     forward: "前进",
     refresh: "刷新",
-    addressPlaceholder: "输入地址",
+    addressPlaceholder: "输入 URL",
     addressLabel: "地址栏",
     extract: "提取",
     screenshot: "截图",

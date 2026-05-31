@@ -2,7 +2,6 @@ import { ClearOutlined, CloseCircleOutlined, CloseOutlined, LoadingOutlined, Min
 import { Button, Empty, Splitter, Tabs } from "antd";
 import type { ReactNode } from "react";
 
-import { ChatBrowserPanel } from "../../browser/components/chat-browser-panel";
 import { ChatDockIcon } from "./ChatDockIcon";
 import { ConversationGitTab } from "./conversation-git-tab";
 import { ConversationWorkspaceSettingsPanel } from "./conversation-workspace-settings-panel";
@@ -170,20 +169,6 @@ export function ConversationModulePanel(props: Props) {
   };
 
   const builtinItems = [
-    {
-      key: "browser",
-      label: buildTabLabel({
-        tabKey: "browser",
-        label: props.language === "en-US" ? "Browser" : "浏览器",
-        iconKey: "browser",
-      }),
-      children: (
-        <ChatBrowserPanel
-          active={props.active && props.activeBuiltinKey === "browser"}
-          language={props.language}
-        />
-      ),
-    },
     {
       key: "settings",
       label: buildTabLabel({

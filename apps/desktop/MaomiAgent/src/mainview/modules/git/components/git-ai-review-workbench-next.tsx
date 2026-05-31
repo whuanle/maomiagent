@@ -218,6 +218,26 @@ type CodeReviewSessionCache = {
 
 const reviewWorkbenchSessionCache = new Map<string, CommitReviewSessionCache | CodeReviewSessionCache>();
 
+function hasCommitReviewSessionCacheResults(session: CommitReviewSessionCache | undefined) {
+  if (!session) {
+    return false;
+  }
+
+  return session.gitReviewRunId > 0;
+}
+
+export function hasGitReviewWorkbenchCachedResults(workspaceId: string) {
+  if (!workspaceId.trim()) {
+    return false;
+  }
+
+  const commitSession = reviewWorkbenchSessionCache.get(
+    buildReviewWorkbenchSessionCacheKey("commit", workspaceId),
+  ) as CommitReviewSessionCache | undefined;
+
+  return hasCommitReviewSessionCacheResults(commitSession);
+}
+
 function createAiReviewCopy(language: LanguageCode): GitAiReviewCopy {
   if (language === "en-US") {
     return {
@@ -759,6 +779,48 @@ async function reviewWorkspaceFileWithAi(input: {
     additions: 0,
     deletions: 0,
   });
+}
+
+async function reviewGitItemWithFallback(input: {
+  workspaceId: string;
+  selection: ReviewModelSelection | null;
+  item: DesktopGitReviewItem;
+  language: LanguageCode;
+}) {
+  if (!input.selection) {
+    return {
+      findings: buildGitAiReviewFindings({
+        items: [input.item],
+        language: input.language,
+      }),
+      usedFallback: true,
+    };
+  }
+
+  try {
+    const findings = await reviewGitItemWithAi({
+      workspaceId: input.workspaceId,
+      selection: input.selection,
+      item: input.item,
+      language: input.language,
+    });
+    if (findings.length > 0) {
+      return {
+        findings,
+        usedFallback: false,
+      };
+    }
+  } catch {
+    // Fall through to heuristic findings when AI output is unavailable.
+  }
+
+  return {
+    findings: buildGitAiReviewFindings({
+      items: [input.item],
+      language: input.language,
+    }),
+    usedFallback: true,
+  };
 }
 
 function resolveReviewNotice(input: {
@@ -1761,20 +1823,17 @@ async function loadCommitReviewResults(input: {
         results[file.path] = reviewItem;
         reviewedPaths.push(file.path);
         if (input.aiSelection) {
-          try {
-            findingsByPath[file.path] = await reviewGitItemWithAi({
-              workspaceId: input.workspaceId,
-              selection: input.aiSelection,
-              item: reviewItem,
-              language: input.language,
-            });
-            aiSuccessCount += 1;
-          } catch {
-            findingsByPath[file.path] = buildGitAiReviewFindings({
-              items: [reviewItem],
-              language: input.language,
-            });
+          const reviewResult = await reviewGitItemWithFallback({
+            workspaceId: input.workspaceId,
+            selection: input.aiSelection,
+            item: reviewItem,
+            language: input.language,
+          });
+          findingsByPath[file.path] = reviewResult.findings;
+          if (reviewResult.usedFallback) {
             fallbackCount += 1;
+          } else {
+            aiSuccessCount += 1;
           }
         } else {
           findingsByPath[file.path] = buildGitAiReviewFindings({
@@ -1857,20 +1916,17 @@ async function loadStagedReviewResults(input: {
         results[file.path] = reviewItem;
         reviewedPaths.push(file.path);
         if (input.aiSelection) {
-          try {
-            findingsByPath[file.path] = await reviewGitItemWithAi({
-              workspaceId: input.workspaceId,
-              selection: input.aiSelection,
-              item: reviewItem,
-              language: input.language,
-            });
-            aiSuccessCount += 1;
-          } catch {
-            findingsByPath[file.path] = buildGitAiReviewFindings({
-              items: [reviewItem],
-              language: input.language,
-            });
+          const reviewResult = await reviewGitItemWithFallback({
+            workspaceId: input.workspaceId,
+            selection: input.aiSelection,
+            item: reviewItem,
+            language: input.language,
+          });
+          findingsByPath[file.path] = reviewResult.findings;
+          if (reviewResult.usedFallback) {
             fallbackCount += 1;
+          } else {
+            aiSuccessCount += 1;
           }
         } else {
           findingsByPath[file.path] = buildGitAiReviewFindings({
@@ -1952,20 +2008,17 @@ async function loadCompareReviewResults(input: {
         results[item.path] = item;
         reviewedPaths.push(item.path);
         if (input.aiSelection) {
-          try {
-            findingsByPath[item.path] = await reviewGitItemWithAi({
-              workspaceId: input.workspaceId,
-              selection: input.aiSelection,
-              item,
-              language: input.language,
-            });
-            aiSuccessCount += 1;
-          } catch {
-            findingsByPath[item.path] = buildGitAiReviewFindings({
-              items: [item],
-              language: input.language,
-            });
+          const reviewResult = await reviewGitItemWithFallback({
+            workspaceId: input.workspaceId,
+            selection: input.aiSelection,
+            item,
+            language: input.language,
+          });
+          findingsByPath[item.path] = reviewResult.findings;
+          if (reviewResult.usedFallback) {
             fallbackCount += 1;
+          } else {
+            aiSuccessCount += 1;
           }
         } else {
           findingsByPath[item.path] = buildGitAiReviewFindings({
@@ -2183,7 +2236,7 @@ export function GitAiReviewWorkbenchNext(props: Props) {
   const isEn = props.language === "en-US";
   const isCommitSurface = props.surface === "commit";
   const isCodeSurface = props.surface === "code";
-  const surfaceLabel = isCommitSurface ? props.copy.commitReviewTab : props.copy.codeReviewTab;
+  const surfaceLabel = props.copy.commitReviewTab;
   const stagedReviewTitle = isEn ? "Current staged" : "当前暂存";
   const stagedReviewSubject = isEn ? "Staged but uncommitted changes" : "已暂存未提交的变更";
   const selectGitTargetHint = isEn
@@ -2258,7 +2311,7 @@ export function GitAiReviewWorkbenchNext(props: Props) {
 
   useEffect(() => {
     if (props.initialCommitTargetType) {
-      setCommitTargetType(props.initialCommitTargetType);
+      setCommitTargetType(props.initialCommitTargetType === "pr" ? "commit" : props.initialCommitTargetType);
     }
   }, [props.initialCommitTargetType]);
 
@@ -2285,21 +2338,7 @@ export function GitAiReviewWorkbenchNext(props: Props) {
       return;
     }
 
-    if (commitTargetType === "pr") {
-      const targetId = normalizeOptionalText(props.initialCommitTargetId);
-      if (!targetId || !targetId.includes("...")) {
-        return;
-      }
-
-      const [baseRef, headRef] = targetId.split("...", 2).map((value) => value.trim());
-      if (baseRef && baseRef !== prBaseRef) {
-        setPrBaseRef(baseRef);
-      }
-      if (headRef && headRef !== prHeadRef) {
-        setPrHeadRef(headRef);
-      }
-    }
-  }, [commitTargetType, isCommitSurface, prBaseRef, prHeadRef, props.initialCommitTargetId, selectedCommitHash]);
+  }, [commitTargetType, isCommitSurface, props.initialCommitTargetId, selectedCommitHash]);
 
   const resolvedCodeScopePath = useMemo(() => {
     if (codeReviewScopeType === "project") {
@@ -2315,27 +2354,6 @@ export function GitAiReviewWorkbenchNext(props: Props) {
 
     return persistedScopePath ?? resolveDirectoryScopePath(selectedPath);
   }, [codeReviewScopePath, codeReviewScopeType, props.selectedReviewFilePath, workspaceTree.selectedFilePath]);
-
-  const gitRefOptions = useMemo(() => {
-    const seen = new Set<string>();
-    const options: Array<{ label: string; value: string }> = [];
-
-    for (const branch of props.snapshot?.branches.items ?? []) {
-      const candidates = [branch.name, branch.fullName, branch.upstream].filter(Boolean) as string[];
-      for (const value of candidates) {
-        if (seen.has(value)) {
-          continue;
-        }
-        seen.add(value);
-        options.push({
-          label: branch.kind === "remote" ? `${value} (${isEn ? "remote" : "远程"})` : value,
-          value,
-        });
-      }
-    }
-
-    return options.sort((left, right) => comparePathLabels(left.value, right.value));
-  }, [isEn, props.snapshot?.branches.items]);
 
   useEffect(() => {
     const currentBranch = props.snapshot?.changes.branch?.trim() ?? "";
@@ -2414,23 +2432,24 @@ export function GitAiReviewWorkbenchNext(props: Props) {
 
     if (isCommitSurface && cachedSession) {
       const session = cachedSession as CommitReviewSessionCache;
-      setCommitTargetType(session.commitTargetType);
-      setGitStage(session.gitStage);
-      setSelectedGitSource(session.selectedGitSource);
-      setSelectedCommitHash(session.selectedCommitHash);
-      setHistoryDetail(session.historyDetail);
-      setPrBaseRef(session.prBaseRef);
-      setPrHeadRef(session.prHeadRef);
-      setPrCompareResult(session.prCompareResult);
-      setGitReviewRunId(session.gitReviewRunId);
-      setGitReviewTargetHash(session.gitReviewTargetHash);
-      setGitReviewItemsByPath(session.gitReviewItemsByPath);
-      setGitReviewFindingsByPath(session.gitReviewFindingsByPath);
-      setGitReviewedPaths(session.gitReviewedPaths);
-      setGitReviewError(session.gitReviewError);
-      setGitReviewNotice(session.gitReviewNotice);
-      setGitSelectedPath(session.gitSelectedPath);
-      setSelectedFindingId(session.selectedFindingId);
+      const cachedSource = session.selectedGitSource === "pr" ? null : session.selectedGitSource;
+      setCommitTargetType(session.commitTargetType === "pr" ? "commit" : session.commitTargetType);
+      setGitStage(session.selectedGitSource === "pr" ? "commits" : session.gitStage);
+      setSelectedGitSource(cachedSource);
+      setSelectedCommitHash(session.selectedGitSource === "pr" ? null : session.selectedCommitHash);
+      setHistoryDetail(session.selectedGitSource === "pr" ? null : session.historyDetail);
+      setPrBaseRef("");
+      setPrHeadRef("");
+      setPrCompareResult(null);
+      setGitReviewRunId(session.selectedGitSource === "pr" ? 0 : session.gitReviewRunId);
+      setGitReviewTargetHash(session.selectedGitSource === "pr" ? null : session.gitReviewTargetHash);
+      setGitReviewItemsByPath(session.selectedGitSource === "pr" ? {} : session.gitReviewItemsByPath);
+      setGitReviewFindingsByPath(session.selectedGitSource === "pr" ? {} : session.gitReviewFindingsByPath);
+      setGitReviewedPaths(session.selectedGitSource === "pr" ? [] : session.gitReviewedPaths);
+      setGitReviewError(session.selectedGitSource === "pr" ? null : session.gitReviewError);
+      setGitReviewNotice(session.selectedGitSource === "pr" ? null : session.gitReviewNotice);
+      setGitSelectedPath(session.selectedGitSource === "pr" ? undefined : session.gitSelectedPath);
+      setSelectedFindingId(session.selectedGitSource === "pr" ? undefined : session.selectedFindingId);
       return;
     }
 
@@ -3357,13 +3376,21 @@ export function GitAiReviewWorkbenchNext(props: Props) {
                   props.onCodeReviewScopePathChange?.(nextScopePath);
                 }}
                 options={[
-                  { label: props.copy.codeReviewProjectScope, value: "project" },
-                  { label: props.copy.codeReviewDirectoryScope, value: "directory" },
-                  { label: props.copy.codeReviewFileScope, value: "file" },
+                  { label: isEn ? "Whole Project" : "整个项目", value: "project" },
+                  { label: isEn ? "Directory" : "指定目录", value: "directory" },
+                  { label: isEn ? "File" : "指定文件", value: "file" },
                 ]}
               />
             )}
-            <Button type="primary" onClick={handleRunReview} loading={runButtonLoading} disabled={runButtonDisabled}>{hasTriggeredGitReview || hasTriggeredWorkspaceAnalysis ? aiCopy.rerunReview : aiCopy.startReview}</Button>
+            <Button
+              type="primary"
+              className="git-ai-review-run-button"
+              onClick={handleRunReview}
+              loading={runButtonLoading}
+              disabled={runButtonDisabled}
+            >
+              {hasTriggeredGitReview || hasTriggeredWorkspaceAnalysis ? aiCopy.rerunReview : aiCopy.startReview}
+            </Button>
           </div>
           <div className="git-ai-review-toolbar-status-row">
             {isRefreshing ? (
@@ -3451,10 +3478,6 @@ export function GitAiReviewWorkbenchNext(props: Props) {
                 >
                   {aiCopy.backToCommits}
                 </Button>
-                <div className="git-ai-review-commit-stage-copy">
-                  <div className="git-ai-review-commit-stage-title">{selectedGitSource === "staged" ? stagedReviewSubject : (selectedCommit?.subject ?? aiCopy.commitChangesTitle)}</div>
-                  <div className="git-ai-review-commit-stage-meta">{selectedGitSource === "staged" ? `${stagedEntries.length} ${isEn ? "files" : "文件"}` : (selectedCommit?.shortHash ?? "")}</div>
-                </div>
               </div>
               {selectedGitSource === "commit" && historyDetailLoading && !historyDetail ? (
                 <div className="git-ai-review-empty is-inline"><Spin /></div>

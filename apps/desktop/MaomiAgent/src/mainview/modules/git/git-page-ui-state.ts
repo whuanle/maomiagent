@@ -79,24 +79,49 @@ function normalizeCodeReviewState(value: unknown): GitCodeReviewUiState | undefi
     : undefined;
 }
 
+function normalizeGitPageUiState(value: unknown): GitPageUiState {
+  const parsed = value && typeof value === "object"
+    ? value as Record<string, unknown>
+    : {};
+
+  return {
+    workspaceId: normalizeOptionalString(parsed.workspaceId),
+    activeTab: isGitTabKey(parsed.activeTab) ? parsed.activeTab : undefined,
+    commitReview: normalizeCommitReviewState(parsed.commitReview),
+    codeReview: normalizeCodeReviewState(parsed.codeReview),
+  };
+}
+
+function hasGitPageUiStateValue(state: GitPageUiState): boolean {
+  return Boolean(state.workspaceId || state.activeTab || state.commitReview || state.codeReview);
+}
+
 export function readGitPageUiState(): GitPageUiState | null {
   if (typeof window === "undefined") {
     return null;
   }
 
   try {
-    const raw = window.sessionStorage.getItem(GIT_PAGE_UI_STATE_KEY);
+    const raw = window.localStorage.getItem(GIT_PAGE_UI_STATE_KEY);
     if (!raw) {
-      return null;
+      const legacyRaw = window.sessionStorage?.getItem(GIT_PAGE_UI_STATE_KEY);
+      if (!legacyRaw) {
+        return null;
+      }
+
+      const normalizedLegacyState = normalizeGitPageUiState(JSON.parse(legacyRaw));
+      window.sessionStorage.removeItem(GIT_PAGE_UI_STATE_KEY);
+
+      if (!hasGitPageUiStateValue(normalizedLegacyState)) {
+        window.localStorage.removeItem(GIT_PAGE_UI_STATE_KEY);
+        return null;
+      }
+
+      window.localStorage.setItem(GIT_PAGE_UI_STATE_KEY, JSON.stringify(normalizedLegacyState));
+      return normalizedLegacyState;
     }
 
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    return {
-      workspaceId: normalizeOptionalString(parsed.workspaceId),
-      activeTab: isGitTabKey(parsed.activeTab) ? parsed.activeTab : undefined,
-      commitReview: normalizeCommitReviewState(parsed.commitReview),
-      codeReview: normalizeCodeReviewState(parsed.codeReview),
-    };
+    return normalizeGitPageUiState(JSON.parse(raw));
   } catch {
     return null;
   }
@@ -114,12 +139,12 @@ export function writeGitPageUiState(state: GitPageUiState): void {
     codeReview: normalizeCodeReviewState(state.codeReview),
   };
 
-  if (!normalized.workspaceId && !normalized.activeTab && !normalized.commitReview && !normalized.codeReview) {
-    window.sessionStorage.removeItem(GIT_PAGE_UI_STATE_KEY);
+  if (!hasGitPageUiStateValue(normalized)) {
+    window.localStorage.removeItem(GIT_PAGE_UI_STATE_KEY);
     return;
   }
 
-  window.sessionStorage.setItem(GIT_PAGE_UI_STATE_KEY, JSON.stringify(normalized));
+  window.localStorage.setItem(GIT_PAGE_UI_STATE_KEY, JSON.stringify(normalized));
 }
 
 export function openGitRouteWithReview(input: {

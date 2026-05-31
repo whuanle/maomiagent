@@ -6,13 +6,13 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type Dispatch,
+  type SetStateAction,
 } from "react";
 
 import type {
   DesktopBrowserStateSnapshot,
-  DesktopBrowserInteractionRequest,
   DesktopBrowserTabState,
-  DesktopBrowserToolPanel,
 } from "../../../../shared/desktop-browser";
 import type { LanguageCode } from "../../../config/titlebar";
 import { BrowserDomainContext } from "./browser-provider";
@@ -22,14 +22,17 @@ import {
   normalizeBrowserUrl,
 } from "./browser-shell-copy";
 import { BrowserTabStrip } from "./browser-tab-strip";
-import { BrowserToolPanel } from "./browser-tool-panel";
 import { BrowserToolbar } from "./browser-toolbar";
 import { BrowserWebviewSurface } from "./browser-webview-surface";
+import "../page.css";
 
 type BrowserShellProps = {
   active: boolean;
   language: LanguageCode;
+  presentation?: "page" | "panel";
 };
+
+type PendingByTabId = Record<string, number>;
 
 function resolveActiveTab(
   tabs: DesktopBrowserTabState[],
@@ -86,19 +89,17 @@ function useBrowserDomainSnapshot() {
 
 export function BrowserShell(props: BrowserShellProps) {
   const { message } = AntdApp.useApp();
-  const { state, store, controller } = useBrowserDomainSnapshot();
+  const { state, controller } = useBrowserDomainSnapshot();
   const copy = useMemo(() => createBrowserShellCopy(props.language), [props.language]);
   const [syncing, setSyncing] = useState(false);
   const [creatingTab, setCreatingTab] = useState(false);
   const [closingTabId, setClosingTabId] = useState<string | null>(null);
-  const [navigating, setNavigating] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const [extracting, setExtracting] = useState(false);
-  const [screenshotting, setScreenshotting] = useState(false);
-  const [interacting, setInteracting] = useState(false);
+  const [refreshingByTabId, setRefreshingByTabId] = useState<PendingByTabId>({});
 
   const activeTab = useMemo(() => resolveActiveTab(state.tabs, state.activeTabId), [state.activeTabId, state.tabs]);
   const addressValue = activeTab?.draftUrl || activeTab?.url || "";
+  const activeTabId = activeTab?.id ?? null;
+  const refreshing = activeTabId ? Boolean(refreshingByTabId[activeTabId]) : false;
 
   useEffect(() => {
     if (!props.active) {
@@ -125,14 +126,39 @@ export function BrowserShell(props: BrowserShellProps) {
     };
   }, [controller, copy.loadFailed, message, props.active]);
 
-  useEffect(() => {
-    if (!activeTab && state.toolPanel !== "closed") {
-      controller.setToolPanel("closed");
-    }
-  }, [activeTab, controller, state.toolPanel]);
-
   const handleFailure = (error: unknown) => {
     message.error(`${copy.actionFailed}: ${normalizeBrowserError(error)}`);
+  };
+
+  const beginPending = (
+    setPendingState: Dispatch<SetStateAction<PendingByTabId>>,
+    tabId: string,
+  ) => {
+    setPendingState((current) => ({
+      ...current,
+      [tabId]: (current[tabId] ?? 0) + 1,
+    }));
+  };
+
+  const endPending = (
+    setPendingState: Dispatch<SetStateAction<PendingByTabId>>,
+    tabId: string,
+  ) => {
+    setPendingState((current) => {
+      const nextCount = (current[tabId] ?? 0) - 1;
+      if (nextCount > 0) {
+        return {
+          ...current,
+          [tabId]: nextCount,
+        };
+      }
+
+      const {
+        [tabId]: _ignored,
+        ...rest
+      } = current;
+      return rest;
+    });
   };
 
   const handleCreateTab = () => {
@@ -167,14 +193,28 @@ export function BrowserShell(props: BrowserShellProps) {
       return;
     }
 
-    store.updateTab(activeTab.id, {
-      draftUrl: nextUrl,
-    });
-
-    setNavigating(true);
+    controller.updateDraftUrl(activeTab.id, nextUrl);
     void controller.navigate(activeTab.id, nextUrl)
-      .catch(handleFailure)
-      .finally(() => setNavigating(false));
+      .catch(handleFailure);
+  };
+
+  const handlePageNavigate = (url: string) => {
+    if (!activeTab) {
+      return;
+    }
+
+    const nextUrl = normalizeBrowserUrl(url);
+    if (!nextUrl) {
+      return;
+    }
+
+    if (nextUrl === activeTab.url && nextUrl === activeTab.draftUrl) {
+      return;
+    }
+
+    controller.updateDraftUrl(activeTab.id, nextUrl);
+    void controller.navigate(activeTab.id, nextUrl)
+      .catch(handleFailure);
   };
 
   const handleBack = () => {
@@ -182,10 +222,8 @@ export function BrowserShell(props: BrowserShellProps) {
       return;
     }
 
-    setNavigating(true);
     void controller.goBack(activeTab.id)
-      .catch(handleFailure)
-      .finally(() => setNavigating(false));
+      .catch(handleFailure);
   };
 
   const handleForward = () => {
@@ -193,10 +231,8 @@ export function BrowserShell(props: BrowserShellProps) {
       return;
     }
 
-    setNavigating(true);
     void controller.goForward(activeTab.id)
-      .catch(handleFailure)
-      .finally(() => setNavigating(false));
+      .catch(handleFailure);
   };
 
   const handleRefresh = () => {
@@ -204,54 +240,14 @@ export function BrowserShell(props: BrowserShellProps) {
       return;
     }
 
-    setRefreshing(true);
+    beginPending(setRefreshingByTabId, activeTab.id);
     void controller.refresh(activeTab.id)
       .catch(handleFailure)
-      .finally(() => setRefreshing(false));
-  };
-
-  const handleSelectToolPanel = (toolPanel: Exclude<DesktopBrowserToolPanel, "closed">) => {
-    controller.setToolPanel(state.toolPanel === toolPanel ? "closed" : toolPanel);
-  };
-
-  const handleExtract = () => {
-    if (!activeTab) {
-      return;
-    }
-
-    controller.setToolPanel("extract");
-    setExtracting(true);
-    void controller.extract(activeTab.id)
-      .catch(handleFailure)
-      .finally(() => setExtracting(false));
-  };
-
-  const handleScreenshot = () => {
-    if (!activeTab) {
-      return;
-    }
-
-    controller.setToolPanel("screenshot");
-    setScreenshotting(true);
-    void controller.screenshot(activeTab.id)
-      .catch(handleFailure)
-      .finally(() => setScreenshotting(false));
-  };
-
-  const handleInteract = (request: DesktopBrowserInteractionRequest) => {
-    if (!activeTab) {
-      return;
-    }
-
-    controller.setToolPanel("interact");
-    setInteracting(true);
-    void controller.interact(activeTab.id, request)
-      .catch(handleFailure)
-      .finally(() => setInteracting(false));
+      .finally(() => endPending(setRefreshingByTabId, activeTab.id));
   };
 
   return (
-    <div className="browser-shell">
+    <div className={`browser-shell${props.presentation === "panel" ? " browser-shell-panel" : ""}`}>
       <BrowserTabStrip
         copy={copy}
         tabs={state.tabs}
@@ -269,44 +265,27 @@ export function BrowserShell(props: BrowserShellProps) {
         canGoBack={activeTab?.canGoBack ?? false}
         canGoForward={activeTab?.canGoForward ?? false}
         hasActiveTab={Boolean(activeTab)}
-        toolPanel={state.toolPanel}
         refreshing={refreshing}
         onAddressChange={(value) => {
           if (!activeTab) {
             return;
           }
 
-          store.updateTab(activeTab.id, {
-            draftUrl: value,
-          });
+          controller.updateDraftUrl(activeTab.id, value);
         }}
         onNavigate={handleNavigate}
         onBack={handleBack}
         onForward={handleForward}
         onRefresh={handleRefresh}
-        onSelectTool={handleSelectToolPanel}
       />
 
       <div className="browser-shell-main">
         <BrowserWebviewSurface
+          active={props.active}
           copy={copy}
           tab={activeTab}
           syncing={syncing}
-          toolPanel={state.toolPanel}
-          onCreateTab={handleCreateTab}
-        />
-        <BrowserToolPanel
-          copy={copy}
-          tab={activeTab}
-          panel={state.toolPanel}
-          extracting={extracting}
-          screenshotting={screenshotting}
-          interacting={interacting}
-          onSelectPanel={(toolPanel) => controller.setToolPanel(toolPanel)}
-          onClose={() => controller.setToolPanel("closed")}
-          onExtract={handleExtract}
-          onScreenshot={handleScreenshot}
-          onInteract={handleInteract}
+          onPageNavigate={handlePageNavigate}
         />
       </div>
     </div>

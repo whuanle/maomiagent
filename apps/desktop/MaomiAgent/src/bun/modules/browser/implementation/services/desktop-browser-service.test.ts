@@ -309,7 +309,7 @@ describe("DesktopBrowserService", () => {
     expect(afterForward.tabs[0]!.canGoForward).toBe(true);
   });
 
-  test("tool methods attach results without changing renderer shell state", async () => {
+  test("tool methods fail explicitly until a live browser runtime is connected", async () => {
     const service = new DesktopBrowserService();
     const initial = await service.getSnapshot();
     const firstTabId = initial.tabs[0]!.id;
@@ -318,23 +318,70 @@ describe("DesktopBrowserService", () => {
 
     await service.activateTab(firstTabId);
 
-    const extract = await service.extract(secondTabId);
-    const screenshot = await service.screenshot(secondTabId);
-    const interaction = await service.interact(secondTabId, {
+    await expect(service.extract(secondTabId)).rejects.toThrow(
+      "Browser tool execution is not connected to a live browser session yet.",
+    );
+    await expect(service.screenshot(secondTabId)).rejects.toThrow(
+      "Browser tool execution is not connected to a live browser session yet.",
+    );
+    await expect(service.interact(secondTabId, {
       kind: "click",
       selector: "[data-testid='submit']",
-    });
+    })).rejects.toThrow(
+      "Browser tool execution is not connected to a live browser session yet.",
+    );
     const snapshot = await service.getSnapshot();
     const secondTab = snapshot.tabs.find((tab) => tab.id === secondTabId);
 
     expect(snapshot.activeTabId).toBe(firstTabId);
     expect(snapshot.toolPanel).toBe("closed");
-    expect(extract.tabId).toBe(secondTabId);
-    expect(screenshot.tabId).toBe(secondTabId);
-    expect(interaction.tabId).toBe(secondTabId);
-    expect(secondTab?.lastExtractResult).toEqual(extract);
-    expect(secondTab?.lastScreenshotResult).toEqual(screenshot);
-    expect(secondTab?.lastInteractionResult).toEqual(interaction);
+    expect(secondTab?.lastExtractResult).toBeUndefined();
+    expect(secondTab?.lastScreenshotResult).toBeUndefined();
+    expect(secondTab?.lastInteractionResult).toBeUndefined();
+  });
+
+  test("navigation and refresh clear stale tab tool artifacts", async () => {
+    const service = new DesktopBrowserService();
+    const initial = await service.getSnapshot();
+    const tabId = initial.tabs[0]!.id;
+
+    await service.navigate(tabId, "https://example.com/a");
+    await expect(service.extract(tabId)).rejects.toThrow(
+      "Browser tool execution is not connected to a live browser session yet.",
+    );
+    await expect(service.screenshot(tabId)).rejects.toThrow(
+      "Browser tool execution is not connected to a live browser session yet.",
+    );
+    await expect(service.interact(tabId, {
+      kind: "click",
+      selector: "#submit",
+    })).rejects.toThrow(
+      "Browser tool execution is not connected to a live browser session yet.",
+    );
+
+    const afterRefresh = await service.refresh(tabId);
+    expect(afterRefresh.tabs[0]).toMatchObject({
+      id: tabId,
+      url: "https://example.com/a",
+      draftUrl: "https://example.com/a",
+      lastExtractResult: undefined,
+      lastScreenshotResult: undefined,
+      lastInteractionResult: undefined,
+    });
+
+    await service.navigate(tabId, "https://example.com/b");
+    await expect(service.extract(tabId)).rejects.toThrow(
+      "Browser tool execution is not connected to a live browser session yet.",
+    );
+    const afterBack = await service.goBack(tabId);
+    expect(afterBack.tabs[0]).toMatchObject({
+      id: tabId,
+      url: "https://example.com/a",
+      draftUrl: "https://example.com/a",
+      lastExtractResult: undefined,
+      lastScreenshotResult: undefined,
+      lastInteractionResult: undefined,
+    });
   });
 
   test("getSnapshot returns clones that cannot mutate service state", async () => {
@@ -343,30 +390,18 @@ describe("DesktopBrowserService", () => {
     const tabId = initial.tabs[0]!.id;
 
     await service.navigate(tabId, "https://example.com/immutable");
-    await service.extract(tabId);
 
     const snapshot = await service.getSnapshot();
     snapshot.activeTabId = "mutated";
     snapshot.tabs[0]!.url = "https://evil.example";
     snapshot.tabs[0]!.draftUrl = "https://evil.example";
-    snapshot.tabs[0]!.lastExtractResult!.text = "mutated";
-    snapshot.tabs[0]!.lastExtractResult!.links.push({
-      text: "mutated",
-      url: "https://evil.example",
-    });
 
     const fresh = await service.getSnapshot();
 
     expect(fresh.activeTabId).toBe(tabId);
     expect(fresh.tabs[0]!.url).toBe("https://example.com/immutable");
     expect(fresh.tabs[0]!.draftUrl).toBe("https://example.com/immutable");
-    expect(fresh.tabs[0]!.lastExtractResult?.text).toBe("Stub extract for example.com");
-    expect(fresh.tabs[0]!.lastExtractResult?.links).toEqual([
-      {
-        text: "example.com",
-        url: "https://example.com/immutable",
-      },
-    ]);
+    expect(fresh.tabs[0]!.lastExtractResult).toBeUndefined();
   });
 
   test("tab lifecycle methods keep the snapshot coherent", async () => {

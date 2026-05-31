@@ -18,6 +18,7 @@ export type BrowserController = {
   getState: () => DesktopBrowserStateSnapshot;
   replaceState: (snapshot: DesktopBrowserStateSnapshot) => DesktopBrowserStateSnapshot;
   setToolPanel: (toolPanel: DesktopBrowserToolPanel) => DesktopBrowserStateSnapshot;
+  updateDraftUrl: (tabId: string, draftUrl: string) => DesktopBrowserStateSnapshot;
   createTab: () => Promise<DesktopBrowserStateSnapshot>;
   activateTab: (tabId: string) => Promise<DesktopBrowserStateSnapshot>;
   closeTab: (tabId: string) => Promise<DesktopBrowserStateSnapshot>;
@@ -64,6 +65,15 @@ export function createBrowserController(input: {
     return syncSnapshot(snapshot, requestOrder);
   };
 
+  const readTabUrl = (tabId: string) => {
+    return input.store.getState().tabs.find((tab) => tab.id === tabId)?.url ?? null;
+  };
+
+  const canApplyToolResult = (tabId: string, requestedUrl: string | null) => {
+    const currentUrl = readTabUrl(tabId);
+    return currentUrl !== null && currentUrl === requestedUrl;
+  };
+
   return {
     getState: () => input.store.getState(),
     replaceState: (snapshot) => {
@@ -73,6 +83,13 @@ export function createBrowserController(input: {
     setToolPanel: (toolPanel) => {
       markLocalStateChange();
       return input.store.setToolPanel(toolPanel);
+    },
+    updateDraftUrl: (tabId, draftUrl) => {
+      markLocalStateChange();
+      input.store.updateTab(tabId, {
+        draftUrl,
+      });
+      return input.store.getState();
     },
     async createTab() {
       return runSnapshotRequest((rpc) => rpc.createTab());
@@ -99,24 +116,33 @@ export function createBrowserController(input: {
       return runSnapshotRequest((rpc) => rpc.refresh(tabId));
     },
     async extract(tabId) {
+      const requestedUrl = readTabUrl(tabId);
       const result = await resolveRpc().extract(tabId);
-      input.store.updateTab(tabId, {
-        lastExtractResult: result,
-      });
+      if (canApplyToolResult(tabId, requestedUrl)) {
+        input.store.updateTab(tabId, {
+          lastExtractResult: result,
+        });
+      }
       return result;
     },
     async screenshot(tabId) {
+      const requestedUrl = readTabUrl(tabId);
       const result = await resolveRpc().screenshot(tabId);
-      input.store.updateTab(tabId, {
-        lastScreenshotResult: result,
-      });
+      if (canApplyToolResult(tabId, requestedUrl)) {
+        input.store.updateTab(tabId, {
+          lastScreenshotResult: result,
+        });
+      }
       return result;
     },
     async interact(tabId, request) {
+      const requestedUrl = readTabUrl(tabId);
       const result = await resolveRpc().interact(tabId, request);
-      input.store.updateTab(tabId, {
-        lastInteractionResult: result,
-      });
+      if (canApplyToolResult(tabId, requestedUrl)) {
+        input.store.updateTab(tabId, {
+          lastInteractionResult: result,
+        });
+      }
       return result;
     },
   };

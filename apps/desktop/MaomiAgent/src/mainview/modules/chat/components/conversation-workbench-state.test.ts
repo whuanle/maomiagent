@@ -33,19 +33,18 @@ describe("conversation workbench state", () => {
     expect(opened.activePanelKey).toBe("settings");
   });
 
-  test("opens browser panel from the dock action", () => {
+  test("ignores hidden browser dock actions", () => {
     const initial = createConversationWorkbenchViewState();
     const opened = applyConversationWorkbenchDockAction(initial, "browser");
 
-    expect(opened.mainPanelVisible).toBe(true);
-    expect(opened.activePanelKey).toBe("browser");
+    expect(opened).toEqual(initial);
   });
 
-  test("keeps browser as the active builtin panel when selected from tabs", () => {
+  test("falls back to files when browser panel is requested from tabs", () => {
     const initial = createConversationWorkbenchViewState();
     const selected = selectConversationWorkbenchPanel(initial, "browser");
 
     expect(selected.mainPanelVisible).toBe(true);
-    expect(selected.activePanelKey).toBe("browser");
+    expect(selected.activePanelKey).toBe("files");
   });
 });

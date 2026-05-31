@@ -25,9 +25,9 @@ import { readShellPreferences, writeShellPreferences } from "./lib/shell-prefere
 import type { ChatPageHandle } from "./modules/chat";
 import { AgentsPage } from "./modules/agents";
 import { ChatPage } from "./modules/chat";
-import { BrowserPage } from "./modules/browser";
 import { BrowserProvider } from "./modules/browser/components/browser-provider";
 import { GitPage } from "./modules/git";
+import type { GitPageHandle } from "./modules/git";
 import { MemoryPage } from "./modules/memory";
 import { ModelsPage } from "./modules/models";
 import { McpPage } from "./modules/mcp";
@@ -122,7 +122,9 @@ export default function App() {
     readTitlebarMenuSettings(TITLEBAR_MENU_ITEMS),
   );
   const previousActiveRouteRef = useRef<AppRouteKey>(initialRoute);
+  const activeRouteRef = useRef<AppRouteKey>(initialRoute);
   const chatPageRef = useRef<ChatPageHandle | null>(null);
+  const gitPageRef = useRef<GitPageHandle | null>(null);
   const pendingConversationOpenRef = useRef<{
     hasPending: boolean;
     request: Parameters<ChatPageHandle["openConversation"]>[0];
@@ -164,6 +166,36 @@ export default function App() {
     }, 0);
   }, [flushPendingConversationOpen]);
 
+  const handleGitPageRef = useCallback((instance: GitPageHandle | null) => {
+    gitPageRef.current = instance;
+  }, []);
+
+  const syncWindowHashToRoute = useCallback((route: AppRouteKey) => {
+    const nextUrl = new URL(window.location.href);
+    nextUrl.hash = route;
+    window.history.replaceState(window.history.state, "", nextUrl);
+  }, []);
+
+  const requestRouteChange = useCallback(async (nextRoute: AppRouteKey) => {
+    const currentRoute = activeRouteRef.current;
+    if (nextRoute === currentRoute) {
+      return true;
+    }
+
+    const leavingGitPage = resolveVisibleMainviewRoute(currentRoute) === "git"
+      && resolveVisibleMainviewRoute(nextRoute) !== "git";
+    if (leavingGitPage) {
+      const confirmed = await gitPageRef.current?.confirmLeavePage() ?? true;
+      if (!confirmed) {
+        syncWindowHashToRoute(currentRoute);
+        return false;
+      }
+    }
+
+    setActiveRoute(nextRoute);
+    return true;
+  }, [syncWindowHashToRoute]);
+
   useEffect(() => {
     writeShellPreferences({ version: 1, language, themeMode });
     applyThemeStylesheet(themeMode);
@@ -174,12 +206,16 @@ export default function App() {
   }, [menuSettings]);
 
   useEffect(() => {
+    activeRouteRef.current = activeRoute;
+  }, [activeRoute]);
+
+  useEffect(() => {
     const handleHashChange = () => {
-      setActiveRoute(parseRouteFromHash(window.location.hash) ?? "chat");
+      void requestRouteChange(parseRouteFromHash(window.location.hash) ?? "chat");
     };
     window.addEventListener("hashchange", handleHashChange);
     return () => window.removeEventListener("hashchange", handleHashChange);
-  }, []);
+  }, [requestRouteChange]);
 
   useEffect(() => {
     const currentRoute = parseRouteFromHash(window.location.hash);
@@ -265,11 +301,6 @@ export default function App() {
                   language={language}
                   revealTerminalToken={chatTerminalRevealToken}
                 />
-              ) : route.key === "browser" ? (
-                <BrowserPage
-                  active={routeActive}
-                  language={language}
-                />
               ) : route.key === "workspace" ? (
                 <WorkspacePage
                   active={routeActive}
@@ -278,6 +309,7 @@ export default function App() {
                 />
               ) : route.key === "git" ? (
                 <GitPage
+                  ref={handleGitPageRef}
                   active={routeActive}
                   language={language}
                 />
@@ -398,8 +430,12 @@ export default function App() {
               menuItems={expandedMenuItems}
               collapsedMenuItems={collapsedMenuItems}
               activeMenuKey={visibleRoute}
-              onMenuSelect={setActiveRoute}
-              onOpenSettings={() => setActiveRoute("settings")}
+              onMenuSelect={(value) => {
+                void requestRouteChange(value);
+              }}
+              onOpenSettings={() => {
+                void requestRouteChange("settings");
+              }}
               onSelectTheme={setThemeMode}
               onToggleLanguage={() => setLanguage((current) => current === "zh-CN" ? "en-US" : "zh-CN")}
             />

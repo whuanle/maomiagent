@@ -27,10 +27,6 @@ const DEFAULT_RIGHT_PANE_WIDTH = "42%";
 const DEFAULT_TERMINAL_PANE_HEIGHT = 248;
 
 function resolveConversationWorkbenchPanelKey(key: string): ChatWorkbenchPanelKey {
-  if (key === "browser") {
-    return "browser";
-  }
-
   if (key === "settings") {
     return "settings";
   }
@@ -141,8 +137,7 @@ export function applyConversationWorkbenchDockAction(
   }
 
   if (
-    dockKey !== "browser"
-    && dockKey !== "settings"
+    dockKey !== "settings"
     && dockKey !== "files"
     && dockKey !== "changes"
     && dockKey !== "git"

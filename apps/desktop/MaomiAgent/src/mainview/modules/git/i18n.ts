@@ -8,13 +8,9 @@ export type GitPageCopy = {
   changesTab: string;
   branchesTab: string;
   commitReviewTab: string;
-  codeReviewTab: string;
   commitReviewCurrentTarget: string;
   commitReviewCommitTarget: string;
   commitReviewPrTarget: string;
-  codeReviewProjectScope: string;
-  codeReviewDirectoryScope: string;
-  codeReviewFileScope: string;
   loading: string;
   emptyNoWorkspace: string;
   emptyNoBridge: string;
@@ -104,13 +100,9 @@ const ZH_CN: GitPageCopy = {
   changesTab: "变更",
   branchesTab: "分支",
   commitReviewTab: "Commit 审查",
-  codeReviewTab: "代码审查",
   commitReviewCurrentTarget: "当前更改",
   commitReviewCommitTarget: "单个提交",
   commitReviewPrTarget: "PR",
-  codeReviewProjectScope: "整个项目",
-  codeReviewDirectoryScope: "指定目录",
-  codeReviewFileScope: "指定文件",
   loading: "正在加载",
   emptyNoWorkspace: "暂无工作区",
   emptyNoBridge: "桌面 Git 通道不可用",
@@ -214,13 +206,9 @@ const EN_US: GitPageCopy = {
   changesTab: "Changes",
   branchesTab: "Branches",
   commitReviewTab: "Commit Review",
-  codeReviewTab: "Code Review",
   commitReviewCurrentTarget: "Current Changes",
   commitReviewCommitTarget: "Single Commit",
   commitReviewPrTarget: "PR",
-  codeReviewProjectScope: "Whole Project",
-  codeReviewDirectoryScope: "Directory",
-  codeReviewFileScope: "File",
   loading: "Loading",
   emptyNoWorkspace: "No workspace",
   emptyNoBridge: "Desktop Git bridge is unavailable",

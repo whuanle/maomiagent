@@ -275,4 +275,102 @@ describe("browser controller", () => {
 
     expect(controller.getState()).toEqual(newerSnapshot);
   });
+
+  test("local draft edits are not clobbered by an older in-flight snapshot", async () => {
+    const store = createBrowserStore(createSnapshot());
+    const staleSnapshot = createSnapshot({
+      tabs: [createTab({
+        id: "tab-1",
+        draftUrl: "https://example.com/stale",
+      })],
+    });
+    const pendingSnapshot = createDeferred<DesktopBrowserStateSnapshot>();
+    const rpc = {
+      createTab: mock(async () => createSnapshot()),
+      activateTab: mock(async () => createSnapshot()),
+      closeTab: mock(async () => createSnapshot()),
+      getSnapshot: mock(async () => pendingSnapshot.promise),
+      navigate: mock(async () => createSnapshot()),
+      goBack: mock(async () => createSnapshot()),
+      goForward: mock(async () => createSnapshot()),
+      refresh: mock(async () => createSnapshot()),
+      extract: mock(async () => createExtractResult("tab-1")),
+      screenshot: mock(async () => createScreenshotResult("tab-1")),
+      interact: mock(async (_tabId: string, _request: DesktopBrowserInteractionRequest) =>
+        createInteractionResult("tab-1")),
+    };
+    const controller = createBrowserController({ store, rpc });
+
+    const inFlightSnapshot = controller.getSnapshot();
+    controller.updateDraftUrl("tab-1", "https://bun.sh");
+
+    pendingSnapshot.resolve(staleSnapshot);
+    await expect(inFlightSnapshot).resolves.toEqual(controller.getState());
+
+    expect(controller.getState().tabs[0]).toMatchObject({
+      id: "tab-1",
+      draftUrl: "https://bun.sh",
+      url: "https://example.com",
+    });
+  });
+
+  test("late tool results are ignored after the tab navigates to a different url", async () => {
+    const store = createBrowserStore(createSnapshot());
+    const pendingExtract = createDeferred<DesktopBrowserExtractResult>();
+    const pendingScreenshot = createDeferred<DesktopBrowserScreenshotResult>();
+    const pendingInteraction = createDeferred<DesktopBrowserInteractionResult>();
+    const navigatedSnapshot = createSnapshot({
+      tabs: [createTab({
+        id: "tab-1",
+        title: "New Page",
+        url: "https://example.com/new",
+        draftUrl: "https://example.com/new",
+      })],
+    });
+    const rpc = {
+      createTab: mock(async () => createSnapshot()),
+      activateTab: mock(async () => createSnapshot()),
+      closeTab: mock(async () => createSnapshot()),
+      getSnapshot: mock(async () => createSnapshot()),
+      navigate: mock(async () => navigatedSnapshot),
+      goBack: mock(async () => createSnapshot()),
+      goForward: mock(async () => createSnapshot()),
+      refresh: mock(async () => createSnapshot()),
+      extract: mock(async () => pendingExtract.promise),
+      screenshot: mock(async () => pendingScreenshot.promise),
+      interact: mock(async (_tabId: string, _request: DesktopBrowserInteractionRequest) =>
+        pendingInteraction.promise),
+    };
+    const controller = createBrowserController({ store, rpc });
+
+    const extractRequest = controller.extract("tab-1");
+    const screenshotRequest = controller.screenshot("tab-1");
+    const interactionRequest = controller.interact("tab-1", {
+      kind: "click",
+      selector: "#run",
+    });
+
+    await controller.navigate("tab-1", "https://example.com/new");
+
+    const lateExtractResult = createExtractResult("tab-1");
+    lateExtractResult.url = "https://example.com";
+    const lateScreenshotResult = createScreenshotResult("tab-1");
+    const lateInteractionResult = createInteractionResult("tab-1");
+    pendingExtract.resolve(lateExtractResult);
+    pendingScreenshot.resolve(lateScreenshotResult);
+    pendingInteraction.resolve(lateInteractionResult);
+
+    await expect(extractRequest).resolves.toEqual(lateExtractResult);
+    await expect(screenshotRequest).resolves.toEqual(lateScreenshotResult);
+    await expect(interactionRequest).resolves.toEqual(lateInteractionResult);
+
+    expect(controller.getState().tabs[0]).toMatchObject({
+      id: "tab-1",
+      url: "https://example.com/new",
+      draftUrl: "https://example.com/new",
+      lastExtractResult: undefined,
+      lastScreenshotResult: undefined,
+      lastInteractionResult: undefined,
+    });
+  });
 });

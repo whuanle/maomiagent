@@ -15,8 +15,12 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 12px 18px 18px;
+  padding: 0;
   background: transparent;
+}
+
+.browser-page-surface-panel {
+  padding: 0;
 }
 
 .browser-shell {
@@ -25,39 +29,58 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  gap: 12px;
+  gap: 0;
+  overflow: hidden;
+  background: #f3f3f3;
+}
+
+.browser-shell-panel {
+  background: transparent;
 }
 
 .browser-tab-strip {
   display: flex;
   align-items: center;
   min-width: 0;
-  gap: 12px;
+  min-height: 34px;
+  gap: 8px;
+  padding: 0 8px;
+  border-bottom: 1px solid #e8e8e8;
+  background: #f7f7f7;
+}
+
+.browser-shell-panel .browser-tab-strip {
+  padding-inline: 6px;
 }
 
 .browser-tab-strip-scroll {
   display: flex;
   flex: 1;
   min-width: 0;
-  gap: 10px;
+  align-items: flex-end;
+  gap: 4px;
   overflow-x: auto;
-  padding-bottom: 2px;
+  padding-top: 4px;
 }
 
 .browser-tab {
   display: flex;
   align-items: center;
   min-width: 0;
-  width: min(320px, 100%);
-  border: 1px solid color-mix(in srgb, var(--app-border-soft) 88%, transparent);
-  border-radius: 16px;
-  background: color-mix(in srgb, var(--app-surface) 82%, transparent);
-  box-shadow: var(--app-surface-shadow);
+  width: auto;
+  max-width: min(220px, 100%);
+  border: 0;
+  border-radius: 7px 7px 0 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.browser-shell-panel .browser-tab {
+  max-width: min(180px, 100%);
 }
 
 .browser-tab-active {
-  border-color: color-mix(in srgb, var(--app-accent-border) 82%, var(--app-border-soft));
-  background: color-mix(in srgb, var(--app-accent-soft) 42%, var(--app-surface) 58%);
+  background: #efefef;
 }
 
 .browser-tab-button,
@@ -70,25 +93,32 @@
 .browser-tab-button {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   flex: 1;
   min-width: 0;
-  padding: 10px 8px 10px 12px;
+  min-height: 28px;
+  padding: 5px 6px 5px 10px;
   cursor: pointer;
   text-align: left;
+  color: #666;
+}
+
+.browser-shell-panel .browser-tab-button {
+  padding: 5px 5px 5px 8px;
 }
 
 .browser-tab-close {
-  width: 32px;
-  height: 32px;
-  margin-right: 6px;
-  border-radius: 999px;
-  color: var(--app-text-secondary);
+  width: 22px;
+  height: 22px;
+  margin-right: 4px;
+  border-radius: 6px;
+  color: #9a9a9a;
   cursor: pointer;
+  font-size: 11px;
 }
 
 .browser-tab-close:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--app-surface-subtle) 80%, transparent);
+  background: #e9e9e9;
 }
 
 .browser-tab-close:disabled {
@@ -101,69 +131,82 @@
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-}
-
-.browser-tab-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--app-accent-solid) 72%, var(--app-surface));
+  width: 12px;
 }
 
 .browser-tab-loading {
-  color: var(--app-accent-solid);
+  color: #8b8b8b;
+  font-size: 12px;
 }
 
-.browser-tab-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  gap: 2px;
-}
-
-.browser-tab-title,
-.browser-tab-url {
+.browser-tab-title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.browser-tab-title {
-  font-weight: 600;
-}
-
-.browser-tab-url {
   font-size: 12px;
-  color: var(--app-text-secondary);
+  font-weight: 500;
 }
 
-.browser-tab-add.ant-btn {
+.browser-tab-add-icon {
   flex: 0 0 auto;
-  border-radius: 16px;
-  min-height: 40px;
+  width: 24px;
+  height: 24px;
+  margin-top: 2px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #8e8e8e;
+  cursor: pointer;
+}
+
+.browser-tab-add-icon:hover:not(:disabled) {
+  background: #ececec;
+}
+
+.browser-tab-add-icon:disabled {
+  cursor: wait;
+  opacity: 0.6;
 }
 
 .browser-toolbar {
   display: flex;
   align-items: center;
   min-width: 0;
-  column-gap: 12px;
-  row-gap: 12px;
+  min-height: 34px;
+  column-gap: 8px;
+  row-gap: 8px;
   width: 100%;
-  flex-wrap: wrap;
+  padding: 0 10px;
+  border-bottom: 1px solid #e8e8e8;
+  background: #f7f7f7;
+}
+
+.browser-shell-panel .browser-toolbar {
+  padding-inline: 8px;
 }
 
 .browser-toolbar-nav,
 .browser-toolbar-tools {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
 }
 
 .browser-toolbar-address {
-  flex: 1 1 420px;
+  flex: 1 1 560px;
   min-width: 260px;
+}
+
+.browser-shell-panel .browser-toolbar-address {
+  flex-basis: 100%;
+  min-width: 0;
+}
+
+.browser-shell-panel .browser-toolbar-tools {
+  width: 100%;
+  overflow-x: auto;
+  padding-bottom: 2px;
 }
 
 .browser-toolbar .ant-input,
@@ -171,14 +214,43 @@
 .browser-tool-panel .ant-btn,
 .browser-tool-panel .ant-select-selector,
 .browser-tool-panel .ant-input {
-  min-height: 40px;
-  border-radius: 14px;
+  min-height: 26px;
+  border-radius: 8px;
 }
 
 .browser-toolbar-tool-active.ant-btn {
-  border-color: color-mix(in srgb, var(--app-accent-border) 88%, transparent);
-  background: color-mix(in srgb, var(--app-accent-soft) 72%, transparent);
-  color: var(--app-accent-text);
+  background: #ebebeb;
+  color: #5e5e5e;
+}
+
+.browser-toolbar .ant-btn {
+  width: 24px;
+  min-width: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  box-shadow: none;
+  color: #9a9a9a;
+}
+
+.browser-toolbar .ant-btn:hover:not(:disabled) {
+  background: #ececec;
+  color: #666;
+}
+
+.browser-toolbar-address.ant-input {
+  min-height: 26px;
+  padding-inline: 12px;
+  border: 0;
+  border-radius: 999px;
+  background: #ededed;
+  box-shadow: none;
+  color: #666;
+  text-align: left;
+}
+
+.browser-toolbar-address.ant-input::placeholder {
+  color: #a6a6a6;
 }
 
 .browser-shell-main {
@@ -186,7 +258,8 @@
   flex: 1;
   min-width: 0;
   min-height: 0;
-  gap: 12px;
+  gap: 0;
+  background: #f4f4f4;
 }
 
 .browser-webview-surface {
@@ -194,33 +267,23 @@
   min-width: 0;
   min-height: 0;
   display: flex;
+  background: #f4f4f4;
 }
 
 .browser-webview-surface-empty {
-  align-items: center;
-  justify-content: center;
+  align-items: stretch;
+  justify-content: stretch;
 }
 
-.browser-webview-empty-card,
 .browser-webview-window,
 .browser-tool-panel {
-  border: 1px solid color-mix(in srgb, var(--app-border-soft) 88%, transparent);
-  background: color-mix(in srgb, var(--app-surface) 88%, transparent);
-  box-shadow: var(--app-surface-shadow);
+  background: #f4f4f4;
+  box-shadow: none;
 }
 
-.browser-webview-empty-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 14px;
-  padding: 28px 32px;
-  border-radius: 24px;
-}
-
-.browser-webview-empty-title {
-  font-size: 18px;
-  font-weight: 600;
+.browser-shell-panel .browser-webview-window,
+.browser-shell-panel .browser-tool-panel {
+  background: #f7f7f7;
 }
 
 .browser-webview-window {
@@ -229,161 +292,96 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  border-radius: 24px;
   overflow: hidden;
 }
 
-.browser-webview-header {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  min-height: 56px;
-  padding: 0 18px;
-  border-bottom: 1px solid var(--app-border-soft);
-  background: color-mix(in srgb, var(--app-surface-subtle) 68%, transparent);
-}
-
-.browser-webview-header-dots {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.browser-webview-header-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--app-border-strong) 78%, transparent);
-}
-
-.browser-webview-origin {
+.browser-webview-window-blank {
   flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 600;
-}
-
-.browser-webview-state {
-  flex: 0 0 auto;
-  height: 28px;
-  padding: 0 12px;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--app-border) 78%, transparent);
-  background: color-mix(in srgb, var(--app-surface) 80%, transparent);
-  display: inline-flex;
-  align-items: center;
+  width: 100%;
 }
 
 .browser-webview-canvas {
-  position: relative;
   display: flex;
   flex: 1;
   min-height: 0;
-  padding: 20px;
+  min-width: 0;
+  padding: 0;
   align-items: center;
   justify-content: center;
-  background:
-    radial-gradient(circle at top left, color-mix(in srgb, var(--app-accent-soft) 40%, transparent), transparent 34%),
-    linear-gradient(180deg, color-mix(in srgb, var(--app-surface) 94%, transparent), color-mix(in srgb, var(--app-surface-subtle) 82%, transparent));
+  background: #f4f4f4;
 }
 
-.browser-webview-placeholder {
+.browser-webview-canvas-blank {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.browser-webview-canvas-live {
+  position: relative;
+  align-items: stretch;
+  justify-content: stretch;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.browser-webview-empty-state {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  width: min(560px, 100%);
-  padding: 32px;
-  border-radius: 24px;
-  border: 1px solid color-mix(in srgb, var(--app-border) 78%, transparent);
-  background: color-mix(in srgb, var(--app-surface) 84%, transparent);
+  gap: 8px;
+  transform: translateY(-28px);
   text-align: center;
+  color: #9a9a9a;
 }
 
-.browser-webview-placeholder-icon {
-  font-size: 28px;
-  color: var(--app-accent-solid);
+.browser-webview-empty-icon {
+  font-size: 42px;
+  color: #979797;
 }
 
-.browser-webview-title {
-  font-size: 24px;
-  font-weight: 700;
+.browser-webview-empty-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #666;
 }
 
-.browser-webview-url {
-  max-width: 100%;
-  color: var(--app-text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.browser-webview-empty-description {
+  font-size: 12px;
+  color: #a1a1a1;
 }
 
 .browser-webview-capture {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
-  border-radius: 18px;
-  border: 1px solid color-mix(in srgb, var(--app-border) 82%, transparent);
-  box-shadow: var(--app-surface-shadow);
+  border-radius: 8px;
+  border: 1px solid #dfdfdf;
+}
+
+.browser-webview-frame {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+
+.browser-webview-frame-blank {
+  background: #f4f4f4;
 }
 
 .browser-webview-overlay {
   position: absolute;
-  inset-inline-start: 20px;
-  inset-inline-end: 20px;
-  inset-block-end: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 16px 18px;
-  border-radius: 20px;
-  background: color-mix(in srgb, var(--app-surface) 82%, transparent);
-  border: 1px solid color-mix(in srgb, var(--app-border) 82%, transparent);
-  backdrop-filter: blur(10px);
-}
-
-.browser-webview-overlay-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--app-text-secondary);
-}
-
-.browser-webview-overlay-text {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-}
-
-.browser-webview-footer {
+  inset: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 52px;
-  padding: 0 16px;
-  border-top: 1px solid var(--app-border-soft);
-  overflow-x: auto;
-}
-
-.browser-webview-chip {
-  flex: 0 0 auto;
-  max-width: 320px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--app-border) 82%, transparent);
-  background: color-mix(in srgb, var(--app-surface-subtle) 82%, transparent);
-  color: var(--app-text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.browser-webview-chip-active {
-  color: var(--app-accent-text);
-  border-color: var(--app-accent-border);
-  background: color-mix(in srgb, var(--app-accent-soft) 78%, transparent);
+  justify-content: center;
+  padding: 24px;
+  background: #f4f4f4;
 }
 
 .browser-tool-panel {
@@ -391,10 +389,11 @@
   width: 0;
   min-width: 0;
   min-height: 0;
-  border-radius: 24px;
   overflow: hidden;
   transition: width 160ms ease, flex-basis 160ms ease, opacity 160ms ease;
   opacity: 0;
+  border-left: 1px solid #e6e6e6;
+  background: #f7f7f7;
 }
 
 .browser-tool-panel-open {
@@ -403,12 +402,18 @@
   opacity: 1;
 }
 
+.browser-shell-panel .browser-tool-panel-open {
+  flex-basis: 320px;
+  width: 320px;
+}
+
 .browser-tool-panel-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 14px 14px 12px;
-  border-bottom: 1px solid var(--app-border-soft);
+  padding: 10px 12px;
+  border-bottom: 1px solid #e6e6e6;
+  background: #f7f7f7;
 }
 
 .browser-tool-panel-header .ant-segmented {
@@ -422,7 +427,7 @@
   gap: 14px;
   height: calc(100% - 61px);
   min-height: 0;
-  padding: 14px;
+  padding: 12px;
   overflow-y: auto;
 }
 
@@ -452,9 +457,9 @@
   gap: 12px;
   min-height: 0;
   padding: 14px;
-  border-radius: 18px;
-  border: 1px solid color-mix(in srgb, var(--app-border) 82%, transparent);
-  background: color-mix(in srgb, var(--app-surface-subtle) 76%, transparent);
+  border-radius: 8px;
+  border: 1px solid #e3e3e3;
+  background: #f1f1f1;
 }
 
 .browser-tool-panel-result-meta,
@@ -467,7 +472,7 @@
 
 .browser-tool-panel-result-meta,
 .browser-tool-panel-link span:last-child {
-  color: var(--app-text-secondary);
+  color: #8f8f8f;
   font-size: 12px;
 }
 
@@ -485,13 +490,13 @@
 .browser-tool-panel-links-title {
   font-size: 12px;
   font-weight: 600;
-  color: var(--app-text-secondary);
+  color: #8f8f8f;
 }
 
 .browser-tool-panel-image {
   width: 100%;
-  border-radius: 14px;
-  border: 1px solid color-mix(in srgb, var(--app-border) 82%, transparent);
+  border-radius: 8px;
+  border: 1px solid #dfdfdf;
 }
 
 @media (max-width: 1200px) {
@@ -507,21 +512,19 @@
 
 @media (max-width: 720px) {
   .browser-page-surface {
-    padding-inline: 12px;
-    padding-bottom: 12px;
+    padding: 0;
   }
 
   .browser-tab-strip {
-    flex-direction: column;
-    align-items: stretch;
+    align-items: center;
   }
 
-  .browser-tab-add.ant-btn,
   .browser-toolbar-address {
     width: 100%;
   }
 
   .browser-toolbar {
-    align-items: stretch;
+    flex-wrap: wrap;
+    align-items: center;
   }
 }

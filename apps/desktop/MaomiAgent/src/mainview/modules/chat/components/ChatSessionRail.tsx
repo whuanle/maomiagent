@@ -128,7 +128,6 @@ function ConversationWorkspaceDock(props: {
   onAction: (dockKey: ChatWorkbenchDockKey) => void;
 }) {
   const dockItems: ChatWorkbenchDockKey[] = [
-    "browser",
     "settings",
     "sidebar",
     "terminal",

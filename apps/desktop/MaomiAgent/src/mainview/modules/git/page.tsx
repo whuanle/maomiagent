@@ -3,10 +3,18 @@ import {
   App as AntdApp,
   Button,
   Empty,
+  Modal,
   Select,
   Tabs,
 } from "antd";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useState,
+} from "react";
 
 import type {
   DesktopGitModuleSnapshotResult,
@@ -21,11 +29,10 @@ import { listDesktopWorkspaces } from "../../lib/desktop-workspace";
 import { createGitBranchCopy } from "./branch-copy";
 import { GitBranchWorkbench } from "./components/branch-workbench";
 import { GitChangesWorkbench } from "./components/changes-workbench";
-import { GitCodeReviewWorkbench } from "./components/git-code-review-workbench";
 import { GitCommitReviewWorkbench } from "./components/git-commit-review-workbench";
+import { hasGitReviewWorkbenchCachedResults } from "./components/git-ai-review-workbench-next";
 import {
   readGitPageUiState,
-  type GitCodeReviewUiState,
   type GitCommitReviewUiState,
   type GitTabKey,
   writeGitPageUiState,
@@ -36,6 +43,10 @@ import "./page.css";
 type Props = {
   language: LanguageCode;
   active: boolean;
+};
+
+export type GitPageHandle = {
+  confirmLeavePage: () => Promise<boolean>;
 };
 
 type WorkspaceOption = {
@@ -58,8 +69,9 @@ function buildWorkspaceOptions(items: Awaited<ReturnType<typeof listDesktopWorks
   }));
 }
 
-export function GitPage(props: Props) {
+export const GitPage = forwardRef<GitPageHandle, Props>(function GitPage(props, ref) {
   const { message } = AntdApp.useApp();
+  const [modal, modalContextHolder] = Modal.useModal();
   const copy = useMemo(() => createGitTranslator(props.language), [props.language]);
   const branchCopy = useMemo(() => createGitBranchCopy(props.language), [props.language]);
   const [bridgeReady, setBridgeReady] = useState(() => hasDesktopGitBridge());
@@ -68,7 +80,6 @@ export function GitPage(props: Props) {
   const [workspaceId, setWorkspaceId] = useState<string | undefined>(undefined);
   const [activeTab, setActiveTab] = useState<GitTabKey>("changes");
   const [commitReviewState, setCommitReviewState] = useState<GitCommitReviewUiState | undefined>(undefined);
-  const [codeReviewState, setCodeReviewState] = useState<GitCodeReviewUiState | undefined>(undefined);
   const [snapshot, setSnapshot] = useState<DesktopGitModuleSnapshotResult | null>(null);
   const [snapshotLoading, setSnapshotLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -92,7 +103,6 @@ export function GitPage(props: Props) {
     setRestoredWorkspaceId(restored?.workspaceId);
     setActiveTab(restored?.activeTab ?? "changes");
     setCommitReviewState(restored?.commitReview);
-    setCodeReviewState(restored?.codeReview);
   }, [props.active]);
 
   const loadWorkspaces = useCallback(async () => {
@@ -156,9 +166,26 @@ export function GitPage(props: Props) {
       workspaceId,
       activeTab,
       commitReview: commitReviewState,
-      codeReview: codeReviewState,
     });
-  }, [activeTab, codeReviewState, commitReviewState, workspaceId]);
+  }, [activeTab, commitReviewState, workspaceId]);
+
+  useImperativeHandle(ref, () => ({
+    async confirmLeavePage() {
+      if (!workspaceId || !hasGitReviewWorkbenchCachedResults(workspaceId)) {
+        return true;
+      }
+
+      return modal.confirm({
+        title: props.language === "en-US" ? "Leave Git page?" : "确认离开 Git 页面？",
+        content: props.language === "en-US"
+          ? "Current review results are cached. Leave this page?"
+          : "当前审查结果会保留在缓存中，确定离开这个页面吗？",
+        okText: props.language === "en-US" ? "Leave" : "离开",
+        cancelText: props.language === "en-US" ? "Stay" : "留在此页",
+        okButtonProps: { danger: true },
+      });
+    },
+  }), [modal, props.language, workspaceId]);
 
   const toolbar = useMemo(() => {
     return (
@@ -269,51 +296,8 @@ export function GitPage(props: Props) {
           </div>
         ),
       },
-      {
-        key: "code-review",
-        label: copy.codeReviewTab,
-        children: (
-          <div className="git-page-panel-shell git-page-ai-review-shell">
-            <GitCodeReviewWorkbench
-              language={props.language}
-              workspaceId={workspaceId ?? ""}
-              copy={copy}
-              snapshot={snapshot}
-              loading={snapshotLoading}
-              initialCodeReviewScopeType={codeReviewState?.scopeType}
-              initialCodeReviewScopePath={codeReviewState?.selectedScopePath}
-              onCodeReviewScopeTypeChange={(scopeType) => {
-                setCodeReviewState((current) => ({
-                  ...current,
-                  scopeType,
-                }));
-              }}
-              onCodeReviewScopePathChange={(selectedScopePath) => {
-                setCodeReviewState((current) => ({
-                  ...current,
-                  selectedScopePath,
-                }));
-              }}
-              selectedReviewFilePath={codeReviewState?.selectedFilePath}
-              onSelectedReviewFilePathChange={(selectedFilePath) => {
-                setCodeReviewState((current) => ({
-                  ...current,
-                  selectedFilePath,
-                }));
-              }}
-              selectedReviewFindingId={codeReviewState?.selectedIssueId}
-              onSelectedReviewFindingIdChange={(selectedIssueId) => {
-                setCodeReviewState((current) => ({
-                  ...current,
-                  selectedIssueId,
-                }));
-              }}
-            />
-          </div>
-        ),
-      },
     ];
-  }, [branchCopy, codeReviewState?.scopeType, codeReviewState?.selectedFilePath, codeReviewState?.selectedIssueId, codeReviewState?.selectedScopePath, commitReviewState?.selectedFilePath, commitReviewState?.selectedFindingId, commitReviewState?.selectedTargetId, commitReviewState?.targetType, copy, loadSnapshot, props.language, snapshot, snapshotLoading, workspaceId]);
+  }, [branchCopy, commitReviewState?.selectedFilePath, commitReviewState?.selectedFindingId, commitReviewState?.selectedTargetId, commitReviewState?.targetType, copy, loadSnapshot, props.language, snapshot, snapshotLoading, workspaceId]);
 
   if (!bridgeReady) {
     return (
@@ -333,11 +317,12 @@ export function GitPage(props: Props) {
 
   return (
     <div className="git-page">
+      {modalContextHolder}
       <div className="git-page-shell">
         <Tabs
           className="git-page-tabs"
           activeKey={activeTab}
-          destroyOnHidden={true}
+          destroyOnHidden={false}
           onChange={(value) => setActiveTab(value as GitTabKey)}
           tabBarExtraContent={{
             left: <div className="git-page-tab-bar-tools">{toolbar}</div>,
@@ -347,4 +332,4 @@ export function GitPage(props: Props) {
       </div>
     </div>
   );
-}
+});

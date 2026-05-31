@@ -47,7 +47,6 @@ export const APP_ROUTE_ITEMS: AppRouteItem[] = [
   { key: "wechat", labelKey: "菜单.微信", inMenu: true, owner: "native" },
   { key: "logs", labelKey: "菜单.日志", inMenu: true, owner: "native" },
   { key: "settings", labelKey: "菜单.设置", inMenu: true, owner: "native" },
-  { key: "browser", labelKey: "菜单.浏览器", inMenu: true, owner: "native" },
 ];
 
 export const TITLEBAR_MENU_ITEMS: TitlebarMenuItem[] = APP_ROUTE_ITEMS.filter(

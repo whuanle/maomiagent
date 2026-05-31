@@ -9,43 +9,51 @@ import {
 const STORAGE_KEY = "maomi.desktop.git-page-ui-state";
 
 function installWindowStorage() {
-  const storage = new Map<string, string>();
-  const sessionStorage = {
-    getItem(key: string) {
-      return storage.get(key) ?? null;
-    },
-    setItem(key: string, value: string) {
-      storage.set(key, value);
-    },
-    removeItem(key: string) {
-      storage.delete(key);
-    },
-    clear() {
-      storage.clear();
-    },
+  const createStorage = () => {
+    const storage = new Map<string, string>();
+
+    return {
+      getItem(key: string) {
+        return storage.get(key) ?? null;
+      },
+      setItem(key: string, value: string) {
+        storage.set(key, value);
+      },
+      removeItem(key: string) {
+        storage.delete(key);
+      },
+      clear() {
+        storage.clear();
+      },
+    };
   };
+
+  const localStorage = createStorage();
+  const sessionStorage = createStorage();
 
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: {
+      localStorage,
       sessionStorage,
       location: { hash: "" },
     },
   });
 
-  return sessionStorage;
+  return { localStorage, sessionStorage };
 }
 
 describe("git-page-ui-state", () => {
   beforeEach(() => {
-    const sessionStorage = installWindowStorage();
+    const { localStorage, sessionStorage } = installWindowStorage();
+    localStorage.removeItem(STORAGE_KEY);
     sessionStorage.removeItem(STORAGE_KEY);
   });
 
-  test("persists the new top-level review tabs and per-surface selection memory", () => {
+  test("persists git page ui state in localStorage", () => {
     const state: GitPageUiState = {
       workspaceId: "workspace-1",
-      activeTab: "commit-review",
+      activeTab: "code-review",
       commitReview: {
         targetType: "pr",
         selectedTargetId: "pr-101",
@@ -62,11 +70,40 @@ describe("git-page-ui-state", () => {
 
     writeGitPageUiState(state);
 
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBe(JSON.stringify(state));
     expect(readGitPageUiState()).toEqual(state);
   });
 
+  test("returns null for malformed stored data", () => {
+    window.localStorage.setItem(STORAGE_KEY, "{not-valid-json");
+
+    expect(readGitPageUiState()).toBeNull();
+  });
+
+  test("migrates legacy sessionStorage state into localStorage on first read", () => {
+    const state: GitPageUiState = {
+      workspaceId: "workspace-legacy",
+      activeTab: "code-review",
+      commitReview: {
+        targetType: "commit",
+        selectedTargetId: "abc123",
+      },
+      codeReview: {
+        scopeType: "file",
+        selectedScopePath: "apps/desktop/MaomiAgent/src/mainview/modules/git/git-page-ui-state.ts",
+        selectedIssueId: "issue-7",
+      },
+    };
+
+    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+
+    expect(readGitPageUiState()).toEqual(state);
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBe(JSON.stringify(state));
+    expect(window.sessionStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
   test("drops unknown legacy tab values and keeps a safe fallback shape", () => {
-    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
       workspaceId: "workspace-1",
       activeTab: "ai-review",
       selectedReviewFilePath: "legacy.tsx",
@@ -78,5 +115,25 @@ describe("git-page-ui-state", () => {
       commitReview: undefined,
       codeReview: undefined,
     });
+  });
+
+  test("removes the storage entry when the normalized state is empty", () => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      workspaceId: "workspace-1",
+    }));
+
+    writeGitPageUiState({
+      workspaceId: "   ",
+      activeTab: "invalid" as GitPageUiState["activeTab"],
+      commitReview: {
+        selectedFilePath: "   ",
+      },
+      codeReview: {
+        selectedFilePath: "   ",
+      },
+    });
+
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
+    expect(readGitPageUiState()).toBeNull();
   });
 });

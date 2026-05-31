@@ -13,10 +13,12 @@ describe("git review workbenches contracts", () => {
     expect(sourceText).toContain("GitAiReviewWorkbenchNext");
   });
 
-  test("code review workbench pins the shared base to code surface", async () => {
-    const sourceText = await source("./git-code-review-workbench.tsx");
+  test("shared review workbench removes commit target mode toggles and keeps in-memory review cache", async () => {
+    const sourceText = await source("./git-ai-review-workbench-next.tsx");
 
-    expect(sourceText).toContain('surface="code"');
-    expect(sourceText).toContain("GitAiReviewWorkbenchNext");
+    expect(sourceText).toContain("const reviewWorkbenchSessionCache = new Map");
+    expect(sourceText).toContain("hasGitReviewWorkbenchCachedResults");
+    expect(sourceText).toContain('className="git-ai-review-run-button"');
+    expect(sourceText).not.toContain('className="git-ai-review-commit-stage-copy"');
   });
 });

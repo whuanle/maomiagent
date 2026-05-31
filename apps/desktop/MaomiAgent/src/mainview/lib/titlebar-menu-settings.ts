@@ -2,7 +2,8 @@ import { TITLEBAR_MENU_ITEMS, type TitlebarMenuItem } from "../config/titlebar";
 
 const TITLEBAR_MENU_SETTINGS_STORAGE_KEYS = ["maomiagent.titlebar-menu-settings"] as const;
 const TITLEBAR_MENU_SETTINGS_VERSION = 1;
-const DEFAULT_COLLAPSED_MENU_KEYS = ["git", "settings", "browser"] as const;
+const DEFAULT_COLLAPSED_MENU_KEYS = ["settings"] as const;
+const ALWAYS_EXPANDED_MENU_KEYS = ["git"] as const;
 
 type TitlebarMenuKey = TitlebarMenuItem["key"];
 
@@ -55,10 +56,11 @@ function normalizeCollapsedMenuKeys(value: unknown, orderedMenuKeys: TitlebarMen
   const allowedKeys = new Set(orderedMenuKeys);
   const requested = Array.isArray(value) ? value : DEFAULT_COLLAPSED_MENU_KEYS;
   const normalized: TitlebarMenuKey[] = [];
+  const alwaysExpandedKeySet = new Set<TitlebarMenuKey>(ALWAYS_EXPANDED_MENU_KEYS);
 
   for (const item of requested) {
     const key = normalizeMenuKey(item, allowedKeys);
-    if (!key || normalized.includes(key)) {
+    if (!key || normalized.includes(key) || alwaysExpandedKeySet.has(key)) {
       continue;
     }
     normalized.push(key);

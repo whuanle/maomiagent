@@ -1,6 +1,4 @@
 import { CloseOutlined, LoadingOutlined, PlusOutlined } from "@ant-design/icons";
-import { Button } from "antd";
-
 import type { DesktopBrowserTabState } from "../../../../shared/desktop-browser";
 import type { BrowserShellCopy } from "./browser-shell-copy";
 
@@ -21,7 +19,6 @@ export function BrowserTabStrip(props: BrowserTabStripProps) {
       <div className="browser-tab-strip-scroll">
         {props.tabs.map((tab) => {
           const active = tab.id === props.activeTabId;
-          const displayUrl = tab.url || tab.draftUrl || props.copy.blankPage;
 
           return (
             <div
@@ -38,12 +35,9 @@ export function BrowserTabStrip(props: BrowserTabStripProps) {
                 <span className="browser-tab-leading">
                   {tab.loading
                     ? <LoadingOutlined className="browser-tab-loading" />
-                    : <span className="browser-tab-dot" aria-hidden="true" />}
+                    : null}
                 </span>
-                <span className="browser-tab-text">
-                  <span className="browser-tab-title">{tab.title || props.copy.newTab}</span>
-                  <span className="browser-tab-url">{displayUrl}</span>
-                </span>
+                <span className="browser-tab-title">{tab.title || props.copy.newTab}</span>
               </button>
               <button
                 type="button"
@@ -60,16 +54,17 @@ export function BrowserTabStrip(props: BrowserTabStripProps) {
             </div>
           );
         })}
-      </div>
 
-      <Button
-        className="browser-tab-add"
-        icon={<PlusOutlined />}
-        loading={props.creating}
-        onClick={props.onCreate}
-      >
-        {props.copy.newTab}
-      </Button>
+        <button
+          type="button"
+          className="browser-tab-add-icon"
+          aria-label={props.copy.newTab}
+          disabled={props.creating}
+          onClick={props.onCreate}
+        >
+          {props.creating ? <LoadingOutlined /> : <PlusOutlined />}
+        </button>
+      </div>
     </div>
   );
 }

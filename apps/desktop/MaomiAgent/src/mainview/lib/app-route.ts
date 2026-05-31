@@ -30,7 +30,7 @@ export function readInitialRoute(): AppRouteKey {
 }
 
 export function resolveVisibleMainviewRoute(route: AppRouteKey): AppRouteKey {
-  return route === "shell" ? "chat" : route;
+  return route === "shell" || route === "browser" ? "chat" : route;
 }
 
 export function shouldKeepMainviewRouteMounted(route: AppRouteKey): boolean {

@@ -14,21 +14,31 @@ type BrowserTabHistory = {
 };
 
 type DesktopBrowserServiceOptions = {
-  now?: () => string;
 };
 
 const DEFAULT_TAB_URL = "";
 const DEFAULT_TAB_TITLE = "New Tab";
 const DEFAULT_TOOL_PANEL = "closed";
+const LIVE_RUNTIME_REQUIRED_ERROR =
+  "Browser tool execution is not connected to a live browser session yet.";
+
+function resetTabArtifacts(): Pick<
+  DesktopBrowserTabState,
+  "lastExtractResult" | "lastScreenshotResult" | "lastInteractionResult"
+> {
+  return {
+    lastExtractResult: undefined,
+    lastScreenshotResult: undefined,
+    lastInteractionResult: undefined,
+  };
+}
 
 export class DesktopBrowserService implements DesktopBrowserServicePort {
   private nextTabNumber = 1;
   private snapshot: DesktopBrowserStateSnapshot;
   private readonly tabHistories = new Map<string, BrowserTabHistory>();
-  private readonly now: () => string;
 
   constructor(options: DesktopBrowserServiceOptions = {}) {
-    this.now = options.now ?? (() => new Date().toISOString());
     const initialTab = this.createDefaultTabState();
     this.tabHistories.set(initialTab.id, {
       entries: [initialTab.url],
@@ -122,6 +132,7 @@ export class DesktopBrowserService implements DesktopBrowserServicePort {
       draftUrl: normalizedUrl,
       title: deriveTitle(normalizedUrl),
       loading: false,
+      ...resetTabArtifacts(),
       ...toHistoryFlags(this.tabHistories.get(tabId)!),
     }, { activate: true });
 
@@ -143,6 +154,7 @@ export class DesktopBrowserService implements DesktopBrowserServicePort {
       draftUrl: nextUrl,
       title: deriveTitle(nextUrl),
       loading: false,
+      ...resetTabArtifacts(),
       ...toHistoryFlags(nextHistory),
     });
 
@@ -164,6 +176,7 @@ export class DesktopBrowserService implements DesktopBrowserServicePort {
       draftUrl: nextUrl,
       title: deriveTitle(nextUrl),
       loading: false,
+      ...resetTabArtifacts(),
       ...toHistoryFlags(nextHistory),
     });
 
@@ -175,63 +188,28 @@ export class DesktopBrowserService implements DesktopBrowserServicePort {
     this.replaceTab(tabId, {
       draftUrl: tab.url,
       loading: false,
+      ...resetTabArtifacts(),
       ...toHistoryFlags(this.requireHistory(tabId)),
     });
     return this.getSnapshot();
   }
 
   async extract(tabId: string): Promise<DesktopBrowserExtractResult> {
-    const tab = this.requireTab(tabId);
-    const result: DesktopBrowserExtractResult = {
-      tabId,
-      url: tab.url,
-      title: tab.title,
-      text: `Stub extract for ${tab.title}`,
-      links: tab.url === DEFAULT_TAB_URL
-        ? []
-        : [{ text: tab.title, url: tab.url }],
-      capturedAt: this.now(),
-    };
-
-    this.replaceTab(tabId, {
-      lastExtractResult: result,
-    });
-
-    return result;
+    this.requireTab(tabId);
+    throw new Error(LIVE_RUNTIME_REQUIRED_ERROR);
   }
 
   async screenshot(tabId: string): Promise<DesktopBrowserScreenshotResult> {
-    const tab = this.requireTab(tabId);
-    const result: DesktopBrowserScreenshotResult = {
-      tabId,
-      dataUrl: `data:image/png;base64,${Buffer.from(`${tab.id}:${tab.url}`).toString("base64")}`,
-      capturedAt: this.now(),
-    };
-
-    this.replaceTab(tabId, {
-      lastScreenshotResult: result,
-    });
-
-    return result;
+    this.requireTab(tabId);
+    throw new Error(LIVE_RUNTIME_REQUIRED_ERROR);
   }
 
   async interact(
     tabId: string,
-    request: DesktopBrowserInteractionRequest,
+    _request: DesktopBrowserInteractionRequest,
   ): Promise<DesktopBrowserInteractionResult> {
     this.requireTab(tabId);
-    const result: DesktopBrowserInteractionResult = {
-      tabId,
-      ok: true,
-      message: describeInteraction(request),
-      capturedAt: this.now(),
-    };
-
-    this.replaceTab(tabId, {
-      lastInteractionResult: result,
-    });
-
-    return result;
+    throw new Error(LIVE_RUNTIME_REQUIRED_ERROR);
   }
 
   private createDefaultTabState(): DesktopBrowserTabState {
@@ -301,24 +279,6 @@ function deriveTitle(url: string): string {
   } catch {
     return url;
   }
-}
-
-function describeInteraction(request: DesktopBrowserInteractionRequest): string {
-  if (request.kind === "click") {
-    return `Clicked ${request.selector}`;
-  }
-
-  if (request.kind === "type") {
-    return `Typed into ${request.selector}`;
-  }
-
-  if (request.kind === "scroll") {
-    return `Scrolled to ${request.x ?? 0},${request.y ?? 0}`;
-  }
-
-  return request.selector
-    ? `Waited for ${request.selector}`
-    : `Waited for ${request.timeoutMs ?? 0}ms`;
 }
 
 function toHistoryFlags(history: BrowserTabHistory): Pick<
