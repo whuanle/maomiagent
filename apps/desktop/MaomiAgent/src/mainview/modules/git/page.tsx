@@ -19,11 +19,14 @@ import {
 } from "../../lib/desktop-git";
 import { listDesktopWorkspaces } from "../../lib/desktop-workspace";
 import { createGitBranchCopy } from "./branch-copy";
-import { GitAiReviewWorkbenchNext as GitAiReviewWorkbench } from "./components/git-ai-review-workbench-next";
 import { GitBranchWorkbench } from "./components/branch-workbench";
 import { GitChangesWorkbench } from "./components/changes-workbench";
+import { GitCodeReviewWorkbench } from "./components/git-code-review-workbench";
+import { GitCommitReviewWorkbench } from "./components/git-commit-review-workbench";
 import {
   readGitPageUiState,
+  type GitCodeReviewUiState,
+  type GitCommitReviewUiState,
   type GitTabKey,
   writeGitPageUiState,
 } from "./git-page-ui-state";
@@ -64,8 +67,8 @@ export function GitPage(props: Props) {
   const [restoredWorkspaceId, setRestoredWorkspaceId] = useState<string | undefined>(undefined);
   const [workspaceId, setWorkspaceId] = useState<string | undefined>(undefined);
   const [activeTab, setActiveTab] = useState<GitTabKey>("changes");
-  const [selectedReviewFilePath, setSelectedReviewFilePath] = useState<string | undefined>(undefined);
-  const [selectedReviewFindingId, setSelectedReviewFindingId] = useState<string | undefined>(undefined);
+  const [commitReviewState, setCommitReviewState] = useState<GitCommitReviewUiState | undefined>(undefined);
+  const [codeReviewState, setCodeReviewState] = useState<GitCodeReviewUiState | undefined>(undefined);
   const [snapshot, setSnapshot] = useState<DesktopGitModuleSnapshotResult | null>(null);
   const [snapshotLoading, setSnapshotLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -88,8 +91,8 @@ export function GitPage(props: Props) {
     const restored = readGitPageUiState();
     setRestoredWorkspaceId(restored?.workspaceId);
     setActiveTab(restored?.activeTab ?? "changes");
-    setSelectedReviewFilePath(restored?.selectedReviewFilePath);
-    setSelectedReviewFindingId(restored?.selectedReviewFindingId);
+    setCommitReviewState(restored?.commitReview);
+    setCodeReviewState(restored?.codeReview);
   }, [props.active]);
 
   const loadWorkspaces = useCallback(async () => {
@@ -152,10 +155,10 @@ export function GitPage(props: Props) {
     writeGitPageUiState({
       workspaceId,
       activeTab,
-      selectedReviewFilePath,
-      selectedReviewFindingId,
+      commitReview: commitReviewState,
+      codeReview: codeReviewState,
     });
-  }, [activeTab, selectedReviewFilePath, selectedReviewFindingId, workspaceId]);
+  }, [activeTab, codeReviewState, commitReviewState, workspaceId]);
 
   const toolbar = useMemo(() => {
     return (
@@ -195,8 +198,13 @@ export function GitPage(props: Props) {
                 changes={snapshot?.changes ?? null}
                 loading={snapshotLoading}
                 onRefresh={loadSnapshot}
-                selectedReviewFilePath={selectedReviewFilePath}
-                onSelectedReviewFilePathChange={setSelectedReviewFilePath}
+                selectedReviewFilePath={commitReviewState?.selectedFilePath}
+                onSelectedReviewFilePathChange={(selectedFilePath) => {
+                  setCommitReviewState((current) => ({
+                    ...current,
+                    selectedFilePath,
+                  }));
+                }}
               />
             </div>
           </div>
@@ -219,26 +227,93 @@ export function GitPage(props: Props) {
         ),
       },
       {
-        key: "ai-review",
-        label: copy.aiReviewTab,
+        key: "commit-review",
+        label: copy.commitReviewTab,
         children: (
           <div className="git-page-panel-shell git-page-ai-review-shell">
-            <GitAiReviewWorkbench
+            <GitCommitReviewWorkbench
               language={props.language}
               workspaceId={workspaceId ?? ""}
               copy={copy}
               snapshot={snapshot}
               loading={snapshotLoading}
-              selectedReviewFilePath={selectedReviewFilePath}
-              onSelectedReviewFilePathChange={setSelectedReviewFilePath}
-              selectedReviewFindingId={selectedReviewFindingId}
-              onSelectedReviewFindingIdChange={setSelectedReviewFindingId}
+              initialCommitTargetType={commitReviewState?.targetType}
+              initialCommitTargetId={commitReviewState?.selectedTargetId}
+              onCommitTargetTypeChange={(targetType) => {
+                setCommitReviewState((current) => ({
+                  ...current,
+                  targetType,
+                }));
+              }}
+              onCommitTargetIdChange={(selectedTargetId) => {
+                setCommitReviewState((current) => ({
+                  ...current,
+                  selectedTargetId,
+                }));
+              }}
+              selectedReviewFilePath={commitReviewState?.selectedFilePath}
+              onSelectedReviewFilePathChange={(selectedFilePath) => {
+                setCommitReviewState((current) => ({
+                  ...current,
+                  selectedFilePath,
+                }));
+              }}
+              selectedReviewFindingId={commitReviewState?.selectedFindingId}
+              onSelectedReviewFindingIdChange={(selectedFindingId) => {
+                setCommitReviewState((current) => ({
+                  ...current,
+                  selectedFindingId,
+                }));
+              }}
+            />
+          </div>
+        ),
+      },
+      {
+        key: "code-review",
+        label: copy.codeReviewTab,
+        children: (
+          <div className="git-page-panel-shell git-page-ai-review-shell">
+            <GitCodeReviewWorkbench
+              language={props.language}
+              workspaceId={workspaceId ?? ""}
+              copy={copy}
+              snapshot={snapshot}
+              loading={snapshotLoading}
+              initialCodeReviewScopeType={codeReviewState?.scopeType}
+              initialCodeReviewScopePath={codeReviewState?.selectedScopePath}
+              onCodeReviewScopeTypeChange={(scopeType) => {
+                setCodeReviewState((current) => ({
+                  ...current,
+                  scopeType,
+                }));
+              }}
+              onCodeReviewScopePathChange={(selectedScopePath) => {
+                setCodeReviewState((current) => ({
+                  ...current,
+                  selectedScopePath,
+                }));
+              }}
+              selectedReviewFilePath={codeReviewState?.selectedFilePath}
+              onSelectedReviewFilePathChange={(selectedFilePath) => {
+                setCodeReviewState((current) => ({
+                  ...current,
+                  selectedFilePath,
+                }));
+              }}
+              selectedReviewFindingId={codeReviewState?.selectedIssueId}
+              onSelectedReviewFindingIdChange={(selectedIssueId) => {
+                setCodeReviewState((current) => ({
+                  ...current,
+                  selectedIssueId,
+                }));
+              }}
             />
           </div>
         ),
       },
     ];
-  }, [branchCopy, copy, loadSnapshot, props.language, selectedReviewFilePath, selectedReviewFindingId, snapshot, snapshotLoading, workspaceId]);
+  }, [branchCopy, codeReviewState?.scopeType, codeReviewState?.selectedFilePath, codeReviewState?.selectedIssueId, codeReviewState?.selectedScopePath, commitReviewState?.selectedFilePath, commitReviewState?.selectedFindingId, commitReviewState?.selectedTargetId, commitReviewState?.targetType, copy, loadSnapshot, props.language, snapshot, snapshotLoading, workspaceId]);
 
   if (!bridgeReady) {
     return (

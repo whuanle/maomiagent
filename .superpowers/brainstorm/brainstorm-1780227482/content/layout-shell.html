@@ -1,0 +1,152 @@
+<h2>AI 浏览器双入口骨架</h2>
+<p class="subtitle">独立页面与聊天侧边栏展示同一活动浏览器，不是两个实例</p>
+
+<div class="section">
+  <div class="split" style="align-items:start;">
+    <div class="mockup" style="min-height:680px;" data-choice="browser-page" onclick="toggleSelect(this)">
+      <div class="mockup-header">A. AI 浏览器页面</div>
+      <div class="mockup-body" style="padding:0; background:#f5f7fb;">
+        <div style="display:flex; flex-direction:column; height:640px;">
+          <div style="height:44px; display:flex; align-items:flex-end; gap:8px; padding:8px 12px 0; background:#eef2f7; border-bottom:1px solid #d8dee8;">
+            <div style="display:flex; align-items:center; gap:6px; min-width:0; flex:1;">
+              <div style="min-width:180px; max-width:220px; height:30px; border-radius:10px 10px 0 0; background:#ffffff; border:1px solid #d8dee8; border-bottom:none; padding:0 12px; display:flex; align-items:center; justify-content:space-between; font-size:12px;">
+                <span>maomiagent.dev</span>
+                <span style="opacity:.55;">×</span>
+              </div>
+              <div style="min-width:180px; max-width:220px; height:28px; border-radius:10px 10px 0 0; background:#dde5f0; padding:0 12px; display:flex; align-items:center; justify-content:space-between; font-size:12px; color:#5a6678;">
+                <span>docs</span>
+                <span style="opacity:.55;">×</span>
+              </div>
+              <button class="mock-button" style="height:28px; min-width:28px; padding:0 10px;">+</button>
+            </div>
+          </div>
+
+          <div style="height:52px; display:flex; align-items:center; gap:8px; padding:0 12px; background:#ffffff; border-bottom:1px solid #dfe5ee;">
+            <div style="display:flex; gap:6px;">
+              <button class="mock-button" style="min-width:32px; padding:0;">←</button>
+              <button class="mock-button" style="min-width:32px; padding:0;">→</button>
+              <button class="mock-button" style="min-width:32px; padding:0;">⟳</button>
+            </div>
+            <div class="mock-input" style="flex:1; display:flex; align-items:center; justify-content:space-between;">
+              <span style="color:#334155;">https://maomiagent.dev/docs/browser</span>
+              <span style="color:#94a3b8;">↗</span>
+            </div>
+            <button class="mock-button">抓取</button>
+            <button class="mock-button">截图</button>
+            <button class="mock-button">操控</button>
+          </div>
+
+          <div style="display:grid; grid-template-columns:minmax(0,1fr) 320px; min-height:0; flex:1;">
+            <div style="position:relative; background:#ffffff; padding:18px;">
+              <div style="position:absolute; top:12px; left:12px; padding:4px 10px; border-radius:999px; background:#eef6ff; color:#235ea8; font-size:12px;">当前标签内容区</div>
+              <div style="margin-top:40px; height:100%; border:1px solid #dfe5ee; border-radius:18px; background:linear-gradient(180deg,#ffffff 0%, #f8fafc 100%); padding:24px;">
+                <div style="width:56%; height:18px; border-radius:999px; background:#d9e3f0;"></div>
+                <div style="width:92%; height:10px; margin-top:18px; border-radius:999px; background:#e7edf5;"></div>
+                <div style="width:88%; height:10px; margin-top:10px; border-radius:999px; background:#e7edf5;"></div>
+                <div style="width:74%; height:10px; margin-top:10px; border-radius:999px; background:#e7edf5;"></div>
+                <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-top:24px;">
+                  <div class="placeholder" style="height:120px;"></div>
+                  <div class="placeholder" style="height:120px;"></div>
+                  <div class="placeholder" style="height:120px;"></div>
+                </div>
+              </div>
+            </div>
+
+            <aside style="border-left:1px solid #dfe5ee; background:#fbfcfe; display:flex; flex-direction:column; min-width:0;">
+              <div style="height:48px; display:flex; align-items:center; justify-content:space-between; padding:0 14px; border-bottom:1px solid #e2e8f0;">
+                <strong style="font-size:13px;">工具面板</strong>
+                <span style="font-size:12px; color:#64748b;">当前标签同步</span>
+              </div>
+              <div style="padding:14px; display:flex; flex-direction:column; gap:12px;">
+                <div style="padding:12px; border:1px solid #dbe4ef; border-radius:14px; background:#ffffff;">
+                  <div class="label">抓取结果</div>
+                  <div style="margin-top:8px; font-size:12px; color:#475569;">正文 / 标题 / 链接摘要 / 过滤后内容</div>
+                </div>
+                <div style="padding:12px; border:1px solid #dbe4ef; border-radius:14px; background:#ffffff;">
+                  <div class="label">截图</div>
+                  <div style="margin-top:8px; font-size:12px; color:#475569;">当前页 / 可视区域 / 元素截图</div>
+                </div>
+                <div style="padding:12px; border:1px solid #dbe4ef; border-radius:14px; background:#ffffff;">
+                  <div class="label">可视化操控</div>
+                  <div style="margin-top:8px; font-size:12px; color:#475569;">点击 / 输入 / 滚动 / 等待</div>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mockup" style="min-height:680px;" data-choice="chat-sidebar" onclick="toggleSelect(this)">
+      <div class="mockup-header">B. 聊天页侧边浏览器</div>
+      <div class="mockup-body" style="padding:0; background:#f3f5f8;">
+        <div style="display:grid; grid-template-columns:minmax(0,1fr) 360px; height:640px;">
+          <div style="padding:16px; display:flex; flex-direction:column; gap:12px; background:#ffffff;">
+            <div style="height:42px; border-radius:14px; background:#eef2f7;"></div>
+            <div style="flex:1; border-radius:18px; background:linear-gradient(180deg,#f8fafc 0%, #edf2f7 100%); border:1px solid #e2e8f0;"></div>
+            <div style="height:112px; border-radius:18px; background:#f8fafc; border:1px solid #e2e8f0;"></div>
+          </div>
+
+          <aside style="display:flex; flex-direction:column; border-left:1px solid #dfe5ee; background:#ffffff;">
+            <div style="height:38px; display:flex; align-items:center; justify-content:space-between; padding:0 12px; border-bottom:1px solid #e2e8f0;">
+              <strong style="font-size:13px;">AI 浏览器</strong>
+              <span style="font-size:12px; color:#64748b;">与主页面同步</span>
+            </div>
+
+            <div style="height:40px; display:flex; align-items:flex-end; gap:6px; padding:6px 10px 0; background:#eef2f7; border-bottom:1px solid #d8dee8;">
+              <div style="min-width:132px; height:26px; border-radius:10px 10px 0 0; background:#ffffff; border:1px solid #d8dee8; border-bottom:none; padding:0 10px; display:flex; align-items:center; justify-content:space-between; font-size:11px;">
+                <span>maomiagent.dev</span>
+                <span style="opacity:.55;">×</span>
+              </div>
+              <button class="mock-button" style="height:24px; min-width:24px; padding:0 8px;">+</button>
+            </div>
+
+            <div style="height:44px; display:flex; align-items:center; gap:6px; padding:0 10px; border-bottom:1px solid #e2e8f0;">
+              <button class="mock-button" style="min-width:28px; padding:0;">←</button>
+              <button class="mock-button" style="min-width:28px; padding:0;">→</button>
+              <button class="mock-button" style="min-width:28px; padding:0;">⟳</button>
+              <div class="mock-input" style="flex:1; min-width:0; font-size:12px;">https://maomiagent.dev/docs/browser</div>
+            </div>
+
+            <div style="padding:10px; display:flex; gap:6px; border-bottom:1px solid #e2e8f0;">
+              <button class="mock-button" style="flex:1; padding:0 8px;">抓取</button>
+              <button class="mock-button" style="flex:1; padding:0 8px;">截图</button>
+              <button class="mock-button" style="flex:1; padding:0 8px;">操控</button>
+            </div>
+
+            <div style="flex:1; min-height:0; background:#fbfcfe; padding:10px;">
+              <div style="height:100%; border-radius:16px; border:1px solid #dfe5ee; background:#ffffff; padding:14px; display:flex; flex-direction:column; gap:10px;">
+                <div style="font-size:12px; color:#235ea8; background:#eef6ff; padding:4px 8px; border-radius:999px; width:max-content;">与主页面同一标签</div>
+                <div style="flex:1; border-radius:12px; background:linear-gradient(180deg,#ffffff 0%, #f6f8fb 100%); border:1px solid #e8edf5;"></div>
+                <div style="padding:10px; border-radius:12px; background:#f8fafc; border:1px solid #e2e8f0; font-size:12px; color:#475569;">
+                  当前工具结果也同步显示在这里
+                </div>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="pros-cons">
+    <div class="pros">
+      <h4>这版骨架强调</h4>
+      <ul>
+        <li>浏览器优先，网页视图始终是视觉中心</li>
+        <li>工具能力围绕当前标签展开，不占据首屏主导</li>
+        <li>聊天页侧边栏是同一个浏览器的镜像壳，不是第二套状态</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <h4>刻意不做</h4>
+      <ul>
+        <li>不保留工作区筛选、会话表格、资源管理后台结构</li>
+        <li>不把抓取历史单独做成首屏列表</li>
+        <li>不让主页面和侧边栏各自停留在不同标签</li>
+      </ul>
+    </div>
+  </div>
+</div>
