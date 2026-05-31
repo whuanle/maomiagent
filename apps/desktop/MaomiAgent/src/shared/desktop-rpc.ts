@@ -37,6 +37,13 @@ import type {
   DesktopConversationSessionListResponse,
 } from "./desktop-conversation";
 import type {
+  DesktopBrowserExtractResult,
+  DesktopBrowserInteractionRequest,
+  DesktopBrowserInteractionResult,
+  DesktopBrowserScreenshotResult,
+  DesktopBrowserStateSnapshot,
+} from "./desktop-browser";
+import type {
   DesktopAiOneShotRequest,
   DesktopAiOneShotResponse,
 } from "./desktop-ai";
@@ -291,6 +298,60 @@ export type DesktopOpenExternalUrlResult = {
   opened: boolean;
 };
 
+export type DesktopBrowserRPC = {
+  requests: {
+    getSnapshot: {
+      params: undefined;
+      response: DesktopBrowserStateSnapshot;
+    };
+    navigate: {
+      params: {
+        tabId: string;
+        url: string;
+      };
+      response: DesktopBrowserStateSnapshot;
+    };
+    goBack: {
+      params: {
+        tabId: string;
+      };
+      response: DesktopBrowserStateSnapshot;
+    };
+    goForward: {
+      params: {
+        tabId: string;
+      };
+      response: DesktopBrowserStateSnapshot;
+    };
+    refresh: {
+      params: {
+        tabId: string;
+      };
+      response: DesktopBrowserStateSnapshot;
+    };
+    extract: {
+      params: {
+        tabId: string;
+      };
+      response: DesktopBrowserExtractResult;
+    };
+    screenshot: {
+      params: {
+        tabId: string;
+      };
+      response: DesktopBrowserScreenshotResult;
+    };
+    interact: {
+      params: {
+        tabId: string;
+        request: DesktopBrowserInteractionRequest;
+      };
+      response: DesktopBrowserInteractionResult;
+    };
+  };
+  messages: Record<never, never>;
+};
+
 export type DesktopRendererRPC = {
   bun: {
     requests: {
@@ -325,6 +386,14 @@ export type DesktopRendererRPC = {
         params: DesktopOpenExternalUrlInput;
         response: DesktopOpenExternalUrlResult;
       };
+      "browser.getSnapshot": DesktopBrowserRPC["requests"]["getSnapshot"];
+      "browser.navigate": DesktopBrowserRPC["requests"]["navigate"];
+      "browser.goBack": DesktopBrowserRPC["requests"]["goBack"];
+      "browser.goForward": DesktopBrowserRPC["requests"]["goForward"];
+      "browser.refresh": DesktopBrowserRPC["requests"]["refresh"];
+      "browser.extract": DesktopBrowserRPC["requests"]["extract"];
+      "browser.screenshot": DesktopBrowserRPC["requests"]["screenshot"];
+      "browser.interact": DesktopBrowserRPC["requests"]["interact"];
       checkDesktopAppUpdate: {
         params: undefined;
         response: DesktopAppUpdateCheckResult;
