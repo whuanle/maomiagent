@@ -7,6 +7,9 @@ import type {
 } from "../../../../../shared/desktop-browser";
 
 export type DesktopBrowserServicePort = {
+  createTab: () => Promise<DesktopBrowserStateSnapshot>;
+  activateTab: (tabId: string) => Promise<DesktopBrowserStateSnapshot>;
+  closeTab: (tabId: string) => Promise<DesktopBrowserStateSnapshot>;
   getSnapshot: () => Promise<DesktopBrowserStateSnapshot>;
   navigate: (tabId: string, url: string) => Promise<DesktopBrowserStateSnapshot>;
   goBack: (tabId: string) => Promise<DesktopBrowserStateSnapshot>;

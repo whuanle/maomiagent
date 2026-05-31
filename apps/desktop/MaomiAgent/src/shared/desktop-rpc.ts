@@ -300,6 +300,22 @@ export type DesktopOpenExternalUrlResult = {
 
 export type DesktopBrowserRPC = {
   requests: {
+    createTab: {
+      params: undefined;
+      response: DesktopBrowserStateSnapshot;
+    };
+    activateTab: {
+      params: {
+        tabId: string;
+      };
+      response: DesktopBrowserStateSnapshot;
+    };
+    closeTab: {
+      params: {
+        tabId: string;
+      };
+      response: DesktopBrowserStateSnapshot;
+    };
     getSnapshot: {
       params: undefined;
       response: DesktopBrowserStateSnapshot;
@@ -386,6 +402,9 @@ export type DesktopRendererRPC = {
         params: DesktopOpenExternalUrlInput;
         response: DesktopOpenExternalUrlResult;
       };
+      "browser.createTab": DesktopBrowserRPC["requests"]["createTab"];
+      "browser.activateTab": DesktopBrowserRPC["requests"]["activateTab"];
+      "browser.closeTab": DesktopBrowserRPC["requests"]["closeTab"];
       "browser.getSnapshot": DesktopBrowserRPC["requests"]["getSnapshot"];
       "browser.navigate": DesktopBrowserRPC["requests"]["navigate"];
       "browser.goBack": DesktopBrowserRPC["requests"]["goBack"];
