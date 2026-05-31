@@ -8,6 +8,7 @@ import {
 import { DESKTOP_DATABASE_PORT, DesktopDatabaseModule } from "../../database";
 import {
   DESKTOP_AI_CONVERSATION_RUNTIME_FACTORY_PORT,
+  DESKTOP_AI_ONE_SHOT_PORT,
   DesktopAiModule,
 } from "../../ai";
 import {
@@ -104,6 +105,7 @@ export class DesktopConversationModule extends DependencyModuleBase {
           {
             conversationDbPath: connection.path,
             conversationRuntimeFactory: services.resolve(DESKTOP_AI_CONVERSATION_RUNTIME_FACTORY_PORT),
+            aiOneShot: services.resolve(DESKTOP_AI_ONE_SHOT_PORT),
             taskBridge: services.resolve(DESKTOP_CONVERSATION_TASK_BRIDGE_PORT),
             tasksQuery: services.resolve(DESKTOP_TASKS_QUERY_PORT),
             capabilityRegistry: services.resolve(DESKTOP_CONVERSATION_CAPABILITY_REGISTRY_PORT),

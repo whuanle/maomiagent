@@ -60,6 +60,15 @@ export type DesktopConversationCreateSessionResponse = {
   created: boolean;
 };
 
+export type DesktopConversationRenameSessionInput = {
+  sessionId: string;
+  title: string;
+};
+
+export type DesktopConversationRenameSessionResponse = {
+  item: DesktopConversationSessionItem;
+};
+
 export type DesktopConversationHideSessionResponse = {
   sessionId: string;
   hidden: boolean;

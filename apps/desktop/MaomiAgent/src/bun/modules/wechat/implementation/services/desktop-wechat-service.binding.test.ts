@@ -123,6 +123,16 @@ function createMockConversationCommand(calls: DesktopConversationCreateSessionIn
         },
       };
     },
+    renameSession: async (input) => ({
+      item: {
+        sessionId: input.sessionId,
+        workspaceId: detail.workspaceId,
+        title: input.title.trim(),
+        status: detail.status,
+        createdAt: detail.createdAt,
+        updatedAt: detail.updatedAt,
+      },
+    }),
     hideSession: async (_sessionId: string): Promise<DesktopConversationHideSessionResponse> => ({
       sessionId: detail.sessionId,
       hidden: true,
@@ -189,6 +199,16 @@ function createTrackingConversationCommand(input: {
         },
       };
     },
+    renameSession: async (renameInput) => ({
+      item: {
+        sessionId: renameInput.sessionId,
+        workspaceId: detail.workspaceId,
+        title: renameInput.title.trim(),
+        status: detail.status,
+        createdAt: detail.createdAt,
+        updatedAt: detail.updatedAt,
+      },
+    }),
     hideSession: async (_sessionId: string): Promise<DesktopConversationHideSessionResponse> => ({
       sessionId: detail.sessionId,
       hidden: true,

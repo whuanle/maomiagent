@@ -99,7 +99,7 @@ export class DesktopMcpConversationCapabilityProvider
       scope: "workspace" as const,
       controlKind: "toggle" as const,
       title: "启用 MCP 工具",
-      description: "允许当前工作区的 AI 对话使用已生效的 MCP 工具集合。",
+      description: "提供可直接调用的 MCP 工具能力。",
       statusText: `${new Set(runtimeTools.map((item) => item.mcpName)).size} 个 MCP 服务 · ${runtimeTools.length} 个工具已就绪`,
     }];
   }

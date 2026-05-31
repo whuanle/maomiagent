@@ -115,6 +115,16 @@ function createMockConversationCommand(): DesktopConversationCommandPort {
         updatedAt: detail.updatedAt,
       },
     }),
+    renameSession: async (input) => ({
+      item: {
+        sessionId: input.sessionId,
+        workspaceId: detail.workspaceId,
+        title: input.title.trim(),
+        status: detail.status,
+        createdAt: detail.createdAt,
+        updatedAt: detail.updatedAt,
+      },
+    }),
     hideSession: async (_sessionId: string): Promise<DesktopConversationHideSessionResponse> => ({
       sessionId: detail.sessionId,
       hidden: true,

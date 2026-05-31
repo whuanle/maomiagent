@@ -136,6 +136,13 @@ export function useDirectSessionPaneController(
         ariaLabel: isEn ? "Session status" : "会话状态",
         title: sessionTitle,
         titleHint: sessionTitle,
+        editable: Boolean(session?.sessionId),
+        savingTitle: props.renamingSessionId === session?.sessionId,
+        renamePlaceholder: isEn ? "Conversation title" : "会话标题",
+        renameActionLabel: isEn ? "Rename conversation" : "重命名会话",
+        onRename: session?.sessionId
+          ? (title) => props.onRenameSession(session.sessionId, title)
+          : undefined,
         statusLabel: session
           ? managedIndicator?.label ?? props.copy.statusLabel(session.status)
           : props.copy.statusLabel("idle"),

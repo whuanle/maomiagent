@@ -21,6 +21,8 @@ export type {
   DesktopConversationCreateSessionResponse,
   DesktopConversationHideSessionResponse,
   DesktopConversationInteractionReplyResponse,
+  DesktopConversationRenameSessionInput,
+  DesktopConversationRenameSessionResponse,
   DesktopConversationRejectInteractionInput,
   DesktopConversationRunItem,
   DesktopConversationRuntimeEventsUpdateEvent,

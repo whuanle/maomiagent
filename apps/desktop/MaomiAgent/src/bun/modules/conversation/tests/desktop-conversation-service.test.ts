@@ -8,6 +8,7 @@ import { asToolCallId } from "#maomiagent/kernel/core";
 import type { RegisteredToolHandler } from "#maomiagent/kernel/src/adapters";
 import type { ToolSource } from "#maomiagent/kernel/src/host/tools";
 import { projectConversationToolCall, type ToolCallRecord } from "../../ai/kernel-bridge";
+import type { DesktopAiOneShotInput, DesktopAiOneShotResult } from "../../ai";
 
 import { DesktopConfigurationService } from "../../configuration";
 import { DesktopDatabaseService } from "../../database";
@@ -371,6 +372,9 @@ function createRuntimeBackedConversationService(input: {
   contextWindow?: number;
   maxOutputTokens?: number;
   agentsList?: AgentItem[];
+  aiOneShot?: {
+    execute: (input: DesktopAiOneShotInput) => Promise<DesktopAiOneShotResult>;
+  };
   taskBridge?: Partial<Pick<
     DesktopConversationTaskBridgePort,
     "archiveConversationSessionTasks"
@@ -455,6 +459,7 @@ function createRuntimeBackedConversationService(input: {
           return input.turnPort;
         },
       },
+      aiOneShot: input.aiOneShot,
       taskBridge: input.taskBridge as Pick<
         DesktopConversationTaskBridgePort,
         "archiveConversationSessionTasks"
@@ -634,6 +639,43 @@ describe("DesktopConversationService", () => {
       });
       expect(archived?.archivedAt).toBeTruthy();
     } finally {
+      database.dispose();
+      cleanupTempRoot(tempRoot);
+    }
+  });
+
+  test("renames desktop conversation sessions", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "maomi-desktop-conversation-rename-"));
+    const configuration = new DesktopConfigurationService(createRuntimeContext(tempRoot));
+    const database = new DesktopDatabaseService(configuration);
+    const logger = new RuntimeLogsService(
+      new RuntimeLogsStore(database.getConnection("runtimeLogs")),
+    ).createLogger({
+      source: "desktop",
+      module: "desktop.conversation.rename-test",
+    });
+    const service = new DesktopConversationService(
+      new DesktopConversationStore(database.getConnection("conversation")),
+      logger,
+    );
+
+    try {
+      const created = await service.createSession({
+        workspaceId: "workspace-1",
+      });
+
+      const renamed = await service.renameSession({
+        sessionId: created.item.sessionId,
+        title: "  Fix login redirect race  ",
+      });
+
+      expect(renamed.item.title).toBe("Fix login redirect race");
+      expect(await service.getSession(created.item.sessionId)).toMatchObject({
+        sessionId: created.item.sessionId,
+        title: "Fix login redirect race",
+      });
+    } finally {
+      service.dispose();
       database.dispose();
       cleanupTempRoot(tempRoot);
     }
@@ -1228,6 +1270,103 @@ describe("DesktopConversationService", () => {
       expect(response.detail.toolCalls.some((item) => item.status === "completed")).toBe(true);
       expect(response.detail.messages.at(-1)?.parts.some((part) =>
         part.type === "text" && part.text.includes("Diagnostic completed"))).toBe(true);
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  test("auto-generates a title after the first assistant reply for placeholder sessions", async () => {
+    const aiOneShotCalls: DesktopAiOneShotInput[] = [];
+    const fixture = createRuntimeBackedConversationService({
+      tempPrefix: "maomi-desktop-conversation-auto-title-",
+      turnPort: new ScriptedUsageTurnPort(),
+      aiOneShot: {
+        async execute(input) {
+          aiOneShotCalls.push(input);
+          return {
+            sessionId: "one-shot-session",
+            runId: "one-shot-run",
+            turnId: "one-shot-turn",
+            content: "排查登录回调超时",
+            reasoning: [],
+            target: {
+              providerType: "openai",
+              channelId: input.selectedChannelId ?? "kimi",
+              modelId: input.selectedModelId ?? "moonshot-v1-8k",
+            },
+          } as unknown as DesktopAiOneShotResult;
+        },
+      },
+    });
+
+    try {
+      const created = await fixture.service.createSession({
+        workspaceId: "workspace-1",
+      });
+
+      const result = await fixture.service.sendMessage({
+        sessionId: created.item.sessionId,
+        text: "帮我排查登录回调为什么偶发超时",
+        scope: "workspace",
+        selectedChannelId: "kimi",
+        selectedModelId: "moonshot-v1-8k",
+      });
+
+      expect(aiOneShotCalls).toHaveLength(1);
+      expect(result.detail.title).toBe("排查登录回调超时");
+      expect(result.detail.metadata).toMatchObject({
+        autoTitleAttemptedAt: expect.any(String),
+        autoTitleGeneratedAt: expect.any(String),
+      });
+      expect(await fixture.service.getSession(created.item.sessionId)).toMatchObject({
+        title: "排查登录回调超时",
+      });
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  test("does not overwrite a user-provided session title when sending the first reply", async () => {
+    const aiOneShotCalls: DesktopAiOneShotInput[] = [];
+    const fixture = createRuntimeBackedConversationService({
+      tempPrefix: "maomi-desktop-conversation-auto-title-skip-",
+      turnPort: new ScriptedUsageTurnPort(),
+      aiOneShot: {
+        async execute(input) {
+          aiOneShotCalls.push(input);
+          return {
+            sessionId: "one-shot-session",
+            runId: "one-shot-run",
+            turnId: "one-shot-turn",
+            content: "Should not be used",
+            reasoning: [],
+            target: {
+              providerType: "openai",
+              channelId: input.selectedChannelId ?? "kimi",
+              modelId: input.selectedModelId ?? "moonshot-v1-8k",
+            },
+          } as unknown as DesktopAiOneShotResult;
+        },
+      },
+    });
+
+    try {
+      const created = await fixture.service.createSession({
+        workspaceId: "workspace-1",
+        title: "Custom title",
+      });
+
+      const result = await fixture.service.sendMessage({
+        sessionId: created.item.sessionId,
+        text: "帮我排查登录回调为什么偶发超时",
+        scope: "workspace",
+        selectedChannelId: "kimi",
+        selectedModelId: "moonshot-v1-8k",
+      });
+
+      expect(aiOneShotCalls).toHaveLength(0);
+      expect(result.detail.title).toBe("Custom title");
+      expect(result.detail.metadata?.autoTitleAttemptedAt).toBeUndefined();
     } finally {
       fixture.dispose();
     }

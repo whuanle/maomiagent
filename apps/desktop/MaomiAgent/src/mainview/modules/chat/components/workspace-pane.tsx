@@ -174,6 +174,7 @@ export const ConversationWorkspacePane = forwardRef<ConversationWorkspacePaneHan
           sessionDetailsById={state.sessionDetailsById}
           selectedWorkspace={props.selectedWorkspace}
           creatingSession={state.creatingSession}
+          renamingSessionId={state.renamingSessionId}
           draftMessage={state.draftMessage}
           sendingMessage={state.sendingMessage}
           stoppingMessage={state.stoppingMessage}
@@ -190,6 +191,7 @@ export const ConversationWorkspacePane = forwardRef<ConversationWorkspacePaneHan
           onCreateSession={() => {
             void state.createSession();
           }}
+          onRenameSession={(sessionId, title) => state.renameSession(sessionId, title)}
           onOpenWorkspace={props.onOpenWorkspace}
           onDraftMessageChange={state.setDraftMessage}
           onComposerAttachFiles={state.attachComposerFiles}

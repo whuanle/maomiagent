@@ -6,6 +6,8 @@ import type {
   DesktopConversationCreateSessionResponse,
   DesktopConversationHideSessionResponse,
   DesktopConversationInteractionReplyResponse,
+  DesktopConversationRenameSessionInput,
+  DesktopConversationRenameSessionResponse,
   DesktopConversationReadWorkspaceSettingsInput,
   DesktopConversationReadWorkspaceSettingsResponse,
   DesktopConversationRejectInteractionInput,
@@ -37,6 +39,9 @@ export interface DesktopConversationCommandPort {
   createSession(
     input: DesktopConversationCreateSessionInput,
   ): Promise<DesktopConversationCreateSessionResponse>;
+  renameSession(
+    input: DesktopConversationRenameSessionInput,
+  ): Promise<DesktopConversationRenameSessionResponse>;
   hideSession(sessionId: string): Promise<DesktopConversationHideSessionResponse>;
   saveWorkspaceSettings(
     input: DesktopConversationSaveWorkspaceSettingsInput,

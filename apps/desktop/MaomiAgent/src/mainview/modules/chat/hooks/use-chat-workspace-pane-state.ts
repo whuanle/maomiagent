@@ -19,6 +19,7 @@ import {
   getDesktopConversationSessionDetail,
   hideDesktopConversationSession,
   listDesktopConversationSessions,
+  renameDesktopConversationSession,
   rejectDesktopConversationInteraction,
   sendDesktopConversationMessage,
   stopDesktopConversationMessage,
@@ -349,6 +350,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
   const [loadingSessions, setLoadingSessions] = useState(false);
   const [loadingSessionDetail, setLoadingSessionDetail] = useState(false);
   const [creatingSession, setCreatingSession] = useState(false);
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [archivingSessionId, setArchivingSessionId] = useState<string | null>(null);
   const [sendingMessage, setSendingMessage] = useState(false);
   const [stoppingSessionId, setStoppingSessionId] = useState<string | null>(null);
@@ -1213,6 +1215,42 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
     }
   }, [onError, sessions, updateSessionDetailsById]);
 
+  const renameSession = useCallback(async (sessionId: string, title: string) => {
+    const normalizedSessionId = sessionId.trim();
+    const normalizedTitle = title.trim();
+    if (!normalizedSessionId || !normalizedTitle) {
+      return null;
+    }
+
+    setRenamingSessionId(normalizedSessionId);
+    try {
+      const response = await renameDesktopConversationSession({
+        sessionId: normalizedSessionId,
+        title: normalizedTitle,
+      });
+      setSessions((current) => current
+        .map((item) => item.sessionId === normalizedSessionId ? response.item : item)
+        .sort(compareSessions));
+      updateSessionDetailsById((current) => current[normalizedSessionId]
+        ? {
+            ...current,
+            [normalizedSessionId]: {
+              ...current[normalizedSessionId],
+              title: response.item.title,
+              updatedAt: response.item.updatedAt,
+              metadata: response.item.metadata ?? current[normalizedSessionId].metadata,
+            },
+          }
+        : current);
+      return response.item;
+    } catch (error) {
+      onError("renameSession", error);
+      return null;
+    } finally {
+      setRenamingSessionId((current) => current === normalizedSessionId ? null : current);
+    }
+  }, [onError, updateSessionDetailsById]);
+
   const sendMessage = useCallback(async () => {
     if (!selectedSessionId || sendingMessage) {
       return false;
@@ -1444,6 +1482,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
     loadingSessions,
     loadingSessionDetail,
     creatingSession,
+    renamingSessionId,
     archivingSessionId,
     sendingMessage,
     stoppingMessage,
@@ -1470,6 +1509,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
     refreshAll,
     activateSession,
     createSession,
+    renameSession,
     hideSession,
     sendMessage,
     stopMessage,

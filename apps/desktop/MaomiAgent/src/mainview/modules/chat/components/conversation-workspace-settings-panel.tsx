@@ -53,17 +53,17 @@ function resolveCopy(language: LanguageCode) {
       runtimeSectionTitle: "Runtime settings",
       runtimeSectionMeta: "Applied to new conversations in the current workspace.",
       thinkingLabel: "Enable thinking",
-      thinkingHint: "Save the default reasoning preference for new conversations in this workspace.",
+      thinkingHint: "Provide a fuller reasoning process for complex questions and multi-step tasks.",
       managedExecutionLabel: "Managed execution",
-      managedExecutionEnabledHint: "New conversations in this workspace start through the managed execution path.",
-      managedExecutionDisabledHint: "New conversations in this workspace stay in the regular chat flow.",
+      managedExecutionEnabledHint: "Automatically continue multi-step execution when the task needs ongoing progress.",
+      managedExecutionDisabledHint: "Keep the regular chat flow so you decide when to start the next step.",
       memoryLabel: "Enable memory MCP",
-      memoryHint: "Save memory MCP as the workspace default and expose it to the conversation runtime.",
+      memoryHint: "Provide desktop memory search so the conversation can reuse saved context.",
       sandboxLabel: "Enable sandbox mode",
-      sandboxHint: "Save sandbox mode as the workspace default and expose it to the conversation runtime.",
+      sandboxHint: "Provide a more isolated execution environment for safer trial runs.",
       feishuLabel: "Enable Feishu capability",
-      feishuReadyHint: "Feishu smart assistant is ready. Save it as the default workspace capability and expose it to the conversation runtime.",
-      feishuUnavailableHint: "Feishu smart assistant is not ready yet. Configure it first in the Feishu module.",
+      feishuReadyHint: "Provide Feishu actions so the conversation can work with Feishu content directly.",
+      feishuUnavailableHint: "Provide Feishu actions. Configure it first in the Feishu module.",
       loadingHint: "Checking Feishu smart assistant configuration...",
       errorTitle: "Failed to load Feishu configuration",
       capabilityLoadErrorTitle: "Failed to load workspace capabilities",
@@ -88,17 +88,17 @@ function resolveCopy(language: LanguageCode) {
     runtimeSectionTitle: "运行设置",
     runtimeSectionMeta: "应用到当前工作区的新会话。",
     thinkingLabel: "启用 Thinking",
-    thinkingHint: "将 Thinking 保存为当前工作区默认偏好，并同步到对话运行时偏好。",
+    thinkingHint: "提供更完整的分析与推理过程，适合拆解复杂问题。",
     managedExecutionLabel: "全自动托管",
-    managedExecutionEnabledHint: "当前工作区新建会话会优先按托管执行入口组织。",
-    managedExecutionDisabledHint: "当前工作区新建会话保持普通对话入口。",
+    managedExecutionEnabledHint: "自动接管连续执行任务，适合需要持续推进的工作。",
+    managedExecutionDisabledHint: "保持普通对话方式，由你按需发起下一步。",
     memoryLabel: "启用记忆 MCP",
-    memoryHint: "将记忆 MCP 保存为当前工作区默认偏好，并同步到对话运行时偏好。",
+    memoryHint: "提供桌面记忆检索能力，可在对话中调用已有记忆内容。",
     sandboxLabel: "启用沙箱模式",
-    sandboxHint: "将沙箱模式保存为当前工作区默认偏好，并同步到对话运行时偏好。",
+    sandboxHint: "提供更受限的执行环境，适合先在隔离环境中完成操作。",
     feishuLabel: "启用飞书能力",
-    feishuReadyHint: "飞书智能助手已就绪，可将飞书能力保存为当前工作区默认偏好并同步到对话运行时偏好。",
-    feishuUnavailableHint: "飞书智能助手尚未就绪，请先到飞书模块完成配置。",
+    feishuReadyHint: "提供飞书相关能力，可直接处理飞书里的内容与操作。",
+    feishuUnavailableHint: "提供飞书相关能力，启用前请先在飞书模块完成配置。",
     loadingHint: "正在检查飞书智能助手配置...",
     errorTitle: "读取飞书配置失败",
     capabilityLoadErrorTitle: "读取工作区能力失败",
@@ -109,8 +109,44 @@ function resolveCopy(language: LanguageCode) {
   };
 }
 
-function resolveCapabilityHint(item: DesktopConversationCapabilityDescriptor) {
-  return [item.description, item.statusText].filter(Boolean).join(" ");
+function resolveCapabilityDescription(
+  item: DesktopConversationCapabilityDescriptor,
+  language: LanguageCode,
+) {
+  if (language === "en-US") {
+    switch (item.capabilityId) {
+      case "mcp.runtime":
+        return "Provide MCP tools that the conversation can call directly.";
+      case "skills.runtime":
+        return "Provide on-demand Skill instructions that can be loaded into the conversation.";
+      case "memory.runtime":
+        return "Provide desktop memory search so the conversation can reuse saved context.";
+      case "feishu.smartAssistant":
+        return "Provide Feishu actions so the conversation can work with Feishu content directly.";
+      default:
+        return item.description;
+    }
+  }
+
+  switch (item.capabilityId) {
+    case "mcp.runtime":
+      return "提供可直接调用的 MCP 工具能力。";
+    case "skills.runtime":
+      return "提供按需加载的 Skill 技能指令。";
+    case "memory.runtime":
+      return "提供桌面记忆检索能力，可在对话中调用已有记忆内容。";
+    case "feishu.smartAssistant":
+      return "提供飞书相关能力，可直接处理飞书里的内容与操作。";
+    default:
+      return item.description;
+  }
+}
+
+function resolveCapabilityHint(
+  item: DesktopConversationCapabilityDescriptor,
+  language: LanguageCode,
+) {
+  return [resolveCapabilityDescription(item, language), item.statusText].filter(Boolean).join(" ");
 }
 
 function resolveApprovalRulesHint(language: LanguageCode, count: number) {
@@ -529,7 +565,7 @@ export function ConversationWorkspaceSettingsPanel(props: Props) {
                 />
               </div>
               <Typography.Paragraph className="chat-session-settings-hint">
-                {resolveCapabilityHint(item)}
+                {resolveCapabilityHint(item, props.language)}
               </Typography.Paragraph>
             </div>
           ))}

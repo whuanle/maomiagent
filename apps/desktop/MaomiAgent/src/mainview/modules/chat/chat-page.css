@@ -1137,6 +1137,28 @@
   color: color-mix(in srgb, var(--chat-text) 96%, transparent);
 }
 
+.chat-direct-session-strip-title-button {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: text;
+}
+
+.chat-direct-session-strip-title-button:hover .chat-direct-session-strip-title,
+.chat-direct-session-strip-title-button:focus-visible .chat-direct-session-strip-title {
+  color: var(--chat-text);
+}
+
+.chat-direct-session-strip-title-input.ant-input {
+  min-width: 240px;
+  max-width: min(560px, 100%);
+  height: 30px;
+  padding: 4px 10px;
+  border-radius: 10px;
+}
+
 .chat-direct-session-strip-status,
 .chat-direct-session-strip-chip {
   display: inline-flex;

@@ -93,6 +93,8 @@ export function installElectrobunWindowBridge() {
         rpc.request.getDesktopConversationWorkspaceSettings(input),
       createDesktopConversationSession: (input) =>
         rpc.request.createDesktopConversationSession(input),
+      renameDesktopConversationSession: (input) =>
+        rpc.request.renameDesktopConversationSession(input),
       hideDesktopConversationSession: (sessionId) =>
         rpc.request.hideDesktopConversationSession({ sessionId }),
       saveDesktopConversationWorkspaceSettings: (input) =>

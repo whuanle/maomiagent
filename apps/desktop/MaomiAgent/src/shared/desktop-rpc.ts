@@ -20,6 +20,8 @@ import type {
   DesktopConversationCreateSessionResponse,
   DesktopConversationHideSessionResponse,
   DesktopConversationInteractionReplyResponse,
+  DesktopConversationRenameSessionInput,
+  DesktopConversationRenameSessionResponse,
   DesktopConversationRejectInteractionInput,
   DesktopConversationReadWorkspaceSettingsInput,
   DesktopConversationReadWorkspaceSettingsResponse,
@@ -448,6 +450,10 @@ export type DesktopRendererRPC = {
       createDesktopConversationSession: {
         params: DesktopConversationCreateSessionInput;
         response: DesktopConversationCreateSessionResponse;
+      };
+      renameDesktopConversationSession: {
+        params: DesktopConversationRenameSessionInput;
+        response: DesktopConversationRenameSessionResponse;
       };
       hideDesktopConversationSession: {
         params: {

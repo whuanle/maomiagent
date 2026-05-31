@@ -22,6 +22,7 @@ export type ChatActionErrorType =
   | "loadSessions"
   | "loadSessionDetail"
   | "createSession"
+  | "renameSession"
   | "saveWorkspaceSettings"
   | "hideSession"
   | "sendMessage"
@@ -207,6 +208,7 @@ export type ChatCopy = {
   loadSessionsFailed: string;
   loadSessionDetailFailed: string;
   createSessionFailed: string;
+  renameSessionFailed: string;
   saveWorkspaceSettingsFailed: string;
   hideSessionFailed: string;
   attachFilesFailed: string;

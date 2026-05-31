@@ -8,6 +8,7 @@ import {
   DesktopAiConversationRuntime,
   type DesktopAiConversationRuntimeCreateInput,
   type DesktopAiConversationRuntimeFactoryPort,
+  type DesktopAiOneShotPort,
   type DesktopAiConversationRuntimePort,
   type DesktopAiExecutionProfileMaterializerPort,
   type DesktopAiRuntimePort,
@@ -27,6 +28,8 @@ import type {
   DesktopConversationCreateSessionResponse,
   DesktopConversationHideSessionResponse,
   DesktopConversationInteractionReplyResponse,
+  DesktopConversationRenameSessionInput,
+  DesktopConversationRenameSessionResponse,
   DesktopConversationReadWorkspaceSettingsInput,
   DesktopConversationReadWorkspaceSettingsResponse,
   DesktopConversationRejectInteractionInput,
@@ -66,6 +69,7 @@ import type {
 const SESSION_ID_RE = /^[a-z0-9][a-z0-9._-]{1,95}$/;
 const SESSION_TITLE_MAX_LENGTH = 160;
 const SESSION_DETAIL_POLL_INTERVAL_MS = 150;
+const DEFAULT_CONVERSATION_TITLE = "New conversation";
 const CONVERSATION_SETTINGS_KEY = "conversationSettings";
 const INTERACTION_GOVERNANCE_KEY = "interactionGovernance";
 const CONTEXT_COMPRESSION_THRESHOLD_PERCENT_MIN = 50;
@@ -73,6 +77,8 @@ const CONTEXT_COMPRESSION_THRESHOLD_PERCENT_MAX = 90;
 const MANAGED_EXECUTION_STAGE_INTAKE_LOCKED = "intake_locked";
 const MANAGED_EXECUTION_STAGE_READY = "ready";
 const MANAGED_EXECUTION_STAGE_RUNNING = "running";
+const AUTO_TITLE_ATTEMPTED_AT_KEY = "autoTitleAttemptedAt";
+const AUTO_TITLE_GENERATED_AT_KEY = "autoTitleGeneratedAt";
 const MANAGED_AUTORETRY_POLICY = {
   maxAttempts: 2,
   baseDelayMs: 50,
@@ -93,6 +99,7 @@ type DesktopConversationServiceOptions = {
   conversationRuntimeFactory?: Pick<DesktopAiConversationRuntimeFactoryPort, "createConversationRuntime">;
   agents?: Pick<DesktopAgentsQueryPort, "list">;
   aiRuntime?: Pick<DesktopAiRuntimePort, "createTurnPort">;
+  aiOneShot?: Pick<DesktopAiOneShotPort, "execute">;
   materializer?: Pick<DesktopAiExecutionProfileMaterializerPort, "materialize">;
   taskBridge?: Pick<
     DesktopConversationTaskBridgePort,
@@ -675,6 +682,49 @@ function normalizeTitle(input: unknown): string | undefined {
   return normalized.slice(0, SESSION_TITLE_MAX_LENGTH);
 }
 
+function normalizeGeneratedTitle(input: unknown): string | undefined {
+  const normalized = normalizeTitle(input)
+    ?.replace(/^[\s"'“”‘’]+|[\s"'“”‘’]+$/gu, "")
+    .replace(/[.。!?！？]+$/gu, "")
+    .trim();
+
+  return normalized ? normalized.slice(0, SESSION_TITLE_MAX_LENGTH) : undefined;
+}
+
+function isDefaultConversationTitle(value: unknown) {
+  return normalizeOptionalText(value) === DEFAULT_CONVERSATION_TITLE;
+}
+
+function collectMessageText(
+  messages: readonly DesktopConversationSessionDetail["messages"][number][],
+  role: "user" | "assistant",
+) {
+  for (const message of messages) {
+    if (message.role !== role) {
+      continue;
+    }
+
+    const text = message.parts.reduce<string[]>((parts, part) => {
+      if (part.type !== "text") {
+        return parts;
+      }
+
+      const value = part.text.trim();
+      if (value) {
+        parts.push(value);
+      }
+
+      return parts;
+    }, []).join("\n").trim();
+
+    if (text) {
+      return text;
+    }
+  }
+
+  return undefined;
+}
+
 function withSelectedAgentId(
   metadata: Record<string, unknown> | undefined,
   selectedAgentId: string | undefined,
@@ -1040,7 +1090,7 @@ export class DesktopConversationService implements DesktopConversationPort {
       const item: DesktopConversationSessionItem = {
         sessionId,
         workspaceId,
-        title: normalizeTitle(input.title) ?? "New conversation",
+        title: normalizeTitle(input.title) ?? DEFAULT_CONVERSATION_TITLE,
         status: "idle",
         parentSessionId: normalizeOptionalText(input.parentSessionId),
         metadata: mergeConversationMetadataWithWorkspaceDefaults(
@@ -1063,6 +1113,33 @@ export class DesktopConversationService implements DesktopConversationPort {
         item,
         created: true,
       };
+    });
+  }
+
+  async renameSession(
+    input: DesktopConversationRenameSessionInput,
+  ): Promise<DesktopConversationRenameSessionResponse> {
+    return this.runMutation(async () => {
+      const sessionId = normalizeSessionId(input.sessionId);
+      const current = this.store.getSession(sessionId);
+      if (!current) {
+        throw new Error(`desktop conversation session not found: ${sessionId}`);
+      }
+
+      const title = normalizeTitle(input.title);
+      if (!title) {
+        throw new Error("title is required");
+      }
+
+      const item = this.persistSessionTitle(current, title);
+      await this.logger.info("Desktop conversation session renamed", {
+        context: {
+          sessionId,
+          workspaceId: item.workspaceId,
+          title: item.title,
+        },
+      });
+      return { item };
     });
   }
 
@@ -1285,10 +1362,11 @@ export class DesktopConversationService implements DesktopConversationPort {
           },
         });
 
-        await detailUpdates?.flush(retryResult.detail);
+        const titledDetail = await this.maybeGenerateConversationTitle(retryResult.detail);
+        await detailUpdates?.flush(titledDetail);
 
         return {
-          detail: retryResult.detail,
+          detail: titledDetail,
         };
       } catch (error) {
         this.pendingConversationTaskSeeds.delete(sessionId);
@@ -1616,6 +1694,14 @@ export class DesktopConversationService implements DesktopConversationPort {
     return this.options.workspaceSettingsService;
   }
 
+  private requireAiOneShot() {
+    if (!this.options.aiOneShot) {
+      throw new Error("Desktop AI one-shot service is not configured.");
+    }
+
+    return this.options.aiOneShot;
+  }
+
   private requireConversationRuntime() {
     if (!this.conversationRuntime) {
       if (!this.options.conversationDbPath) {
@@ -1665,14 +1751,105 @@ export class DesktopConversationService implements DesktopConversationPort {
         ) => this.publishRuntimeEventsUpdate(update),
         providerTelemetryPublisher: (
           event: Parameters<NonNullable<DesktopAiConversationRuntimeCreateInput["providerTelemetryPublisher"]>>[0],
-        ) => this.logger.debug("Desktop AI provider stage", {
-          context: event,
-          runId: event.runId,
-        }),
+        ) => {
+          void this.logger.debug("Desktop AI provider stage", {
+            context: event,
+            runId: event.runId,
+          });
+        },
       });
     }
 
     return this.conversationRuntime;
+  }
+
+  private persistSessionTitle(item: DesktopConversationSessionItem, title: string) {
+    const nextItem: DesktopConversationSessionItem = {
+      ...item,
+      title,
+      updatedAt: nowIso(),
+    };
+    this.store.upsertSession(nextItem);
+    return nextItem;
+  }
+
+  private persistSessionMetadataPatch(
+    item: DesktopConversationSessionItem,
+    patch: Record<string, unknown>,
+  ) {
+    const nextItem: DesktopConversationSessionItem = {
+      ...item,
+      updatedAt: nowIso(),
+      metadata: mergeMetadata(item.metadata, patch),
+    };
+    this.store.upsertSession(nextItem);
+    return nextItem;
+  }
+
+  private async maybeGenerateConversationTitle(
+    detail: DesktopConversationSessionDetail,
+  ): Promise<DesktopConversationSessionDetail> {
+    const current = this.store.getSession(detail.sessionId);
+    if (!current) {
+      return detail;
+    }
+
+    if (!isDefaultConversationTitle(current.title) || current.metadata?.[AUTO_TITLE_ATTEMPTED_AT_KEY]) {
+      return detail;
+    }
+
+    const firstUserText = collectMessageText(detail.messages, "user");
+    const firstAssistantText = collectMessageText(detail.messages, "assistant");
+    if (!firstUserText || !firstAssistantText) {
+      return detail;
+    }
+
+    let nextItem = this.persistSessionMetadataPatch(current, {
+      [AUTO_TITLE_ATTEMPTED_AT_KEY]: nowIso(),
+    });
+
+    try {
+      const selection = readSelectionMetadata(nextItem.metadata);
+      const result = await this.requireAiOneShot().execute({
+        workspaceId: nextItem.workspaceId,
+        ...(selection.selectedChannelId ? { selectedChannelId: selection.selectedChannelId } : {}),
+        ...(selection.selectedModelId ? { selectedModelId: selection.selectedModelId } : {}),
+        systemBlocks: [{
+          id: "conversation-title-generator",
+          kind: "instruction",
+          priority: 100,
+          content: [
+            "Generate one short conversation title from the first user request and the first assistant reply.",
+            "Return only the title text.",
+            "Do not use quotes.",
+            "Keep it under 12 words.",
+          ].join("\n"),
+        }],
+        messages: [{
+          role: "user",
+          content: JSON.stringify({
+            firstUserText,
+            firstAssistantText,
+          }),
+        }],
+        settings: {
+          temperature: 0.2,
+        },
+      });
+
+      const generatedTitle = normalizeGeneratedTitle(result.content);
+      if (!generatedTitle || isDefaultConversationTitle(generatedTitle)) {
+        return this.loadSessionDetail(nextItem);
+      }
+
+      nextItem = this.persistSessionTitle(nextItem, generatedTitle);
+      nextItem = this.persistSessionMetadataPatch(nextItem, {
+        [AUTO_TITLE_GENERATED_AT_KEY]: nowIso(),
+      });
+      return this.loadSessionDetail(nextItem);
+    } catch {
+      return this.loadSessionDetail(nextItem);
+    }
   }
 
   private storeSessionSelection(
@@ -2280,6 +2457,10 @@ export class DesktopConversationService implements DesktopConversationPort {
 
     return {
       ...detail,
+      title: current.title,
+      parentSessionId: current.parentSessionId,
+      archivedAt: current.archivedAt,
+      lastRunId: current.lastRunId ?? detail.lastRunId,
       metadata: mergeMetadata(
         mergeMetadata(
           detail.metadata,

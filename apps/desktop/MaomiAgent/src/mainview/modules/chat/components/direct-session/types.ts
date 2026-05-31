@@ -28,6 +28,7 @@ export type DirectConversationSessionPaneProps = {
   selectedWorkspace?: DesktopWorkspaceItem;
   selectedSession?: ChatSelectedSessionView;
   creatingSession: boolean;
+  renamingSessionId: string | null;
   draftMessage: string;
   sendingMessage: boolean;
   stoppingMessage: boolean;
@@ -42,6 +43,7 @@ export type DirectConversationSessionPaneProps = {
   language: LanguageCode;
   copy: ChatCopy;
   onCreateSession: () => void;
+  onRenameSession: (sessionId: string, title: string) => Promise<unknown> | unknown;
   onOpenWorkspace: () => void;
   onDraftMessageChange: (value: string) => void;
   onComposerAttachFiles: (files: File[]) => void;
@@ -65,6 +67,11 @@ export type DirectSessionHeaderViewModel = {
   ariaLabel: string;
   title: string;
   titleHint: string;
+  editable: boolean;
+  savingTitle: boolean;
+  renamePlaceholder: string;
+  renameActionLabel: string;
+  onRename?: (title: string) => Promise<unknown> | unknown;
   statusLabel: string;
   statusTone: DirectSessionTone;
 };

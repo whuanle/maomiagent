@@ -852,6 +852,8 @@ try {
               resolveDesktopConversationQueryPort(host).getWorkspaceSettings(input),
             createDesktopConversationSession: (input) =>
               resolveDesktopConversationCommandPort(host).createSession(input),
+            renameDesktopConversationSession: (input) =>
+              resolveDesktopConversationCommandPort(host).renameSession(input),
             hideDesktopConversationSession: ({ sessionId }) =>
               resolveDesktopConversationCommandPort(host).hideSession(sessionId),
             saveDesktopConversationWorkspaceSettings: (input) =>

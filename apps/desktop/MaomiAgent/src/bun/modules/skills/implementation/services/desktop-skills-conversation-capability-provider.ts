@@ -171,7 +171,7 @@ export class DesktopSkillsConversationCapabilityProvider
       scope: "workspace" as const,
       controlKind: "toggle" as const,
       title: "启用 Skills",
-      description: "允许当前工作区的 AI 对话按需加载已启用技能的 SKILL.md 指令。",
+      description: "提供按需加载的 Skill 技能指令。",
       statusText: `${rows.length} 个 Skills 已就绪`,
     }];
   }

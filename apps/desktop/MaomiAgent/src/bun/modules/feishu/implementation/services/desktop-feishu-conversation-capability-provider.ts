@@ -163,7 +163,7 @@ export class DesktopFeishuConversationCapabilityProvider
         scope: "workspace" as const,
         controlKind: "toggle" as const,
         title: "启用飞书能力",
-        description: "允许当前工作区的 AI 对话默认使用飞书智能助手能力。",
+        description: "提供飞书相关能力，可直接处理飞书里的内容与操作。",
         statusText: `${describeAuthStatus(state.smartAssistant.authStatus)} · ${state.smartAssistant.actions.length} 个动作可用`,
       },
     ];

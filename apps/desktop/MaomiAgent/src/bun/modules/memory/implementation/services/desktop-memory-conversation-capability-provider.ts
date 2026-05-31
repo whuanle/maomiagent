@@ -75,7 +75,7 @@ export class DesktopMemoryConversationCapabilityProvider
         scope: "workspace" as const,
         controlKind: "toggle" as const,
         title: "启用记忆",
-        description: "允许当前工作区的 AI 对话默认使用桌面记忆检索能力。",
+        description: "提供桌面记忆检索能力，可在对话中调用已有记忆内容。",
         statusText: "记忆检索工具已注册",
       },
     ];

@@ -6,6 +6,8 @@ import type {
   DesktopConversationCreateSessionResponse,
   DesktopConversationHideSessionResponse,
   DesktopConversationInteractionReplyResponse,
+  DesktopConversationRenameSessionInput,
+  DesktopConversationRenameSessionResponse,
   DesktopConversationRejectInteractionInput,
   DesktopConversationReadWorkspaceSettingsInput,
   DesktopConversationReadWorkspaceSettingsResponse,
@@ -39,6 +41,9 @@ type DesktopConversationBridge = {
   createDesktopConversationSession: (
     input: DesktopConversationCreateSessionInput,
   ) => Promise<DesktopConversationCreateSessionResponse>;
+  renameDesktopConversationSession: (
+    input: DesktopConversationRenameSessionInput,
+  ) => Promise<DesktopConversationRenameSessionResponse>;
   hideDesktopConversationSession: (sessionId: string) => Promise<DesktopConversationHideSessionResponse>;
   saveDesktopConversationWorkspaceSettings: (
     input: DesktopConversationSaveWorkspaceSettingsInput,
@@ -146,6 +151,14 @@ export async function createDesktopConversationSession(
 ): Promise<DesktopConversationCreateSessionResponse> {
   const response = await getDesktopConversationBridge().createDesktopConversationSession(input);
   emitDesktopConversationInvalidated("session.created", response.item.sessionId);
+  return response;
+}
+
+export async function renameDesktopConversationSession(
+  input: DesktopConversationRenameSessionInput,
+): Promise<DesktopConversationRenameSessionResponse> {
+  const response = await getDesktopConversationBridge().renameDesktopConversationSession(input);
+  emitDesktopConversationInvalidated("session.updated", input.sessionId);
   return response;
 }
 
