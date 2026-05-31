@@ -4,6 +4,7 @@ import {
   applyConversationWorkbenchDockAction,
   createConversationWorkbenchViewState,
   resizeConversationWorkbenchTerminalPane,
+  selectConversationWorkbenchPanel,
 } from "./conversation-workbench-state";
 
 describe("conversation workbench state", () => {
@@ -30,5 +31,21 @@ describe("conversation workbench state", () => {
 
     expect(opened.mainPanelVisible).toBe(true);
     expect(opened.activePanelKey).toBe("settings");
+  });
+
+  test("opens browser panel from the dock action", () => {
+    const initial = createConversationWorkbenchViewState();
+    const opened = applyConversationWorkbenchDockAction(initial, "browser");
+
+    expect(opened.mainPanelVisible).toBe(true);
+    expect(opened.activePanelKey).toBe("browser");
+  });
+
+  test("keeps browser as the active builtin panel when selected from tabs", () => {
+    const initial = createConversationWorkbenchViewState();
+    const selected = selectConversationWorkbenchPanel(initial, "browser");
+
+    expect(selected.mainPanelVisible).toBe(true);
+    expect(selected.activePanelKey).toBe("browser");
   });
 });

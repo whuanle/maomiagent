@@ -2,6 +2,7 @@ import { ClearOutlined, CloseCircleOutlined, CloseOutlined, LoadingOutlined, Min
 import { Button, Empty, Splitter, Tabs } from "antd";
 import type { ReactNode } from "react";
 
+import { ChatBrowserPanel } from "../../browser/components/chat-browser-panel";
 import { ChatDockIcon } from "./ChatDockIcon";
 import { ConversationGitTab } from "./conversation-git-tab";
 import { ConversationWorkspaceSettingsPanel } from "./conversation-workspace-settings-panel";
@@ -136,17 +137,18 @@ function resolveAttachedTabLabel(item: ChatAttachedTabState) {
 }
 
 export function ConversationModulePanel(props: Props) {
+  const inspectorPanelsVisible = props.mainPanelVisible && (
+    props.activeBuiltinKey === "files"
+    || props.activeBuiltinKey === "changes"
+    || props.activeBuiltinKey === "git"
+  );
   const copy = resolveWorkspaceInspectorCopy(props.language);
   const inspector = useWorkspaceInspectorFileTree({
-    active: props.active && props.mainPanelVisible,
+    active: props.active && inspectorPanelsVisible,
     workspaceId: props.workspaceId,
   });
   const changesInspector = useWorkspaceInspectorChanges({
-    active: props.active && props.mainPanelVisible && (
-      props.activeBuiltinKey === "files"
-      || props.activeBuiltinKey === "changes"
-      || props.activeBuiltinKey === "git"
-    ),
+    active: props.active && inspectorPanelsVisible,
     workspaceId: props.workspaceId,
   });
 
@@ -168,6 +170,20 @@ export function ConversationModulePanel(props: Props) {
   };
 
   const builtinItems = [
+    {
+      key: "browser",
+      label: buildTabLabel({
+        tabKey: "browser",
+        label: props.language === "en-US" ? "Browser" : "浏览器",
+        iconKey: "browser",
+      }),
+      children: (
+        <ChatBrowserPanel
+          active={props.active && props.activeBuiltinKey === "browser"}
+          language={props.language}
+        />
+      ),
+    },
     {
       key: "settings",
       label: buildTabLabel({

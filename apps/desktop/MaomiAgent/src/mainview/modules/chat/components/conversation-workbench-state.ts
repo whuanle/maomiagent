@@ -26,6 +26,26 @@ export type ConversationWorkbenchViewState = {
 const DEFAULT_RIGHT_PANE_WIDTH = "42%";
 const DEFAULT_TERMINAL_PANE_HEIGHT = 248;
 
+function resolveConversationWorkbenchPanelKey(key: string): ChatWorkbenchPanelKey {
+  if (key === "browser") {
+    return "browser";
+  }
+
+  if (key === "settings") {
+    return "settings";
+  }
+
+  if (key === "changes") {
+    return "changes";
+  }
+
+  if (key === "git") {
+    return "git";
+  }
+
+  return "files";
+}
+
 export function hasVisibleConversationWorkbenchPanels(
   current: Pick<ConversationWorkbenchViewState, "mainPanelVisible" | "secondaryPanelVisible">,
 ) {
@@ -120,13 +140,19 @@ export function applyConversationWorkbenchDockAction(
     };
   }
 
-  if (dockKey !== "settings" && dockKey !== "files" && dockKey !== "changes" && dockKey !== "git") {
+  if (
+    dockKey !== "browser"
+    && dockKey !== "settings"
+    && dockKey !== "files"
+    && dockKey !== "changes"
+    && dockKey !== "git"
+  ) {
     return current;
   }
 
   return {
     ...current,
-    activePanelKey: dockKey,
+    activePanelKey: resolveConversationWorkbenchPanelKey(dockKey),
     mainPanelVisible: true,
   };
 }
@@ -265,13 +291,7 @@ export function selectConversationWorkbenchPanel(
   current: ConversationWorkbenchViewState,
   key: string,
 ): ConversationWorkbenchViewState {
-  const nextActivePanelKey = key === "settings"
-    ? "settings"
-    : key === "changes"
-      ? "changes"
-      : key === "git"
-        ? "git"
-        : "files";
+  const nextActivePanelKey = resolveConversationWorkbenchPanelKey(key);
   if (
     nextActivePanelKey === current.activePanelKey
     && current.mainPanelVisible

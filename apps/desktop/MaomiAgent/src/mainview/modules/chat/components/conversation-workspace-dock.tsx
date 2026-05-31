@@ -17,6 +17,11 @@ type Props = {
 export function ConversationWorkspaceDock(props: Props) {
   const dockItems = [
     {
+      key: "browser" as const,
+      active: props.mainPanelVisible && props.activePanelKey === "browser",
+      disabled: false,
+    },
+    {
       key: "settings" as const,
       active: props.mainPanelVisible && props.activePanelKey === "settings",
       disabled: false,

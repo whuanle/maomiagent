@@ -72,6 +72,17 @@ function renderIconPath(key: ChatWorkbenchDockKey) {
     );
   }
 
+  if (key === "browser") {
+    return (
+      <>
+        <circle cx="10" cy="10" r="6.5" stroke="currentColor" />
+        <path d="M3.5 10H16.5" stroke="currentColor" strokeLinecap="square" />
+        <path d="M10 3.5C8.4 5.2 7.5 7.5 7.5 10C7.5 12.5 8.4 14.8 10 16.5" stroke="currentColor" strokeLinecap="square" />
+        <path d="M10 3.5C11.6 5.2 12.5 7.5 12.5 10C12.5 12.5 11.6 14.8 10 16.5" stroke="currentColor" strokeLinecap="square" />
+      </>
+    );
+  }
+
   return (
     <>
       <path d="M7.86667 2H5.2H2V18H5.2H7.86667" stroke="currentColor" />
@@ -83,6 +94,7 @@ function renderIconPath(key: ChatWorkbenchDockKey) {
 
 export function resolveWorkbenchDockTitle(language: LanguageCode, key: ChatWorkbenchDockKey) {
   if (language === "en-US") {
+    if (key === "browser") return "Browser";
     if (key === "settings") return "Settings";
     if (key === "sidebar") return "Runtime panel";
     if (key === "terminal") return "WebShell";
@@ -92,6 +104,7 @@ export function resolveWorkbenchDockTitle(language: LanguageCode, key: ChatWorkb
     return "Secondary panel";
   }
 
+  if (key === "browser") return "浏览器";
   if (key === "settings") return "设置";
   if (key === "sidebar") return "运行检查面板";
   if (key === "terminal") return "WebShell";

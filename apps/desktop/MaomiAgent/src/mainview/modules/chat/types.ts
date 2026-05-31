@@ -69,12 +69,13 @@ export type ChatWorkbenchDockKey =
   | "terminal"
   | "sidebar"
   | "secondary"
+  | "browser"
   | "settings"
   | "files"
   | "changes"
   | "git";
 
-export type ChatWorkbenchPanelKey = "settings" | "files" | "changes" | "git";
+export type ChatWorkbenchPanelKey = "browser" | "settings" | "files" | "changes" | "git";
 
 export type ChatPreviewSource =
   | {
