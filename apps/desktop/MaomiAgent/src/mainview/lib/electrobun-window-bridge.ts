@@ -64,6 +64,19 @@ export function installElectrobunWindowBridge() {
       openPathInFileManager: (path) => rpc.request.openPathInFileManager({ path }),
       openExternalUrl: (url) => rpc.request.openExternalUrl({ url }),
     };
+    window.maomiDesktopBrowser = {
+      createTab: () => rpc.request["browser.createTab"](),
+      activateTab: (tabId) => rpc.request["browser.activateTab"]({ tabId }),
+      closeTab: (tabId) => rpc.request["browser.closeTab"]({ tabId }),
+      getSnapshot: () => rpc.request["browser.getSnapshot"](),
+      navigate: (tabId, url) => rpc.request["browser.navigate"]({ tabId, url }),
+      goBack: (tabId) => rpc.request["browser.goBack"]({ tabId }),
+      goForward: (tabId) => rpc.request["browser.goForward"]({ tabId }),
+      refresh: (tabId) => rpc.request["browser.refresh"]({ tabId }),
+      extract: (tabId) => rpc.request["browser.extract"]({ tabId }),
+      screenshot: (tabId) => rpc.request["browser.screenshot"]({ tabId }),
+      interact: (tabId, request) => rpc.request["browser.interact"]({ tabId, request }),
+    };
     window.maomiDesktopAppUpdate = {
       checkDesktopAppUpdate: () => rpc.request.checkDesktopAppUpdate(),
       installDesktopAppUpdate: (input: DesktopAppUpdateInstallInput) => rpc.request.installDesktopAppUpdate(input),

@@ -26,6 +26,7 @@ import type { ChatPageHandle } from "./modules/chat";
 import { AgentsPage } from "./modules/agents";
 import { ChatPage } from "./modules/chat";
 import { BrowserPage } from "./modules/browser";
+import { BrowserProvider } from "./modules/browser/components/browser-provider";
 import { GitPage } from "./modules/git";
 import { MemoryPage } from "./modules/memory";
 import { ModelsPage } from "./modules/models";
@@ -385,33 +386,35 @@ export default function App() {
   return (
     <ConfigProvider locale={antdLocale} theme={antdTheme}>
       <AntdApp>
-        <NotificationApiBinder />
-        <Layout className="app-shell">
-          <WindowTitlebar
-            status={status}
-            language={language}
-            t={t}
-            themeMode={themeMode}
-            isSettingsActive={visibleRoute === "settings"}
-            menuItems={expandedMenuItems}
-            collapsedMenuItems={collapsedMenuItems}
-            activeMenuKey={visibleRoute}
-            onMenuSelect={setActiveRoute}
-            onOpenSettings={() => setActiveRoute("settings")}
-            onSelectTheme={setThemeMode}
-            onToggleLanguage={() => setLanguage((current) => current === "zh-CN" ? "en-US" : "zh-CN")}
-          />
-
-          <Layout.Content className="app-content" data-route={visibleRoute}>
-            <Tabs
-              className="app-route-tabs-shell"
-              activeKey={visibleRoute}
-              animated={false}
-              destroyOnHidden={false}
-              items={routeTabItems}
+        <BrowserProvider>
+          <NotificationApiBinder />
+          <Layout className="app-shell">
+            <WindowTitlebar
+              status={status}
+              language={language}
+              t={t}
+              themeMode={themeMode}
+              isSettingsActive={visibleRoute === "settings"}
+              menuItems={expandedMenuItems}
+              collapsedMenuItems={collapsedMenuItems}
+              activeMenuKey={visibleRoute}
+              onMenuSelect={setActiveRoute}
+              onOpenSettings={() => setActiveRoute("settings")}
+              onSelectTheme={setThemeMode}
+              onToggleLanguage={() => setLanguage((current) => current === "zh-CN" ? "en-US" : "zh-CN")}
             />
-          </Layout.Content>
-        </Layout>
+
+            <Layout.Content className="app-content" data-route={visibleRoute}>
+              <Tabs
+                className="app-route-tabs-shell"
+                activeKey={visibleRoute}
+                animated={false}
+                destroyOnHidden={false}
+                items={routeTabItems}
+              />
+            </Layout.Content>
+          </Layout>
+        </BrowserProvider>
       </AntdApp>
     </ConfigProvider>
   );
