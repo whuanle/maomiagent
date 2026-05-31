@@ -35,7 +35,7 @@ export default {
     },
     win: {
       bundleCEF: false,
-      icon: "src/mainview/public/branding/generated/icon-512.png",
+      icon: "src/mainview/public/branding/generated/icon-512.ico",
     },
   },
   release: {

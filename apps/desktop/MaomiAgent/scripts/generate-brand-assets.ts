@@ -26,6 +26,10 @@ const outputs = [
     ),
   },
 ];
+const windowsIconOutputs = [
+  resolve(projectRoot, "src/mainview/public/branding/generated/icon-512.ico"),
+  resolve(projectRoot, "src/mainview/public/branding/generated/icon.ico"),
+];
 
 const svgSource = await Bun.file(sourceSvgPath).text();
 
@@ -42,4 +46,29 @@ for (const output of outputs) {
   await mkdir(dirname(output.filePath), { recursive: true });
   await Bun.write(output.filePath, new Uint8Array(pngData));
   console.log(`Generated brand asset: ${output.filePath}`);
+}
+
+const windowsPngSourcePath =
+  outputs.find((output) => output.size === 512)?.filePath ?? outputs[outputs.length - 1]?.filePath;
+
+if (windowsPngSourcePath) {
+  const iconGenerator = Bun.spawn({
+    cmd: ["bun", "x", "png-to-ico", windowsPngSourcePath],
+    cwd: projectRoot,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const iconBuffer = await new Response(iconGenerator.stdout).arrayBuffer();
+  const exitCode = await iconGenerator.exited;
+
+  if (exitCode !== 0) {
+    throw new Error(`png-to-ico failed with exit code ${exitCode}`);
+  }
+
+  const iconData = new Uint8Array(iconBuffer);
+  for (const iconPath of windowsIconOutputs) {
+    await mkdir(dirname(iconPath), { recursive: true });
+    await Bun.write(iconPath, iconData);
+    console.log(`Generated brand asset: ${iconPath}`);
+  }
 }
