@@ -33,13 +33,13 @@ export function createBrowserStore(
   }
 
   function setState(nextState: DesktopBrowserStateSnapshot) {
-    state = nextState;
+    state = cloneSnapshot(nextState);
     emit();
-    return state;
+    return cloneSnapshot(state);
   }
 
   return {
-    getState: () => state,
+    getState: () => cloneSnapshot(state),
     subscribe(listener) {
       listeners.add(listener);
       return () => {
@@ -65,7 +65,7 @@ export function createBrowserStore(
         tabs: [...state.tabs, tab],
         activeTabId: tab.id,
       });
-      return tab;
+      return cloneTabState(tab);
     },
     updateTab(tabId, patch) {
       const currentTab = state.tabs.find((tab) => tab.id === tabId);
@@ -81,11 +81,11 @@ export function createBrowserStore(
         ...state,
         tabs: state.tabs.map((tab) => tab.id === tabId ? nextTab : tab),
       });
-      return nextTab;
+      return cloneTabState(nextTab);
     },
     setToolPanel(toolPanel) {
       if (state.toolPanel === toolPanel) {
-        return state;
+        return cloneSnapshot(state);
       }
 
       return setState({

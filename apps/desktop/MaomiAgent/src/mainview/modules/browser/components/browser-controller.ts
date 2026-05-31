@@ -38,56 +38,82 @@ export function createBrowserController(input: {
   store: BrowserStore;
   rpc?: BrowserControllerRpc;
 }): BrowserController {
-  const rpc = input.rpc ?? getBrowserBridge();
+  let latestAppliedSnapshotOrder = 0;
+  let nextSnapshotOrder = 0;
 
-  const syncSnapshot = (snapshot: DesktopBrowserStateSnapshot) => {
+  const resolveRpc = () => input.rpc ?? getBrowserBridge();
+
+  const markLocalStateChange = () => {
+    latestAppliedSnapshotOrder = ++nextSnapshotOrder;
+  };
+
+  const syncSnapshot = (snapshot: DesktopBrowserStateSnapshot, requestOrder: number) => {
+    if (requestOrder < latestAppliedSnapshotOrder) {
+      return input.store.getState();
+    }
+
+    latestAppliedSnapshotOrder = requestOrder;
     return input.store.replaceState(snapshot);
+  };
+
+  const runSnapshotRequest = async (
+    request: (rpc: BrowserControllerRpc) => Promise<DesktopBrowserStateSnapshot>,
+  ) => {
+    const requestOrder = ++nextSnapshotOrder;
+    const snapshot = await request(resolveRpc());
+    return syncSnapshot(snapshot, requestOrder);
   };
 
   return {
     getState: () => input.store.getState(),
-    replaceState: (snapshot) => input.store.replaceState(snapshot),
-    setToolPanel: (toolPanel) => input.store.setToolPanel(toolPanel),
+    replaceState: (snapshot) => {
+      markLocalStateChange();
+      return input.store.replaceState(snapshot);
+    },
+    setToolPanel: (toolPanel) => {
+      markLocalStateChange();
+      return input.store.setToolPanel(toolPanel);
+    },
     async createTab() {
-      return syncSnapshot(await rpc.createTab());
+      return runSnapshotRequest((rpc) => rpc.createTab());
     },
     async activateTab(tabId) {
-      return syncSnapshot(await rpc.activateTab(tabId));
+      return runSnapshotRequest((rpc) => rpc.activateTab(tabId));
     },
     async closeTab(tabId) {
-      return syncSnapshot(await rpc.closeTab(tabId));
+      return runSnapshotRequest((rpc) => rpc.closeTab(tabId));
     },
     async getSnapshot() {
-      return syncSnapshot(await rpc.getSnapshot());
+      return runSnapshotRequest((rpc) => rpc.getSnapshot());
     },
     async navigate(tabId, url) {
-      return syncSnapshot(await rpc.navigate(tabId, url));
+      return runSnapshotRequest((rpc) => rpc.navigate(tabId, url));
     },
     async goBack(tabId) {
-      return syncSnapshot(await rpc.goBack(tabId));
+      return runSnapshotRequest((rpc) => rpc.goBack(tabId));
     },
     async goForward(tabId) {
-      return syncSnapshot(await rpc.goForward(tabId));
+      return runSnapshotRequest((rpc) => rpc.goForward(tabId));
     },
     async refresh(tabId) {
-      return syncSnapshot(await rpc.refresh(tabId));
+      return runSnapshotRequest((rpc) => rpc.refresh(tabId));
     },
     async extract(tabId) {
-      const result = await rpc.extract(tabId);
+      const result = await resolveRpc().extract(tabId);
       input.store.updateTab(tabId, {
         lastExtractResult: result,
       });
       return result;
     },
     async screenshot(tabId) {
-      const result = await rpc.screenshot(tabId);
+      const result = await resolveRpc().screenshot(tabId);
       input.store.updateTab(tabId, {
         lastScreenshotResult: result,
       });
       return result;
     },
     async interact(tabId, request) {
-      const result = await rpc.interact(tabId, request);
+      const result = await resolveRpc().interact(tabId, request);
       input.store.updateTab(tabId, {
         lastInteractionResult: result,
       });

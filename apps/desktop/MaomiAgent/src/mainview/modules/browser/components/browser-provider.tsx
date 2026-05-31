@@ -1,42 +1,22 @@
 import { createContext, useRef, type ReactNode } from "react";
 
-import type { DesktopBrowserStateSnapshot } from "../../../../shared/desktop-browser";
-import {
-  createBrowserController,
-  type BrowserController,
-  type BrowserControllerRpc,
-} from "./browser-controller";
-import { createBrowserStore, type BrowserStore } from "./browser-store";
-
-export type BrowserDomainContextValue = {
-  store: BrowserStore;
-  controller: BrowserController;
-};
+import type {
+  BrowserDomainContextValue,
+  BrowserDomainValueOptions,
+} from "./browser-domain";
+import { createBrowserDomainValue } from "./browser-domain";
 
 export const BrowserDomainContext = createContext<BrowserDomainContextValue | null>(null);
 
-type BrowserProviderProps = {
+type BrowserProviderProps = BrowserDomainValueOptions & {
   children: ReactNode;
-  initialState?: DesktopBrowserStateSnapshot;
-  store?: BrowserStore;
-  controller?: BrowserController;
-  rpc?: BrowserControllerRpc;
 };
 
 export function BrowserProvider(props: BrowserProviderProps) {
   const valueRef = useRef<BrowserDomainContextValue | null>(null);
 
   if (!valueRef.current) {
-    const store = props.store ?? createBrowserStore(props.initialState);
-    const controller = props.controller ?? createBrowserController({
-      store,
-      rpc: props.rpc,
-    });
-
-    valueRef.current = {
-      store,
-      controller,
-    };
+    valueRef.current = createBrowserDomainValue(props);
   }
 
   return (

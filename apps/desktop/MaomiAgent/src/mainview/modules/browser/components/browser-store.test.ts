@@ -93,4 +93,47 @@ describe("browser store", () => {
       "local-tab-8",
     ]);
   });
+
+  test("returned snapshots and tabs cannot mutate store internals", () => {
+    const store = createBrowserStore(createSnapshot({
+      tabs: [createTab({
+        lastExtractResult: {
+          tabId: "tab-1",
+          url: "https://example.com",
+          title: "Example",
+          text: "initial",
+          links: [{ text: "Example", url: "https://example.com" }],
+          capturedAt: "2026-05-31T00:00:00.000Z",
+        },
+      })],
+    }));
+
+    const readState = store.getState();
+    readState.tabs[0]!.title = "Mutated outside";
+    readState.tabs[0]!.lastExtractResult!.links[0]!.text = "Changed";
+    readState.tabs.push(createTab({ id: "tab-2" }));
+
+    const createdTab = store.createLocalTab();
+    createdTab.title = "Mutated created tab";
+
+    const updatedTab = store.updateTab("tab-1", {
+      title: "Updated title",
+    });
+    if (!updatedTab) {
+      throw new Error("Expected tab to update");
+    }
+    updatedTab.title = "Mutated updated tab";
+
+    const latestState = store.getState();
+    expect(latestState.tabs).toHaveLength(2);
+    expect(latestState.tabs[0]).toMatchObject({
+      id: "tab-1",
+      title: "Updated title",
+    });
+    expect(latestState.tabs[0]?.lastExtractResult?.links[0]?.text).toBe("Example");
+    expect(latestState.tabs[1]).toMatchObject({
+      id: "local-tab-1",
+      title: "New Tab",
+    });
+  });
 });
