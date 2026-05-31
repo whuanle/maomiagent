@@ -11,6 +11,7 @@ import { DesktopObservabilityModule } from "../../observability/composition/obse
 import { DESKTOP_MAIN_WINDOW_SERVICE } from "../../window/abstraction/tokens";
 import { DesktopWindowModule } from "../../window/composition/window.module";
 import { DesktopAiModule } from "../../ai";
+import { DesktopBrowserModule } from "../../browser";
 import { DesktopConversationModule } from "../../conversation";
 import { DesktopModelsModule } from "../../models";
 import { DesktopMemoryModule } from "../../memory";
@@ -29,6 +30,7 @@ export class DesktopShellModule extends DependencyModuleBase {
   static dependencies = [
     DesktopWindowModule,
     DesktopObservabilityModule,
+    DesktopBrowserModule,
     DesktopWorkspaceModule,
     DesktopConversationModule,
     DesktopAiModule,

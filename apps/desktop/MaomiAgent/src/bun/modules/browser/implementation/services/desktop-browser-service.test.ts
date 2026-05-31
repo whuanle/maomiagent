@@ -12,6 +12,7 @@ import type {
   DesktopBrowserRPC,
   DesktopRendererRPC,
 } from "../../../../../shared/desktop-rpc";
+import { DesktopBrowserService } from "./desktop-browser-service";
 
 type BrowserRequestName = keyof DesktopBrowserRPC["requests"];
 type RendererBrowserRequestName = `browser.${BrowserRequestName}`;
@@ -219,5 +220,72 @@ describe("desktop browser shared contract", () => {
       "browser.refresh",
       "browser.screenshot",
     ]);
+  });
+});
+
+describe("DesktopBrowserService", () => {
+  test("navigate updates the selected tab snapshot and active tab", async () => {
+    const service = new DesktopBrowserService();
+    const initial = await service.getSnapshot();
+    const tabId = initial.tabs[0]!.id;
+
+    const snapshot = await service.navigate(tabId, "https://docs.example.com/guide");
+    const activeTab = snapshot.tabs.find((tab) => tab.id === snapshot.activeTabId);
+
+    expect(snapshot.activeTabId).toBe(tabId);
+    expect(activeTab).toEqual(
+      expect.objectContaining({
+        id: tabId,
+        url: "https://docs.example.com/guide",
+        draftUrl: "https://docs.example.com/guide",
+        loading: false,
+      }),
+    );
+  });
+
+  test("extract, screenshot, and interact attach results to the current tab context", async () => {
+    const service = new DesktopBrowserService();
+    const initial = await service.getSnapshot();
+    const tabId = initial.tabs[0]!.id;
+
+    const extract = await service.extract(tabId);
+    const screenshot = await service.screenshot(tabId);
+    const interaction = await service.interact(tabId, {
+      kind: "click",
+      selector: "[data-testid='submit']",
+    });
+    const snapshot = await service.getSnapshot();
+    const tab = snapshot.tabs.find((item) => item.id === tabId);
+
+    expect(extract.tabId).toBe(tabId);
+    expect(screenshot.tabId).toBe(tabId);
+    expect(interaction.tabId).toBe(tabId);
+    expect(tab?.lastExtractResult).toEqual(extract);
+    expect(tab?.lastScreenshotResult).toEqual(screenshot);
+    expect(tab?.lastInteractionResult).toEqual(interaction);
+  });
+
+  test("tab lifecycle methods keep the snapshot coherent", async () => {
+    const service = new DesktopBrowserService();
+
+    const initial = await service.getSnapshot();
+    const firstTabId = initial.tabs[0]!.id;
+
+    const created = await service.createTab();
+    const secondTabId = created.activeTabId;
+
+    expect(created.tabs).toHaveLength(2);
+    expect(secondTabId).not.toBe(firstTabId);
+
+    const activated = await service.activateTab(firstTabId);
+    expect(activated.activeTabId).toBe(firstTabId);
+
+    const closedActive = await service.closeTab(firstTabId);
+    expect(closedActive.tabs.map((tab) => tab.id)).not.toContain(firstTabId);
+    expect(closedActive.activeTabId).toBe(secondTabId);
+
+    const closedLast = await service.closeTab(secondTabId!);
+    expect(closedLast.tabs).toHaveLength(1);
+    expect(closedLast.activeTabId).toBe(closedLast.tabs[0]!.id);
   });
 });

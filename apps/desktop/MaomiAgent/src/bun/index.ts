@@ -31,6 +31,7 @@ import {
   DESKTOP_AGENTS_COMMAND_PORT,
   DESKTOP_AGENTS_QUERY_PORT,
 } from "./modules/agents";
+import { DESKTOP_BROWSER_PORT } from "./modules/browser";
 import {
   DESKTOP_CONVERSATION_COMMAND_PORT,
   DESKTOP_CONVERSATION_QUERY_PORT,
@@ -554,6 +555,10 @@ function resolveDesktopAiOneShotPort(host: ModuleHost | null) {
   return resolveModuleHost(host).container.resolve(DESKTOP_AI_ONE_SHOT_PORT);
 }
 
+function resolveDesktopBrowserPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_BROWSER_PORT);
+}
+
 function resolveDesktopWorkspaceQueryPort(host: ModuleHost | null) {
   return resolveModuleHost(host).container.resolve(DESKTOP_WORKSPACE_QUERY_PORT);
 }
@@ -821,6 +826,18 @@ try {
             saveTextFileWithDialog: (input) => saveTextFileWithDialog(input),
             openPathInFileManager: ({ path }) => openPathInFileManager(path),
             openExternalUrl: ({ url }) => openExternalUrl(url),
+            "browser.createTab": () => resolveDesktopBrowserPort(host).createTab(),
+            "browser.activateTab": ({ tabId }) => resolveDesktopBrowserPort(host).activateTab(tabId),
+            "browser.closeTab": ({ tabId }) => resolveDesktopBrowserPort(host).closeTab(tabId),
+            "browser.getSnapshot": () => resolveDesktopBrowserPort(host).getSnapshot(),
+            "browser.navigate": ({ tabId, url }) => resolveDesktopBrowserPort(host).navigate(tabId, url),
+            "browser.goBack": ({ tabId }) => resolveDesktopBrowserPort(host).goBack(tabId),
+            "browser.goForward": ({ tabId }) => resolveDesktopBrowserPort(host).goForward(tabId),
+            "browser.refresh": ({ tabId }) => resolveDesktopBrowserPort(host).refresh(tabId),
+            "browser.extract": ({ tabId }) => resolveDesktopBrowserPort(host).extract(tabId),
+            "browser.screenshot": ({ tabId }) => resolveDesktopBrowserPort(host).screenshot(tabId),
+            "browser.interact": ({ tabId, request }) =>
+              resolveDesktopBrowserPort(host).interact(tabId, request),
             checkDesktopAppUpdate: () => checkDesktopAppUpdate(),
             installDesktopAppUpdate: (input) => installDesktopAppUpdate(input),
             listDesktopConversationSessions: (query) =>
