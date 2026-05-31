@@ -699,8 +699,7 @@
 .git-ai-review-commit-stage-head,
 .git-ai-review-comments-pane-head,
 .git-ai-review-comment-card-head,
-.git-ai-review-detail-shell-head,
-.git-ai-review-detail-body-split {
+.git-ai-review-detail-shell-head {
   display: flex;
 }
 
@@ -766,7 +765,36 @@
 
 .git-ai-review-detail-body-split {
   flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
+  height: 100%;
+  border: none;
+  border-radius: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+.git-ai-review-detail-body-split > .ant-splitter-panel.git-ai-review-detail-splitter-panel {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.git-ai-review-detail-body-split > .ant-splitter-panel.git-ai-review-detail-splitter-panel + .ant-splitter-panel.git-ai-review-detail-splitter-panel {
+  border-left: 1px solid var(--app-border-soft);
+}
+
+.git-ai-review-detail-body-split > .ant-splitter-bar {
+  width: 4px;
+  min-width: 4px;
+  background: var(--app-border-soft);
+}
+
+.git-ai-review-detail-body-split > .ant-splitter-bar:hover,
+.git-ai-review-detail-body-split > .ant-splitter-bar-active {
+  background: var(--app-border);
 }
 
 .git-ai-review-detail-code-pane,
@@ -778,12 +806,11 @@
 }
 
 .git-ai-review-detail-code-pane {
-  flex: 1 1 58%;
-  border-right: 1px solid var(--app-border-soft);
+  flex: 1 1 auto;
 }
 
 .git-ai-review-comments-pane {
-  flex: 0 0 380px;
+  flex: 1 1 auto;
   gap: 12px;
   padding: 14px 16px 18px;
   overflow: auto;
@@ -978,27 +1005,14 @@
     padding: 6px 0 0;
   }
 
-  .git-ai-review-comments-pane {
-    flex-basis: 320px;
-  }
-
   .git-ai-review-diagnostic-pill-title {
     max-width: 220px;
   }
 }
 
 @media (max-width: 960px) {
-  .git-ai-review-detail-body-split {
-    flex-direction: column;
-  }
-
   .git-ai-review-detail-code-pane {
-    border-right: 0;
-    border-bottom: 1px solid var(--app-border-soft);
-  }
-
-  .git-ai-review-comments-pane {
-    flex: 1 1 auto;
+    min-height: 260px;
   }
 
   .git-ai-review-commit-stage-head {

@@ -63,8 +63,11 @@ import {
   writeGitReviewCacheFile,
 } from "./git-review-cache";
 import {
+  DEFAULT_GIT_REVIEW_COMMENTS_WIDTH,
   DEFAULT_GIT_REVIEW_SIDEBAR_WIDTH,
+  MAX_GIT_REVIEW_COMMENTS_WIDTH,
   MAX_GIT_REVIEW_SIDEBAR_WIDTH,
+  MIN_GIT_REVIEW_COMMENTS_WIDTH,
   MIN_GIT_REVIEW_SIDEBAR_WIDTH,
   readGitReviewLayoutState,
   writeGitReviewLayoutState,
@@ -2460,6 +2463,7 @@ export function GitAiReviewWorkbenchNext(props: Props) {
   const [codeReviewScopePath, setCodeReviewScopePath] = useState<string | undefined>(props.initialCodeReviewScopePath);
   const [restoredCacheStale, setRestoredCacheStale] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_GIT_REVIEW_SIDEBAR_WIDTH);
+  const [commentsWidth, setCommentsWidth] = useState(DEFAULT_GIT_REVIEW_COMMENTS_WIDTH);
   const skipNextGitTargetResetRef = useRef(false);
   const stagedEntries = useMemo(
     () => buildGitSectionEntries(props.snapshot?.changes.items ?? [], "staged").map((entry) => ({
@@ -2493,10 +2497,13 @@ export function GitAiReviewWorkbenchNext(props: Props) {
   useEffect(() => {
     if (!props.workspaceId) {
       setSidebarWidth(DEFAULT_GIT_REVIEW_SIDEBAR_WIDTH);
+      setCommentsWidth(DEFAULT_GIT_REVIEW_COMMENTS_WIDTH);
       return;
     }
 
-    setSidebarWidth(readGitReviewLayoutState(props.workspaceId, props.surface).sidebarWidth);
+    const layoutState = readGitReviewLayoutState(props.workspaceId, props.surface);
+    setSidebarWidth(layoutState.sidebarWidth);
+    setCommentsWidth(layoutState.commentsWidth);
   }, [props.surface, props.workspaceId]);
 
   useEffect(() => {
@@ -3796,8 +3803,26 @@ export function GitAiReviewWorkbenchNext(props: Props) {
       return;
     }
 
-    const nextState = writeGitReviewLayoutState(props.workspaceId, props.surface, nextSidebarWidth);
+    const nextState = writeGitReviewLayoutState(props.workspaceId, props.surface, {
+      sidebarWidth: nextSidebarWidth,
+    });
     setSidebarWidth(nextState.sidebarWidth);
+  }
+
+  function handleDetailResize(sizes: number[]) {
+    if (!props.workspaceId) {
+      return;
+    }
+
+    const nextCommentsWidth = sizes[1];
+    if (typeof nextCommentsWidth !== "number") {
+      return;
+    }
+
+    const nextState = writeGitReviewLayoutState(props.workspaceId, props.surface, {
+      commentsWidth: nextCommentsWidth,
+    });
+    setCommentsWidth(nextState.commentsWidth);
   }
 
   if (props.loading && !props.snapshot) {
@@ -4040,74 +4065,83 @@ export function GitAiReviewWorkbenchNext(props: Props) {
               </div>
             </div>
 
-            <div className="git-ai-review-detail-body-split">
-              <div className="git-ai-review-detail-code-pane">
-                <div className="git-ai-review-detail-preview-header">
-                  <Text className="git-ai-review-detail-section-label">{isCommitSurface ? aiCopy.codePaneTitleGit : aiCopy.codePaneTitleWorkspace}</Text>
-                  {isCodeSurface && selectedWorkspaceResult?.truncated ? <span className="git-ai-review-meta-chip">{aiCopy.workspacePreviewTruncated}</span> : null}
+            <Splitter className="git-ai-review-detail-body-split" onResize={handleDetailResize}>
+              <Splitter.Panel className="git-ai-review-detail-splitter-panel" min={320}>
+                <div className="git-ai-review-detail-code-pane">
+                  <div className="git-ai-review-detail-preview-header">
+                    <Text className="git-ai-review-detail-section-label">{isCommitSurface ? aiCopy.codePaneTitleGit : aiCopy.codePaneTitleWorkspace}</Text>
+                    {isCodeSurface && selectedWorkspaceResult?.truncated ? <span className="git-ai-review-meta-chip">{aiCopy.workspacePreviewTruncated}</span> : null}
+                  </div>
+                  <div className="git-ai-review-detail-preview">
+                    {isCommitSurface ? (
+                      <GitDiffPreview copy={props.copy} item={selectedGitItem} emptyDescription={aiCopy.emptyNoSelection} />
+                    ) : workspaceFileLoading && !selectedWorkspaceResult ? (
+                      <div className="git-ai-review-empty"><Spin size="small" /></div>
+                    ) : workspaceFileError ? (
+                      <div className="git-ai-review-empty"><Text type="secondary">{workspaceFileError}</Text></div>
+                    ) : selectedWorkspaceResult?.binary ? (
+                      <div className="git-ai-review-empty"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={aiCopy.workspaceBinaryUnsupported} /></div>
+                    ) : workspacePreviewContent ? (
+                      <div className="git-ai-review-source-preview"><pre className="git-ai-review-source-code">{workspacePreviewContent}</pre></div>
+                    ) : (
+                      <div className="git-ai-review-empty"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={aiCopy.emptyNoSelection} /></div>
+                    )}
+                  </div>
                 </div>
-                <div className="git-ai-review-detail-preview">
-                  {isCommitSurface ? (
-                    <GitDiffPreview copy={props.copy} item={selectedGitItem} emptyDescription={aiCopy.emptyNoSelection} />
-                  ) : workspaceFileLoading && !selectedWorkspaceResult ? (
-                    <div className="git-ai-review-empty"><Spin size="small" /></div>
-                  ) : workspaceFileError ? (
-                    <div className="git-ai-review-empty"><Text type="secondary">{workspaceFileError}</Text></div>
-                  ) : selectedWorkspaceResult?.binary ? (
-                    <div className="git-ai-review-empty"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={aiCopy.workspaceBinaryUnsupported} /></div>
-                  ) : workspacePreviewContent ? (
-                    <div className="git-ai-review-source-preview"><pre className="git-ai-review-source-code">{workspacePreviewContent}</pre></div>
-                  ) : (
-                    <div className="git-ai-review-empty"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={aiCopy.emptyNoSelection} /></div>
-                  )}
-                </div>
-              </div>
+              </Splitter.Panel>
 
-              <div className="git-ai-review-comments-pane">
-                <div className="git-ai-review-comments-pane-head">
-                  <Text className="git-ai-review-detail-section-label">{isCommitSurface ? aiCopy.aiCommentsTitle : aiCopy.workspaceResultsTitle}</Text>
-                  <span className="git-ai-review-meta-chip">{currentFindings.length}</span>
-                </div>
-                {featuredFinding ? (
-                  <>
-                    <div className="git-ai-review-detail-title-row">
-                      <Text className="git-ai-review-detail-title">{featuredFinding.title}</Text>
-                      <span className="git-ai-review-meta-chip">{aiCopy.categoryText(featuredFinding.category)}</span>
-                    </div>
-                    <Paragraph className="git-ai-review-detail-summary">{featuredFinding.summary}</Paragraph>
-                    <div className="git-ai-review-detail-section">
-                      <Text className="git-ai-review-detail-section-label">{aiCopy.detailSuggestion}</Text>
-                      <Paragraph className="git-ai-review-detail-section-body">{featuredFinding.suggestion}</Paragraph>
-                    </div>
-                    {featuredFinding.evidence ? (
+              <Splitter.Panel
+                className="git-ai-review-detail-splitter-panel"
+                size={commentsWidth}
+                min={MIN_GIT_REVIEW_COMMENTS_WIDTH}
+                max={MAX_GIT_REVIEW_COMMENTS_WIDTH}
+              >
+                <div className="git-ai-review-comments-pane">
+                  <div className="git-ai-review-comments-pane-head">
+                    <Text className="git-ai-review-detail-section-label">{isCommitSurface ? aiCopy.aiCommentsTitle : aiCopy.workspaceResultsTitle}</Text>
+                    <span className="git-ai-review-meta-chip">{currentFindings.length}</span>
+                  </div>
+                  {featuredFinding ? (
+                    <>
+                      <div className="git-ai-review-detail-title-row">
+                        <Text className="git-ai-review-detail-title">{featuredFinding.title}</Text>
+                        <span className="git-ai-review-meta-chip">{aiCopy.categoryText(featuredFinding.category)}</span>
+                      </div>
+                      <Paragraph className="git-ai-review-detail-summary">{featuredFinding.summary}</Paragraph>
                       <div className="git-ai-review-detail-section">
-                        <Text className="git-ai-review-detail-section-label">{aiCopy.detailEvidence}</Text>
-                        <pre className="git-ai-review-detail-evidence">{featuredFinding.evidence}</pre>
+                        <Text className="git-ai-review-detail-section-label">{aiCopy.detailSuggestion}</Text>
+                        <Paragraph className="git-ai-review-detail-section-body">{featuredFinding.suggestion}</Paragraph>
                       </div>
-                    ) : null}
-                  </>
-                ) : (
-                  <Paragraph className="git-ai-review-detail-summary">{aiCopy.noDiagnostics}</Paragraph>
-                )}
-                <div className="git-ai-review-comments-list">
-                  {currentFindings.map((finding) => (
-                    <button
-                      key={finding.id}
-                      type="button"
-                      className={finding.id === featuredFinding?.id ? "git-ai-review-comment-card is-active" : "git-ai-review-comment-card"}
-                      onClick={() => setSelectedFindingId(finding.id)}
-                    >
-                      <div className="git-ai-review-comment-card-head">
-                        <span className={`git-ai-review-badge is-${finding.severity}`}>{aiCopy.severityText(finding.severity)}</span>
-                        <span className="git-ai-review-meta-chip">{aiCopy.categoryText(finding.category)}</span>
-                      </div>
-                      <div className="git-ai-review-comment-card-title">{finding.title}</div>
-                      <div className="git-ai-review-comment-card-summary">{finding.summary}</div>
-                    </button>
-                  ))}
+                      {featuredFinding.evidence ? (
+                        <div className="git-ai-review-detail-section">
+                          <Text className="git-ai-review-detail-section-label">{aiCopy.detailEvidence}</Text>
+                          <pre className="git-ai-review-detail-evidence">{featuredFinding.evidence}</pre>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : (
+                    <Paragraph className="git-ai-review-detail-summary">{aiCopy.noDiagnostics}</Paragraph>
+                  )}
+                  <div className="git-ai-review-comments-list">
+                    {currentFindings.map((finding) => (
+                      <button
+                        key={finding.id}
+                        type="button"
+                        className={finding.id === featuredFinding?.id ? "git-ai-review-comment-card is-active" : "git-ai-review-comment-card"}
+                        onClick={() => setSelectedFindingId(finding.id)}
+                      >
+                        <div className="git-ai-review-comment-card-head">
+                          <span className={`git-ai-review-badge is-${finding.severity}`}>{aiCopy.severityText(finding.severity)}</span>
+                          <span className="git-ai-review-meta-chip">{aiCopy.categoryText(finding.category)}</span>
+                        </div>
+                        <div className="git-ai-review-comment-card-title">{finding.title}</div>
+                        <div className="git-ai-review-comment-card-summary">{finding.summary}</div>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            </div>
+              </Splitter.Panel>
+            </Splitter>
           </>
         ) : (
           <div className="git-ai-review-empty"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={aiCopy.emptyNoSelection} /></div>
