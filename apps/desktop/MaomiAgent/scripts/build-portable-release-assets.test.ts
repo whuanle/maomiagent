@@ -15,7 +15,10 @@ import {
   resolvePortableWindowsIconPath,
   resolvePortableWindowsExecutableCommand,
 } from "./build-portable-release-assets";
-import { resolvePortableExportAfterNativePackagingFailure } from "./build-electrobun-bundle";
+import {
+  copyBundledDesktopData,
+  resolvePortableExportAfterNativePackagingFailure,
+} from "./build-electrobun-bundle";
 
 describe("build-portable-release-assets", () => {
   test("resolves portable release asset names for supported targets", () => {
@@ -104,6 +107,31 @@ describe("build-portable-release-assets", () => {
     expect(createPortableLinuxLaunchEntry("bin/launcher")).toContain(
       'exec "$DIR/bin/launcher" "$@"',
     );
+  });
+
+  test("copies bundled desktop data into the bundle contents data directory", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "maomi-bundled-desktop-data-"));
+
+    try {
+      const sourceDataDir = join(tempRoot, "source-data");
+      const bundleContentsDir = join(tempRoot, "bundle");
+
+      mkdirSync(join(sourceDataDir, "nested"), { recursive: true });
+      mkdirSync(bundleContentsDir, { recursive: true });
+      writeFileSync(join(sourceDataDir, "models.json"), "{\"providers\":[]}\n");
+      writeFileSync(join(sourceDataDir, "nested", "manifest.txt"), "manifest");
+
+      copyBundledDesktopData(bundleContentsDir, sourceDataDir);
+
+      expect(readFileSync(join(bundleContentsDir, "data", "models.json"), "utf8")).toBe(
+        "{\"providers\":[]}\n",
+      );
+      expect(readFileSync(join(bundleContentsDir, "data", "nested", "manifest.txt"), "utf8")).toBe(
+        "manifest",
+      );
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 
   test("exports portable assets into clean artifact folders and writes the linux wrapper", async () => {

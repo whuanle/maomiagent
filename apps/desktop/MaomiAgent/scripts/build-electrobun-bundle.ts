@@ -40,6 +40,7 @@ const ELECTROBUN_ZIG_ASAR_ARM64 = join(
 const WINDOWS_BUILD_ENVIRONMENT = "dev-win-x64";
 const WINDOWS_APP_NAME = `${APP_NAME}-dev`;
 const BUNDLED_RENDERER_DIST = join(projectRoot, "dist");
+const BUNDLED_APP_DATA_DIR = join(projectRoot, "data");
 const GENERATED_FOLDER = join(projectRoot, ".generated");
 const GENERATED_UPDATE_CONFIG_PATH = join(GENERATED_FOLDER, "update-config.json");
 const ELECTROBUN_STABLE_ENV = "stable";
@@ -241,6 +242,8 @@ async function prepareBundleAt(input: {
   await buildBundleEntrypoint(layout);
   logReleaseStep("copying bundled renderer assets");
   copyBundledRenderer(layout.bundleAppDir);
+  logReleaseStep("copying bundled data assets");
+  copyBundledDesktopData(layout.bundleContentsDir);
 
   if (input.targetPlatform.os === "linux") {
     logReleaseStep("copying Linux bundle icons");
@@ -819,6 +822,17 @@ function copyBundledRenderer(bundleAppDir: string): void {
   if (existsSync(bundledBrandingDir)) {
     copyRequiredFile(bundledBrandingDir, join(bundleMainViewDir, "branding"));
   }
+}
+
+export function copyBundledDesktopData(
+  bundleContentsDir: string,
+  sourceDataDir = BUNDLED_APP_DATA_DIR,
+): void {
+  if (!existsSync(sourceDataDir)) {
+    return;
+  }
+
+  copyRequiredFile(sourceDataDir, join(bundleContentsDir, "data"));
 }
 
 function resolveDesktopVersion(): string {
