@@ -223,6 +223,37 @@ describe("ensureDesktopFeishuDeveloperAccessToken", () => {
     });
   });
 
+  test("persists the rotated refresh token even when refresh_expires_in is omitted", async () => {
+    const store = createStore(createSnapshot({
+      accessTokenExpiresAt: "2026-05-22T00:03:00.000Z",
+      refreshTokenExpiresAt: "2026-06-22T00:00:00.000Z",
+    }));
+
+    const token = await ensureDesktopFeishuDeveloperAccessToken({
+      store,
+      now: () => new Date("2026-05-22T00:00:00.000Z"),
+      openApiClient: {
+        refreshUserAccessToken: async () => ({
+          accessToken: "new-access",
+          refreshToken: "new-refresh",
+          accessTokenExpiresAt: "2026-05-22T02:00:00.000Z",
+          refreshTokenExpiresAt: "",
+        }),
+      },
+    });
+
+    expect(token).toBe("new-access");
+    expect(store.snapshot().developerToken).toEqual({
+      accessToken: "new-access",
+      refreshToken: "new-refresh",
+      accessTokenExpiresAt: "2026-05-22T02:00:00.000Z",
+      refreshTokenExpiresAt: "",
+    });
+    expect(store.snapshot().state.smartAssistant.authStatus).toBe("authorized");
+    expect(store.snapshot().state.smartAssistant.hasRefreshToken).toBe(true);
+    expect(store.snapshot().state.smartAssistant.lastError).toBeUndefined();
+  });
+
   test("deduplicates concurrent forced refresh requests and reuses the rotated refresh token", async () => {
     const store = createStore(createSnapshot({
       accessTokenExpiresAt: "2026-05-22T00:00:00.000Z",

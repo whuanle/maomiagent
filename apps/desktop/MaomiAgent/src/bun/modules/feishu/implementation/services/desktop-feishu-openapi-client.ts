@@ -77,6 +77,7 @@ type FeishuErrorEnvelope = {
 
 type TokenMappingOptions = {
   requireRefreshToken: boolean;
+  requireRefreshTokenExpiry: boolean;
 };
 
 export class DesktopFeishuOpenApiError extends Error {
@@ -170,7 +171,10 @@ export class DesktopFeishuOpenApiClient {
       redirect_uri: input.redirectUri,
     });
 
-    return this.toTokens(data, { requireRefreshToken: false });
+    return this.toTokens(data, {
+      requireRefreshToken: false,
+      requireRefreshTokenExpiry: false,
+    });
   }
 
   async refreshUserAccessToken(input: {
@@ -185,7 +189,10 @@ export class DesktopFeishuOpenApiClient {
       refresh_token: input.refreshToken,
     });
 
-    return this.toTokens(data, { requireRefreshToken: true });
+    return this.toTokens(data, {
+      requireRefreshToken: true,
+      requireRefreshTokenExpiry: false,
+    });
   }
 
   async getTenantAccessToken(input: {
@@ -337,12 +344,17 @@ export class DesktopFeishuOpenApiClient {
     const expiresIn = data.expires_in;
     const refreshToken = data.refresh_token ?? "";
     const refreshExpiresIn = data.refresh_expires_in;
-    if (!accessToken || expiresIn == null || (options.requireRefreshToken && (!refreshToken || refreshExpiresIn == null))) {
+    if (
+      !accessToken
+      || expiresIn == null
+      || (options.requireRefreshToken && !refreshToken)
+      || (options.requireRefreshTokenExpiry && refreshExpiresIn == null)
+    ) {
       const missingFields = [
         !accessToken ? "access_token" : "",
         expiresIn == null ? "expires_in" : "",
         options.requireRefreshToken && !refreshToken ? "refresh_token" : "",
-        options.requireRefreshToken && refreshExpiresIn == null ? "refresh_expires_in" : "",
+        options.requireRefreshTokenExpiry && refreshExpiresIn == null ? "refresh_expires_in" : "",
       ].filter((value): value is string => value.length > 0);
       throw new Error(`Feishu API response missing token data: ${missingFields.join(", ")}`);
     }

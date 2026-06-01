@@ -109,7 +109,32 @@ describe("DesktopFeishuOpenApiClient", () => {
       appId: "cli_app",
       appSecret: "secret",
       refreshToken: "old-refresh",
-    })).rejects.toThrow("Feishu API response missing token data: refresh_token, refresh_expires_in");
+    })).rejects.toThrow("Feishu API response missing token data: refresh_token");
+  });
+
+  test("accepts refreshed tokens even when refresh_expires_in is omitted", async () => {
+    const client = new DesktopFeishuOpenApiClient({
+      fetch: async () => new Response(JSON.stringify({
+        code: 0,
+        access_token: "new-access",
+        refresh_token: "new-refresh",
+        expires_in: 3600,
+      }), { status: 200 }),
+      now: () => new Date("2026-05-21T00:00:00.000Z"),
+    });
+
+    const result = await client.refreshUserAccessToken({
+      appId: "cli_app",
+      appSecret: "secret",
+      refreshToken: "old-refresh",
+    });
+
+    expect(result).toEqual({
+      accessToken: "new-access",
+      refreshToken: "new-refresh",
+      accessTokenExpiresAt: "2026-05-21T01:00:00.000Z",
+      refreshTokenExpiresAt: "",
+    });
   });
 
   test("accepts refreshed token fields returned at the top level", async () => {
