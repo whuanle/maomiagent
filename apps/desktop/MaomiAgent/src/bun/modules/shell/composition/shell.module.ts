@@ -24,6 +24,7 @@ import { DesktopTerminalsModule } from "../../terminals";
 import { DesktopWorkspaceModule } from "../../workspace";
 import { DesktopWechatModule } from "../../wechat";
 import { DesktopFeishuModule } from "../../feishu";
+import { DesktopUiDesignerModule } from "../../ui-designer";
 
 export class DesktopShellModule extends DependencyModuleBase {
   static moduleId = "desktop.shell";
@@ -42,6 +43,7 @@ export class DesktopShellModule extends DependencyModuleBase {
     DesktopModelsModule,
     DesktopSkillsModule,
     DesktopMcpModule,
+    DesktopUiDesignerModule,
     DesktopWechatModule,
     DesktopFeishuModule,
   ] as const;

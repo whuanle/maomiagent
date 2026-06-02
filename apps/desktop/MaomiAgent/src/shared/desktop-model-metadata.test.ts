@@ -46,4 +46,50 @@ describe("resolveDesktopChannelModelMetadata", () => {
       contextWindow: 65536,
     });
   });
+
+  test("preserves interleaved reasoning overrides from custom channel metadata", () => {
+    const providers: DesktopModelProviderItem[] = [{
+      providerType: "compatible-openai",
+      displayName: "Compatible OpenAI",
+      protocolFamily: "openai",
+      apiStyle: "chat-completions",
+      models: [{
+        providerType: "compatible-openai",
+        modelId: "kimi-k2.5",
+        displayName: "Kimi K2.5",
+        supportsReasoning: true,
+      }],
+    }];
+    const channel: DesktopModelChannelItem = {
+      providerType: "compatible-openai",
+      channelId: "moonshot",
+      name: "Moonshot",
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      models: [],
+      metadata: {
+        customModels: [{
+          modelId: "kimi-k2.5",
+          displayName: "Kimi K2.5",
+          supportsReasoning: true,
+          interleaved: {
+            field: "reasoning_content",
+          },
+        }],
+      },
+    };
+
+    expect(resolveDesktopChannelModelMetadata(
+      providers,
+      channel,
+      "kimi-k2.5",
+    )).toMatchObject({
+      modelId: "kimi-k2.5",
+      supportsReasoning: true,
+      interleaved: {
+        field: "reasoning_content",
+      },
+    });
+  });
 });

@@ -15,9 +15,14 @@ describe("desktop ai one-shot services", () => {
           providerType: "openai",
           channelId: "main",
           modelId: "gpt-4.1",
+          providerBindingId: "openai",
           protocolFamily: "openai",
           apiStyle: "responses",
+          supportsReasoning: true,
           supportsFunctionCall: true,
+          interleaved: {
+            field: "reasoning_content",
+          },
           serviceConfig: {
             apiKey: "sk-test",
             baseUrl: "https://api.openai.com/v1",
@@ -35,6 +40,7 @@ describe("desktop ai one-shot services", () => {
     });
 
     expect(result.runtimeSelector).toEqual({
+      providerBindingId: "openai",
       protocolFamily: "openai",
       apiStyle: "responses",
     });
@@ -43,7 +49,9 @@ describe("desktop ai one-shot services", () => {
       apiStyle: "responses",
     });
     expect(result.capabilities).toEqual({
+      supportsReasoning: true,
       supportsFunctionCall: true,
+      supportsInterleavedReasoning: true,
     });
     expect(result.executionProfile.modelId).toBe("gpt-4.1");
     expect(result.executionProfile.metadata).toMatchObject({
@@ -52,7 +60,11 @@ describe("desktop ai one-shot services", () => {
       modelId: "gpt-4.1",
       protocolFamily: "openai",
       apiStyle: "responses",
+      supportsReasoning: true,
       supportsFunctionCall: true,
+      interleaved: {
+        field: "reasoning_content",
+      },
       scope: "workspace",
       workspaceId: "workspace-1",
     });
@@ -99,6 +111,7 @@ describe("desktop ai one-shot services", () => {
             modelId: "gpt-4.1",
           },
           runtimeSelector: {
+            providerBindingId: "openai" as const,
             protocolFamily: "openai" as const,
             apiStyle: "responses" as const,
           },
@@ -116,9 +129,14 @@ describe("desktop ai one-shot services", () => {
             providerType: "openai",
             channelId: "main",
             modelId: "gpt-4.1",
+            providerBindingId: "openai" as const,
             protocolFamily: "openai" as const,
             apiStyle: "responses" as const,
+            supportsReasoning: true,
             supportsFunctionCall: true,
+            interleaved: {
+              field: "reasoning_content",
+            },
           },
         };
       },
@@ -142,6 +160,7 @@ describe("desktop ai one-shot services", () => {
 
     expect(runtimeCalls).toEqual([{
       selector: {
+        providerBindingId: "openai",
         protocolFamily: "openai",
         apiStyle: "responses",
       },
@@ -152,9 +171,14 @@ describe("desktop ai one-shot services", () => {
       providerType: "openai",
       channelId: "main",
       modelId: "gpt-4.1",
+      providerBindingId: "openai",
       protocolFamily: "openai",
       apiStyle: "responses",
+      supportsReasoning: true,
       supportsFunctionCall: true,
+      interleaved: {
+        field: "reasoning_content",
+      },
     });
   });
 });

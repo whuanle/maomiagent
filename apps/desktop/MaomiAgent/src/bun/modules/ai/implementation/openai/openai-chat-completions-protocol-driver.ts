@@ -40,6 +40,50 @@ export type OpenAIChatCompletionsRequestBody = {
   reasoning_effort?: string;
 };
 
+function summarizeRequestMessages(
+  messages: OpenAIChatCompletionsPromptPayload["messages"],
+): string {
+  return messages.map((message, index) => {
+    if (message.role === "assistant") {
+      const toolCallCount = Array.isArray(message.tool_calls) ? message.tool_calls.length : 0;
+      const reasoningState = Object.prototype.hasOwnProperty.call(message, "reasoning_content")
+        ? `reasoning:${typeof message.reasoning_content === "string" ? message.reasoning_content.length : String(message.reasoning_content)}`
+        : "reasoning:missing";
+      const contentState = typeof message.content === "string"
+        ? `content:${message.content.length}`
+        : `content:${String(message.content)}`;
+      return `${index}:${message.role}[${contentState};tool_calls:${toolCallCount};${reasoningState}]`;
+    }
+
+    if (message.role === "tool") {
+      return `${index}:${message.role}[tool_call_id:${message.tool_call_id};content:${message.content.length}]`;
+    }
+
+    if (Array.isArray(message.content)) {
+      return `${index}:${message.role}[parts:${message.content.length}]`;
+    }
+
+    return `${index}:${message.role}[content:${message.content.length}]`;
+  }).join(" | ");
+}
+
+function normalizeAssistantReasoningContent(
+  messages: OpenAIChatCompletionsPromptPayload["messages"],
+): OpenAIChatCompletionsPromptPayload["messages"] {
+  return messages.map((message) => {
+    if (message.role !== "assistant" || !Array.isArray(message.tool_calls) || message.tool_calls.length === 0) {
+      return message;
+    }
+
+    return Object.prototype.hasOwnProperty.call(message, "reasoning_content")
+      ? message
+      : {
+          ...message,
+          reasoning_content: "",
+        };
+  });
+}
+
 type CreateOpenAIChatCompletionsProtocolDriverOptions = {
   fetchFn: typeof fetch;
   codec?: PromptCodec<OpenAIChatCompletionsPromptPayload>;
@@ -163,10 +207,11 @@ function buildRequestBody(
   const traceMetadata = buildTraceMetadata(input);
   const hasTools = Boolean(payload.tools && payload.tools.length > 0);
   const includeMetadata = config.store === true;
+  const normalizedMessages = normalizeAssistantReasoningContent(payload.messages);
 
   return {
     model: readOpenAIChatCompletionsModelId(input.executionProfile),
-    messages: payload.messages,
+    messages: normalizedMessages,
     stream: true,
     ...(includeMetadata && traceMetadata ? { metadata: traceMetadata } : {}),
     ...(hasTools ? { tools: payload.tools } : {}),
@@ -229,8 +274,17 @@ export function createOpenAIChatCompletionsProtocolDriver(
     },
     async *execute(input) {
       const requestBody = buildRequestBody(input.request, codec.encode(input.request), input.config);
+      const requestMessageSummary = summarizeRequestMessages(requestBody.messages);
       const endpoint = buildOpenAIChatCompletionsEndpoint(input.config.baseUrl);
       let attempt = 1;
+
+      await input.telemetrySink?.({
+        stage: "request_built",
+        modelId: input.request.executionProfile.modelId,
+        runId: input.request.trace?.runId ?? input.request.prompt.runId,
+        turnId: input.request.trace?.turnId ?? input.request.prompt.turnId,
+        requestMessageSummary,
+      });
 
       while (true) {
         const requestTimeout = startRequestTimeout(input.config.timeoutMs);
@@ -272,9 +326,16 @@ export function createOpenAIChatCompletionsProtocolDriver(
             statusText: response.statusText,
             bodyText: await readResponseBodyText(response),
           });
+          const errorWithRequestSummary = {
+            ...kernelError,
+            metadata: {
+              ...(kernelError.metadata ?? {}),
+              requestMessageSummary,
+            },
+          };
           const retried = await retryIfNeeded({
             attempt,
-            error: kernelError,
+            error: errorWithRequestSummary,
             headers: response.headers,
             retryPolicy: options.retryPolicy,
             sleepFn,
@@ -284,7 +345,7 @@ export function createOpenAIChatCompletionsProtocolDriver(
             continue;
           }
 
-          throw kernelError;
+          throw errorWithRequestSummary;
         }
 
         try {

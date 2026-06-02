@@ -1,4 +1,5 @@
 import type { DesktopModelsQueryPort } from "../../../models";
+import type { DesktopModelInterleavedConfig } from "../../../../../shared/desktop-models";
 import type {
   DesktopAiProviderServiceConfig,
   DesktopAiRuntimeCapabilities,
@@ -23,12 +24,30 @@ function normalizeOptionalText(value: string | undefined): string | undefined {
   return normalized ? normalized : undefined;
 }
 
+function isInterleavedReasoningEnabled(value: DesktopModelInterleavedConfig | undefined): boolean | undefined {
+  if (value === undefined || value === false) {
+    return undefined;
+  }
+
+  return true;
+}
+
 function buildRuntimeCapabilities(input: {
+  supportsReasoning?: boolean;
   supportsFunctionCall?: boolean;
+  interleaved?: DesktopModelInterleavedConfig;
 }): DesktopAiRuntimeCapabilities {
+  const supportsInterleavedReasoning = isInterleavedReasoningEnabled(input.interleaved);
+
   return {
+    ...(typeof input.supportsReasoning === "boolean"
+      ? { supportsReasoning: input.supportsReasoning }
+      : {}),
     ...(typeof input.supportsFunctionCall === "boolean"
       ? { supportsFunctionCall: input.supportsFunctionCall }
+      : {}),
+    ...(typeof supportsInterleavedReasoning === "boolean"
+      ? { supportsInterleavedReasoning }
       : {}),
   };
 }
@@ -49,9 +68,14 @@ function buildExecutionProfile(input: {
       channelId: input.target.channelId,
       ...(input.target.protocolFamily ? { protocolFamily: input.target.protocolFamily } : {}),
       ...(input.target.apiStyle ? { apiStyle: input.target.apiStyle } : {}),
+      ...(input.target.providerBindingId ? { providerBindingId: input.target.providerBindingId } : {}),
+      ...(typeof input.target.supportsReasoning === "boolean"
+        ? { supportsReasoning: input.target.supportsReasoning }
+        : {}),
       ...(typeof input.target.supportsFunctionCall === "boolean"
         ? { supportsFunctionCall: input.target.supportsFunctionCall }
         : {}),
+      ...(input.target.interleaved !== undefined ? { interleaved: input.target.interleaved } : {}),
       ...(typeof input.target.contextWindow === "number" ? { contextWindow: input.target.contextWindow } : {}),
       ...(typeof input.target.maxOutputTokens === "number" ? { maxOutputTokens: input.target.maxOutputTokens } : {}),
       ...(input.scope ? { scope: input.scope } : {}),
@@ -88,9 +112,12 @@ implements DesktopAiExecutionProfileMaterializerPort {
       providerType: resolved.providerType,
       channelId: resolved.channelId,
       modelId: resolved.modelId,
+      providerBindingId: resolved.providerBindingId,
       protocolFamily: resolved.protocolFamily,
       apiStyle: resolved.apiStyle,
+      supportsReasoning: resolved.supportsReasoning,
       supportsFunctionCall: resolved.supportsFunctionCall,
+      interleaved: resolved.interleaved,
       contextWindow: resolved.contextWindow,
       maxOutputTokens: resolved.maxOutputTokens,
     };
@@ -102,6 +129,7 @@ implements DesktopAiExecutionProfileMaterializerPort {
         workspaceId,
       }),
       runtimeSelector: {
+        ...(resolved.providerBindingId ? { providerBindingId: resolved.providerBindingId } : {}),
         protocolFamily: resolved.protocolFamily,
         apiStyle: resolved.apiStyle,
       },
@@ -110,7 +138,9 @@ implements DesktopAiExecutionProfileMaterializerPort {
         apiStyle: resolved.apiStyle,
       },
       capabilities: buildRuntimeCapabilities({
+        supportsReasoning: resolved.supportsReasoning,
         supportsFunctionCall: resolved.supportsFunctionCall,
+        interleaved: resolved.interleaved,
       }),
       resolveServiceConfig: async () => cloneServiceConfig(resolved.serviceConfig),
       target,

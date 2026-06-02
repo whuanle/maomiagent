@@ -49,6 +49,7 @@ export type AnthropicMessageContentBlock =
 export type AnthropicMessage = {
   role: "user" | "assistant";
   content: readonly AnthropicMessageContentBlock[];
+  reasoning_content?: string;
 };
 
 export type AnthropicToolDefinition = {
@@ -103,6 +104,14 @@ function renderBlockGroup(label: string, blocks: readonly ContextBlock[]): strin
 function collectTextParts(parts: readonly MessagePart[]): string {
   return parts
     .filter((part): part is Extract<MessagePart, { type: "text" }> => part.type === "text")
+    .map((part) => part.text)
+    .join("")
+    .trim();
+}
+
+function collectReasoningParts(parts: readonly MessagePart[]): string {
+  return parts
+    .filter((part): part is Extract<MessagePart, { type: "reasoning" }> => part.type === "reasoning")
     .map((part) => part.text)
     .join("")
     .trim();
@@ -235,10 +244,13 @@ function buildMessageInputItem(message: MessageRecordWithParts): AnthropicMessag
 
   if (message.message.role === "assistant") {
     const content = buildAssistantMessageContent(message);
+    const reasoning = collectReasoningParts(message.parts);
+    const hasToolCalls = message.parts.some((part) => part.type === "tool_call_ref");
     return content.length > 0
       ? [{
           role: "assistant",
           content,
+          ...((reasoning || hasToolCalls) ? { reasoning_content: reasoning || "" } : {}),
         }]
       : [];
   }

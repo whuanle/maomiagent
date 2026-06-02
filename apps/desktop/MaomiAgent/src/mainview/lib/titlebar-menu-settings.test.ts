@@ -9,6 +9,12 @@ describe("titlebar menu settings", () => {
     expect(settings.collapsedMenuKeys).not.toContain("git");
   });
 
+  test("collapses tasks and memory into more by default", () => {
+    const settings = normalizeTitlebarMenuSettings();
+
+    expect(settings.collapsedMenuKeys).toEqual(["tasks", "memory", "settings"]);
+  });
+
   test("drops git from legacy collapsed menu settings", () => {
     const settings = normalizeTitlebarMenuSettings({
       orderedMenuKeys: ["chat", "workspace", "git", "settings"],

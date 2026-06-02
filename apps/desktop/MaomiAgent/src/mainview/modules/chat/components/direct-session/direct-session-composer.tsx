@@ -56,6 +56,12 @@ export function DirectSessionComposer(props: Props) {
   const planModeEnabled = props.composerMode === "plan";
   const modeLabel = isEn ? "Plan mode" : "Plan 模式";
   const planModeAgentPlaceholder = "Plan";
+  const showAttachmentButton = props.showAttachmentButton !== false;
+  const showModeSwitch = props.showModeSwitch !== false;
+  const showModelSelect = props.showModelSelect !== false;
+  const showAgentSelect = props.showAgentSelect !== false;
+  const showContextDivider = showAttachmentButton
+    && (showModeSwitch || showModelSelect || showAgentSelect || Boolean(props.tokenBudgetUsage) || Boolean(props.contextCompressionStatus));
 
   function formatAttachmentSize(sizeBytes?: number) {
     if (typeof sizeBytes !== "number" || !Number.isFinite(sizeBytes) || sizeBytes <= 0) {
@@ -229,56 +235,65 @@ export function DirectSessionComposer(props: Props) {
                 title={props.attachLabel}
                 aria-label={props.attachLabel}
                 disabled={props.disabled}
+                hidden={!showAttachmentButton}
                 onClick={() => fileInputRef.current?.click()}
               >
                 <PaperClipOutlined />
               </button>
-              <span className="chat-direct-composer-context-divider" aria-hidden="true" />
-              <div className="chat-direct-composer-select-shell">
-                <div className="chat-direct-composer-mode-switch" aria-label={modeLabel}>
-                  <span className="chat-direct-composer-mode-switch-label">{modeLabel}</span>
-                  <Switch
-                    size="small"
-                    checked={planModeEnabled}
-                    disabled={props.disabled}
-                    onChange={(checked) => props.onModeChange(checked ? "plan" : "agent")}
+              {showContextDivider ? (
+                <span className="chat-direct-composer-context-divider" aria-hidden="true" />
+              ) : null}
+              {showModeSwitch ? (
+                <div className="chat-direct-composer-select-shell">
+                  <div className="chat-direct-composer-mode-switch" aria-label={modeLabel}>
+                    <span className="chat-direct-composer-mode-switch-label">{modeLabel}</span>
+                    <Switch
+                      size="small"
+                      checked={planModeEnabled}
+                      disabled={props.disabled}
+                      onChange={(checked) => props.onModeChange(checked ? "plan" : "agent")}
+                    />
+                  </div>
+                </div>
+              ) : null}
+              {showModelSelect ? (
+                <div className="chat-direct-composer-select-shell">
+                  <Select
+                    className="chat-direct-composer-select"
+                    variant="borderless"
+                    showSearch
+                    popupMatchSelectWidth={COMPOSER_SELECT_POPUP_WIDTH}
+                    getPopupContainer={resolvePopupContainer}
+                    optionFilterProp="searchText"
+                    disabled={props.disabled || props.modelSelectOptions.length === 0}
+                    placeholder={props.modelPlaceholder}
+                    notFoundContent={isEn ? "No models" : "暂无可用模型"}
+                    options={props.modelSelectOptions}
+                    value={props.selectedModelValue}
+                    aria-label={props.modelPlaceholder}
+                    onChange={(value) => props.onModelChange(typeof value === "string" ? value : undefined)}
                   />
                 </div>
-              </div>
-              <div className="chat-direct-composer-select-shell">
-                <Select
-                  className="chat-direct-composer-select"
-                  variant="borderless"
-                  showSearch
-                  popupMatchSelectWidth={COMPOSER_SELECT_POPUP_WIDTH}
-                  getPopupContainer={resolvePopupContainer}
-                  optionFilterProp="searchText"
-                  disabled={props.disabled || props.modelSelectOptions.length === 0}
-                  placeholder={props.modelPlaceholder}
-                  notFoundContent={isEn ? "No models" : "暂无可用模型"}
-                  options={props.modelSelectOptions}
-                  value={props.selectedModelValue}
-                  aria-label={props.modelPlaceholder}
-                  onChange={(value) => props.onModelChange(typeof value === "string" ? value : undefined)}
-                />
-              </div>
-              <div className="chat-direct-composer-select-shell">
-                <Select
-                  className="chat-direct-composer-select"
-                  variant="borderless"
-                  showSearch
-                  popupMatchSelectWidth={COMPOSER_SELECT_POPUP_WIDTH}
-                  getPopupContainer={resolvePopupContainer}
-                  filterOption={filterAgentOption}
-                  disabled={props.disabled || planModeEnabled}
-                  placeholder={planModeEnabled ? planModeAgentPlaceholder : props.agentPlaceholder}
-                  notFoundContent={isEn ? "No agents" : "暂无可用智能体"}
-                  options={props.agentOptions}
-                  value={planModeEnabled ? undefined : props.selectedAgentId}
-                  aria-label={planModeEnabled ? planModeAgentPlaceholder : props.agentPlaceholder}
-                  onChange={(value) => props.onAgentChange(typeof value === "string" ? value : undefined)}
-                />
-              </div>
+              ) : null}
+              {showAgentSelect ? (
+                <div className="chat-direct-composer-select-shell">
+                  <Select
+                    className="chat-direct-composer-select"
+                    variant="borderless"
+                    showSearch
+                    popupMatchSelectWidth={COMPOSER_SELECT_POPUP_WIDTH}
+                    getPopupContainer={resolvePopupContainer}
+                    filterOption={filterAgentOption}
+                    disabled={props.disabled || planModeEnabled || props.disableAgentSelect === true}
+                    placeholder={planModeEnabled ? planModeAgentPlaceholder : props.agentPlaceholder}
+                    notFoundContent={isEn ? "No agents" : "暂无可用智能体"}
+                    options={props.agentOptions}
+                    value={planModeEnabled ? undefined : props.selectedAgentId}
+                    aria-label={planModeEnabled ? planModeAgentPlaceholder : props.agentPlaceholder}
+                    onChange={(value) => props.onAgentChange(typeof value === "string" ? value : undefined)}
+                  />
+                </div>
+              ) : null}
               {props.tokenBudgetUsage ? (
                 <div
                   className={`chat-direct-composer-token-usage is-${props.tokenBudgetUsage.status}`}

@@ -5,6 +5,9 @@ import {
   AnthropicMessagesAiTurnPortAdapter,
 } from "../implementation/anthropic";
 import {
+  GoogleGenerateContentAiTurnPortAdapter,
+} from "../implementation/google";
+import {
   OpenAIChatCompletionsAiTurnPortAdapter,
   OpenAIResponsesAiTurnPortAdapter,
 } from "../implementation/openai";
@@ -28,6 +31,11 @@ describe("DesktopAiRuntimeService", () => {
       protocolFamily: "anthropic",
       apiStyle: "messages",
       adapterId: "anthropic-messages",
+    }, {
+      id: "google-generate-content",
+      protocolFamily: "google",
+      apiStyle: "generate-content",
+      adapterId: "google-generate-content",
     }]);
 
     expect(service.findProviderRuntime({
@@ -53,6 +61,14 @@ describe("DesktopAiRuntimeService", () => {
       protocolFamily: "anthropic",
       apiStyle: "messages",
       adapterId: "anthropic-messages",
+    });
+    expect(service.findProviderRuntime({
+      bindingId: "google-generate-content",
+    })).toEqual({
+      id: "google-generate-content",
+      protocolFamily: "google",
+      apiStyle: "generate-content",
+      adapterId: "google-generate-content",
     });
   });
 
@@ -82,6 +98,13 @@ describe("DesktopAiRuntimeService", () => {
         apiKey: "sk-test",
       }),
     })).toBeInstanceOf(AnthropicMessagesAiTurnPortAdapter);
+    expect(service.createTurnPort({
+      bindingId: "google-generate-content",
+    }, {
+      resolveServiceConfig: async () => ({
+        apiKey: "google-test-key",
+      }),
+    })).toBeInstanceOf(GoogleGenerateContentAiTurnPortAdapter);
     expect(service.createTurnPort({
       bindingId: "missing-runtime",
     }, {

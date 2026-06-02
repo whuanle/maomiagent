@@ -39,6 +39,7 @@ describe("custom model metadata helpers", () => {
       supportsFunctionCall: false,
       supportsStructuredOutput: false,
       supportsTemperature: false,
+      interleaved: undefined,
       modalities: {
         input: ["text", "image"],
         output: ["text"],
@@ -77,6 +78,9 @@ describe("custom model metadata helpers", () => {
       supportsFunctionCall: false,
       supportsStructuredOutput: true,
       supportsTemperature: false,
+      interleaved: {
+        field: "reasoning_content",
+      },
       modalities: {
         input: ["text", " image "],
         output: ["text", "TEXT"],
@@ -103,12 +107,44 @@ describe("custom model metadata helpers", () => {
         input: 1.2,
       },
       interleaved: {
-        field: "messages",
+        field: "reasoning_content",
       },
     }, {
       modelId: "mimo-v2-pro",
       displayName: "MiMo Pro",
     }]);
+  });
+
+  test("reads interleaved reasoning metadata for editing", () => {
+    const channel = {
+      metadata: {
+        customModels: [{
+          modelId: "kimi-k2.5",
+          displayName: "Kimi K2.5",
+          supportsReasoning: true,
+          interleaved: {
+            field: "reasoning_content",
+          },
+        }],
+      },
+    } satisfies Pick<DesktopModelChannelItem, "metadata">;
+
+    expect(readCustomChannelModelForEdit(channel, "kimi-k2.5")).toEqual({
+      modelId: "kimi-k2.5",
+      displayName: "Kimi K2.5",
+      supportsAttachments: false,
+      supportsReasoning: true,
+      supportsFunctionCall: false,
+      supportsStructuredOutput: false,
+      supportsTemperature: false,
+      interleaved: {
+        field: "reasoning_content",
+      },
+      modalities: {
+        input: [],
+        output: [],
+      },
+    });
   });
 
   test("removes custom model entries while preserving remaining metadata", () => {

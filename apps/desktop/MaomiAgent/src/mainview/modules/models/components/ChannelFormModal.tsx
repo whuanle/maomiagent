@@ -1,17 +1,28 @@
-import { Alert, Col, Form, Input, InputNumber, Modal, Row, Select, Switch, Typography } from "antd";
+import { MinusCircleOutlined, PlusOutlined } from "@ant-design/icons";
+import { Alert, Button, Col, Form, Input, InputNumber, Modal, Row, Select, Space, Switch, Typography } from "antd";
 import { useEffect, useMemo } from "react";
 import {
   isValidDesktopModelChannelId,
   normalizeDesktopModelChannelId,
 } from "../../../../shared/desktop-models";
 import type {
+  DesktopModelChannelItem,
   DesktopModelProviderConfigField,
   DesktopModelProviderConfigValue,
   DesktopModelProviderItem,
 } from "../../../../shared/desktop-models";
 import type { Translate } from "../../../i18n";
+import {
+  CUSTOM_CHANNEL_PROTOCOL_PRESETS,
+  getPresetProviderProtocolPresets,
+  getCustomChannelProtocolPreset,
+  resolvePresetProviderProtocolPresetId,
+  resolveChannelEditorMode,
+  resolveCustomChannelPresetFromChannel,
+} from "../services/channel-protocol";
 import type {
   ModelsChannelEditorState,
+  ModelsChannelHeaderRow,
   ModelsChannelFormValues,
 } from "../types";
 
@@ -25,12 +36,11 @@ type ChannelFormModalProps = {
   onSubmit: (values: ModelsChannelFormValues) => Promise<void>;
 };
 
-function extractLegacyEnvValues(editor: ModelsChannelEditorState | null) {
-  const env = editor?.mode === "edit"
-    && editor.item.metadata
-    && typeof editor.item.metadata === "object"
-    && !Array.isArray(editor.item.metadata)
-      ? (editor.item.metadata.env as Record<string, unknown> | undefined)
+function extractLegacyEnvValues(channel: DesktopModelChannelItem | null) {
+  const env = channel?.metadata
+    && typeof channel.metadata === "object"
+    && !Array.isArray(channel.metadata)
+      ? (channel.metadata.env as Record<string, unknown> | undefined)
       : undefined;
 
   if (!env || typeof env !== "object" || Array.isArray(env)) {
@@ -43,12 +53,11 @@ function extractLegacyEnvValues(editor: ModelsChannelEditorState | null) {
   );
 }
 
-function extractStoredConfigValues(editor: ModelsChannelEditorState | null) {
-  const config = editor?.mode === "edit"
-    && editor.item.metadata
-    && typeof editor.item.metadata === "object"
-    && !Array.isArray(editor.item.metadata)
-      ? (editor.item.metadata.config as Record<string, unknown> | undefined)
+function extractStoredConfigValues(channel: DesktopModelChannelItem | null) {
+  const config = channel?.metadata
+    && typeof channel.metadata === "object"
+    && !Array.isArray(channel.metadata)
+      ? (channel.metadata.config as Record<string, unknown> | undefined)
       : undefined;
 
   if (!config || typeof config !== "object" || Array.isArray(config)) {
@@ -65,10 +74,34 @@ function extractStoredConfigValues(editor: ModelsChannelEditorState | null) {
   );
 }
 
-function buildProviderConfigDefaults(provider: DesktopModelProviderItem | null | undefined) {
+function extractStoredHeaders(channel: DesktopModelChannelItem | null): ModelsChannelHeaderRow[] {
+  const headers = channel?.metadata
+    && typeof channel.metadata === "object"
+    && !Array.isArray(channel.metadata)
+      ? (channel.metadata.headers as Record<string, unknown> | undefined)
+      : undefined;
+
+  if (!headers || typeof headers !== "object" || Array.isArray(headers)) {
+    return [];
+  }
+
+  return Object.entries(headers)
+    .filter((entry): entry is [string, string] => (
+      typeof entry[0] === "string"
+      && entry[0].trim().length > 0
+      && typeof entry[1] === "string"
+      && entry[1].trim().length > 0
+    ))
+    .map(([key, value]) => ({
+      key: key.trim(),
+      value: value.trim(),
+    }));
+}
+
+function buildConfigDefaults(fields: DesktopModelProviderConfigField[]) {
   const next: Record<string, DesktopModelProviderConfigValue> = {};
 
-  for (const field of provider?.configSchema ?? []) {
+  for (const field of fields) {
     if (field.defaultValue !== undefined) {
       next[field.key] = field.defaultValue;
       continue;
@@ -88,16 +121,16 @@ function buildProviderConfigDefaults(provider: DesktopModelProviderItem | null |
 }
 
 function extractConfigValues(
-  editor: ModelsChannelEditorState | null,
-  provider: DesktopModelProviderItem | null | undefined,
+  channel: DesktopModelChannelItem | null,
+  fields: DesktopModelProviderConfigField[],
 ) {
   const next = {
-    ...buildProviderConfigDefaults(provider),
-    ...extractStoredConfigValues(editor),
+    ...buildConfigDefaults(fields),
+    ...extractStoredConfigValues(channel),
   };
-  const legacyEnv = extractLegacyEnvValues(editor);
+  const legacyEnv = extractLegacyEnvValues(channel);
 
-  for (const field of provider?.configSchema ?? []) {
+  for (const field of fields) {
     if (!field.envKey) {
       continue;
     }
@@ -119,11 +152,32 @@ function extractConfigValues(
   return next;
 }
 
+function resolveChannelFormBaseUrl(input: {
+  sourceMode: "provider" | "protocol";
+  channel?: DesktopModelChannelItem | null;
+  provider?: DesktopModelProviderItem | null;
+  protocolDefaultBaseUrl?: string;
+}) {
+  const explicitBaseUrl = input.channel?.baseUrl?.trim();
+  if (explicitBaseUrl) {
+    return explicitBaseUrl;
+  }
+
+  if (input.sourceMode === "protocol") {
+    return input.protocolDefaultBaseUrl ?? "";
+  }
+
+  return input.provider?.defaultBaseUrl ?? input.protocolDefaultBaseUrl ?? "";
+}
+
 export function ChannelFormModal(props: ChannelFormModalProps) {
   const { open, editor, providers, submitting, t, onCancel, onSubmit } = props;
   const [form] = Form.useForm<ModelsChannelFormValues>();
   const isEditMode = editor?.mode === "edit";
+  const sourceMode = Form.useWatch("sourceMode", form) ?? "provider";
   const selectedProviderType = Form.useWatch("providerType", form);
+  const selectedProviderProtocolId = Form.useWatch("providerProtocolId", form);
+  const selectedProtocolId = Form.useWatch("protocolId", form);
 
   const providerOptions = useMemo(() => {
     return [...providers]
@@ -140,8 +194,22 @@ export function ChannelFormModal(props: ChannelFormModalProps) {
     () => providers.find((item) => item.providerType === selectedProviderType) ?? null,
     [providers, selectedProviderType],
   );
+  const providerProtocolPresets = useMemo(
+    () => getPresetProviderProtocolPresets(currentProvider ?? undefined),
+    [currentProvider],
+  );
+  const currentProviderProtocol = useMemo(
+    () => providerProtocolPresets.find((item) => item.id === selectedProviderProtocolId) ?? providerProtocolPresets[0],
+    [providerProtocolPresets, selectedProviderProtocolId],
+  );
+  const currentProtocol = useMemo(
+    () => getCustomChannelProtocolPreset(selectedProtocolId),
+    [selectedProtocolId],
+  );
 
-  const providerConfigFields = currentProvider?.configSchema ?? [];
+  const activeConfigFields = sourceMode === "protocol"
+    ? currentProtocol?.configSchema ?? []
+    : currentProvider?.configSchema ?? [];
 
   const channelIdRules = useMemo(() => [
     { required: true, message: t("模型页.校验.渠道ID必填") },
@@ -157,6 +225,21 @@ export function ChannelFormModal(props: ChannelFormModalProps) {
       },
     },
   ], [t]);
+  const baseUrlRules = useMemo(() => [{
+    validator: async (_rule: unknown, value: unknown) => {
+      const normalized = typeof value === "string" ? value.trim() : "";
+      if (!normalized) {
+        return;
+      }
+
+      try {
+        // eslint-disable-next-line no-new
+        new URL(normalized);
+      } catch {
+        throw new Error(t("模型页.校验.BaseUrl格式"));
+      }
+    },
+  }], [t]);
 
   useEffect(() => {
     if (!open) {
@@ -164,39 +247,64 @@ export function ChannelFormModal(props: ChannelFormModalProps) {
       return;
     }
 
-    const providerType = editor?.mode === "edit"
-      ? editor.item.providerType
-      : editor?.preferredProviderType ?? providerOptions[0]?.value;
-    const initialProvider = providers.find((item) => item.providerType === providerType) ?? null;
-
     if (editor?.mode === "edit") {
+      const sourceModeValue = resolveChannelEditorMode(editor.item);
+      const protocolPreset = sourceModeValue === "protocol"
+        ? resolveCustomChannelPresetFromChannel(editor.item)
+        : undefined;
+      const initialProvider = providers.find((item) => item.providerType === editor.item.providerType) ?? null;
+      const initialFields = sourceModeValue === "protocol"
+        ? protocolPreset?.configSchema ?? []
+        : initialProvider?.configSchema ?? [];
+
       form.setFieldsValue({
+        sourceMode: sourceModeValue,
         providerType: editor.item.providerType,
+        providerProtocolId: sourceModeValue === "provider"
+          ? resolvePresetProviderProtocolPresetId(initialProvider ?? undefined, editor.item)
+          : undefined,
+        protocolId: protocolPreset?.id,
         channelId: editor.item.channelId,
         name: editor.item.name,
-        baseUrl: editor.item.baseUrl,
-        config: extractConfigValues(editor, initialProvider),
+        baseUrl: resolveChannelFormBaseUrl({
+          sourceMode: sourceModeValue,
+          channel: editor.item,
+          provider: initialProvider,
+          protocolDefaultBaseUrl: protocolPreset?.defaultBaseUrl,
+        }),
+        config: extractConfigValues(editor.item, initialFields),
+        headers: sourceModeValue === "protocol" ? extractStoredHeaders(editor.item) : [],
         enabled: editor.item.enabled,
       });
       return;
     }
 
+    const providerType = editor?.preferredProviderType ?? providerOptions[0]?.value;
+    const initialProvider = providers.find((item) => item.providerType === providerType) ?? null;
+
     form.setFieldsValue({
+      sourceMode: "provider",
       providerType,
+      providerProtocolId: resolvePresetProviderProtocolPresetId(initialProvider ?? undefined),
+      protocolId: undefined,
       channelId: "",
       name: "",
-      baseUrl: "",
-      config: extractConfigValues(null, initialProvider),
+      baseUrl: resolveChannelFormBaseUrl({
+        sourceMode: "provider",
+        provider: initialProvider,
+      }),
+      config: extractConfigValues(null, initialProvider?.configSchema ?? []),
+      headers: [],
       enabled: true,
     });
   }, [editor, form, open, providerOptions, providers]);
 
   useEffect(() => {
-    if (!open || !currentProvider) {
+    if (!open) {
       return;
     }
 
-    const defaultConfig = buildProviderConfigDefaults(currentProvider);
+    const defaultConfig = buildConfigDefaults(activeConfigFields);
     const currentConfig = form.getFieldValue("config") ?? {};
     const nextConfig = { ...currentConfig };
     let changed = false;
@@ -213,9 +321,50 @@ export function ChannelFormModal(props: ChannelFormModalProps) {
     }
 
     form.setFieldValue("config", nextConfig);
-  }, [currentProvider, form, open]);
+  }, [activeConfigFields, form, open]);
+
+  useEffect(() => {
+    if (!open || sourceMode !== "provider") {
+      return;
+    }
+
+    const editChannel = editor?.mode === "edit" ? editor.item : undefined;
+    const nextProviderProtocolId = resolvePresetProviderProtocolPresetId(
+      currentProvider ?? undefined,
+      editChannel,
+    );
+    if (providerProtocolPresets.length === 0) {
+      if (form.getFieldValue("providerProtocolId") !== undefined) {
+        form.setFieldValue("providerProtocolId", undefined);
+      }
+      return;
+    }
+
+    if (
+      typeof selectedProviderProtocolId !== "string"
+      || !providerProtocolPresets.some((item) => item.id === selectedProviderProtocolId)
+    ) {
+      form.setFieldValue("providerProtocolId", nextProviderProtocolId);
+    }
+  }, [
+    currentProvider,
+    editor,
+    form,
+    open,
+    providerProtocolPresets,
+    selectedProviderProtocolId,
+    sourceMode,
+  ]);
 
   const baseUrlPlaceholder = useMemo(() => {
+    if (sourceMode === "protocol" && currentProtocol) {
+      return currentProtocol.defaultBaseUrl;
+    }
+
+    if (sourceMode === "provider" && currentProviderProtocol) {
+      return currentProviderProtocol.defaultBaseUrl;
+    }
+
     if (currentProvider?.defaultBaseUrl) {
       return currentProvider.defaultBaseUrl;
     }
@@ -231,13 +380,84 @@ export function ChannelFormModal(props: ChannelFormModalProps) {
       return "https://{resource}.services.ai.azure.com/models";
     }
     return "https://api.example.com/v1";
-  }, [currentProvider?.defaultBaseUrl, currentProvider?.deploymentKind, currentProvider?.protocolFamily, currentProvider?.providerType]);
+  }, [
+    currentProtocol,
+    currentProvider?.defaultBaseUrl,
+    currentProvider?.deploymentKind,
+    currentProvider?.protocolFamily,
+    currentProvider?.providerType,
+    currentProviderProtocol,
+    sourceMode,
+  ]);
+
+  const protocolOptions = useMemo(() => (
+    CUSTOM_CHANNEL_PROTOCOL_PRESETS.map((item) => ({
+      label: t(item.labelKey as never),
+      value: item.id,
+    }))
+  ), [t]);
+  const providerProtocolOptions = useMemo(() => (
+    providerProtocolPresets.map((item) => ({
+      label: t(item.labelKey as never),
+      value: item.id,
+    }))
+  ), [providerProtocolPresets, t]);
 
   const handleProviderTypeChange = (providerType: string) => {
     const provider = providers.find((item) => item.providerType === providerType) ?? null;
     form.setFieldsValue({
       providerType,
-      config: extractConfigValues(null, provider),
+      providerProtocolId: resolvePresetProviderProtocolPresetId(provider ?? undefined),
+      baseUrl: resolveChannelFormBaseUrl({
+        sourceMode: "provider",
+        provider,
+      }),
+      config: extractConfigValues(null, provider?.configSchema ?? []),
+    });
+  };
+  const handleSourceModeChange = (nextMode: ModelsChannelFormValues["sourceMode"]) => {
+    if (nextMode === "protocol") {
+      const firstProtocol = CUSTOM_CHANNEL_PROTOCOL_PRESETS[0];
+      form.setFieldsValue({
+        sourceMode: nextMode,
+        protocolId: firstProtocol?.id,
+        providerType: firstProtocol?.providerType,
+        baseUrl: resolveChannelFormBaseUrl({
+          sourceMode: "protocol",
+          protocolDefaultBaseUrl: firstProtocol?.defaultBaseUrl,
+        }),
+        config: extractConfigValues(null, firstProtocol?.configSchema ?? []),
+        headers: [],
+      });
+      return;
+    }
+
+    const nextProviderType = providerOptions[0]?.value;
+    const provider = providers.find((item) => item.providerType === nextProviderType) ?? null;
+    form.setFieldsValue({
+      sourceMode: nextMode,
+      providerType: nextProviderType,
+      providerProtocolId: resolvePresetProviderProtocolPresetId(provider ?? undefined),
+      protocolId: undefined,
+      baseUrl: resolveChannelFormBaseUrl({
+        sourceMode: "provider",
+        provider,
+      }),
+      config: extractConfigValues(null, provider?.configSchema ?? []),
+      headers: [],
+    });
+  };
+  const handleProtocolChange = (protocolId: string) => {
+    const preset = getCustomChannelProtocolPreset(protocolId);
+    form.setFieldsValue({
+      protocolId,
+      providerType: preset?.providerType,
+      baseUrl: resolveChannelFormBaseUrl({
+        sourceMode: "protocol",
+        protocolDefaultBaseUrl: preset?.defaultBaseUrl,
+      }),
+      config: extractConfigValues(null, preset?.configSchema ?? []),
+      headers: [],
     });
   };
 
@@ -328,6 +548,36 @@ export function ChannelFormModal(props: ChannelFormModalProps) {
         initialValues={{ enabled: true, env: {} }}
       >
         <Form.Item
+          label={t("模型页.字段.创建方式")}
+          name="sourceMode"
+          rules={[{ required: true }]}
+        >
+          <Select
+            options={[
+              { value: "provider", label: t("模型页.字段.创建方式.预置提供商") },
+              { value: "protocol", label: t("模型页.字段.创建方式.自定义协议") },
+            ]}
+            disabled={isEditMode}
+            onChange={handleSourceModeChange}
+          />
+        </Form.Item>
+
+        {sourceMode === "protocol" ? (
+          <Form.Item
+            label={t("模型页.字段.协议类型")}
+            name="protocolId"
+            rules={[{ required: true, message: t("模型页.校验.协议必填") }]}
+          >
+            <Select
+              options={protocolOptions}
+              disabled={isEditMode}
+              onChange={handleProtocolChange}
+            />
+          </Form.Item>
+        ) : null}
+
+        {sourceMode === "provider" ? (
+        <Form.Item
           label={t("模型页.字段.提供商")}
           name="providerType"
           rules={[{ required: true, message: t("模型页.校验.提供商必填") }]}
@@ -340,6 +590,7 @@ export function ChannelFormModal(props: ChannelFormModalProps) {
             onChange={handleProviderTypeChange}
           />
         </Form.Item>
+        ) : null}
 
         <Form.Item
           label={t("模型页.字段.渠道ID")}
@@ -357,11 +608,27 @@ export function ChannelFormModal(props: ChannelFormModalProps) {
           <Input />
         </Form.Item>
 
-        <Form.Item label={t("模型页.字段.BaseUrl")} name="baseUrl">
+        <Form.Item label={t("模型页.字段.BaseUrl")} name="baseUrl" rules={baseUrlRules}>
           <Input placeholder={baseUrlPlaceholder} />
         </Form.Item>
 
-        {currentProvider?.doc ? (
+        {sourceMode === "provider" && providerProtocolOptions.length > 0 ? (
+          <Form.Item
+            label={t("模型页.字段.协议格式")}
+            name="providerProtocolId"
+            rules={[{ required: true, message: t("模型页.校验.协议格式必填") }]}
+          >
+            <Select options={providerProtocolOptions} />
+          </Form.Item>
+        ) : null}
+
+        {sourceMode === "provider" && currentProviderProtocol ? (
+          <Form.Item label={t("模型页.字段.SDKProvider")}>
+            <Input value={currentProviderProtocol.sdkProviderPackage} readOnly disabled />
+          </Form.Item>
+        ) : null}
+
+        {sourceMode === "provider" && currentProvider?.doc ? (
           <Alert
             type="info"
             showIcon={false}
@@ -374,9 +641,9 @@ export function ChannelFormModal(props: ChannelFormModalProps) {
           />
         ) : null}
 
-        {providerConfigFields.length > 0 ? (
+        {activeConfigFields.length > 0 ? (
           <Row gutter={16} className="models-page-provider-env-grid">
-            {providerConfigFields.map((field) => (
+            {activeConfigFields.map((field) => (
               <Col xs={24} md={12} key={field.key}>
                 <Form.Item
                   label={field.label}
@@ -390,6 +657,57 @@ export function ChannelFormModal(props: ChannelFormModalProps) {
               </Col>
             ))}
           </Row>
+        ) : null}
+
+        {sourceMode === "protocol" ? (
+          <Form.List name="headers">
+            {(fields, { add, remove }) => (
+              <div className="models-page-provider-env-grid">
+                <Form.Item label={t("模型页.字段.自定义Header")}>
+                  <Space direction="vertical" size={12} style={{ width: "100%" }}>
+                    {fields.map((field) => (
+                      <Row gutter={12} key={field.key} align="middle">
+                        <Col span={10}>
+                          <Form.Item
+                            name={[field.name, "key"]}
+                            rules={[{ whitespace: true }]}
+                            style={{ marginBottom: 0 }}
+                          >
+                            <Input placeholder={t("模型页.字段.HeaderKey")} />
+                          </Form.Item>
+                        </Col>
+                        <Col span={12}>
+                          <Form.Item
+                            name={[field.name, "value"]}
+                            rules={[{ whitespace: true }]}
+                            style={{ marginBottom: 0 }}
+                          >
+                            <Input placeholder={t("模型页.字段.HeaderValue")} />
+                          </Form.Item>
+                        </Col>
+                        <Col span={2}>
+                          <Button
+                            type="text"
+                            danger
+                            aria-label={t("模型页.按钮.删除Header")}
+                            icon={<MinusCircleOutlined />}
+                            onClick={() => remove(field.name)}
+                          />
+                        </Col>
+                      </Row>
+                    ))}
+                    <Button
+                      type="dashed"
+                      icon={<PlusOutlined />}
+                      onClick={() => add({ key: "", value: "" })}
+                    >
+                      {t("模型页.按钮.新增Header")}
+                    </Button>
+                  </Space>
+                </Form.Item>
+              </div>
+            )}
+          </Form.List>
         ) : null}
 
         {!isEditMode ? (

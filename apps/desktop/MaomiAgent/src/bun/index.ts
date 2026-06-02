@@ -77,6 +77,10 @@ import {
   DESKTOP_WECHAT_QUERY_PORT,
 } from "./modules/wechat";
 import {
+  DESKTOP_UI_DESIGNER_COMMAND_PORT,
+  DESKTOP_UI_DESIGNER_QUERY_PORT,
+} from "./modules/ui-designer";
+import {
   DESKTOP_FEISHU_COMMAND_PORT,
   DESKTOP_FEISHU_QUERY_PORT,
 } from "./modules/feishu";
@@ -635,6 +639,14 @@ function resolveDesktopAgentsCommandPort(host: ModuleHost | null) {
   return resolveModuleHost(host).container.resolve(DESKTOP_AGENTS_COMMAND_PORT);
 }
 
+function resolveDesktopUiDesignerQueryPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_UI_DESIGNER_QUERY_PORT);
+}
+
+function resolveDesktopUiDesignerCommandPort(host: ModuleHost | null) {
+  return resolveModuleHost(host).container.resolve(DESKTOP_UI_DESIGNER_COMMAND_PORT);
+}
+
 function resolveDesktopModelsQueryPort(host: ModuleHost | null) {
   return resolveModuleHost(host).container.resolve(DESKTOP_MODELS_QUERY_PORT);
 }
@@ -949,6 +961,10 @@ try {
               resolveDesktopWorkspaceQueryPort(host).getFileContent(workspaceId, path),
             writeDesktopWorkspaceTextFile: ({ workspaceId, path, content }) =>
               resolveDesktopWorkspaceCommandPort(host).writeTextFile(workspaceId, path, content),
+            getDesktopUiDesignerState: (query) =>
+              resolveDesktopUiDesignerQueryPort(host).getState(query),
+            saveDesktopUiDesignerDesignPackage: (input) =>
+              resolveDesktopUiDesignerCommandPort(host).saveDesignPackage(input),
             getDesktopGitIgnore: ({ workspaceId }) =>
               resolveDesktopGitQueryPort(host).getGitIgnore(workspaceId),
             getDesktopGitChanges: ({ workspaceId }) =>
@@ -1121,8 +1137,6 @@ try {
               resolveDesktopTerminalsCommandPort(host).close(sessionId),
             getDesktopWorkspace: ({ workspaceId }) =>
               resolveDesktopWorkspaceQueryPort(host).get(workspaceId),
-            writeDesktopWorkspaceTextFile: ({ workspaceId, path, content }) =>
-              resolveDesktopWorkspaceCommandPort(host).writeTextFile(workspaceId, path, content),
             createDesktopWorkspace: (input) =>
               resolveDesktopWorkspaceCommandPort(host).create(input),
             updateDesktopWorkspace: ({ workspaceId, input }) =>

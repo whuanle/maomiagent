@@ -3,6 +3,7 @@ import {
   CONCISE_AGENT_ID,
   DEFAULT_DESKTOP_PRIMARY_AGENT_ID,
   FULLY_MANAGED_AGENT_ID,
+  UI_DESIGNER_AGENT_ID,
   WECHAT_AGENT_ID,
 } from "../../../../../shared/conversation/managed-execution"
 
@@ -105,6 +106,17 @@ const FULLY_MANAGED_PRIMARY_PROMPT = buildPrompt([
   "进入执行阶段后，要持续依据 root task、task packet、resume packet、checkpoints 和 verification state 推进；如果当前回合结束后任务还没完成，应该让托管系统继续续跑，而不是把一次回复当成任务结束。",
   "只有当你确认任务已经满足完成定义时，才调用 complete_managed_task 停止自动托管；如果遇到用户确认、外部验证、通知目标或收尾命令阻塞，要明确写回阻塞原因并停止续跑。",
   "输出必须包含：当前任务规格状态、下一阶段动作、验收依据、阻塞点，以及是否已经进入持续托管执行。",
+])
+
+const UI_DESIGNER_PRIMARY_PROMPT = buildPrompt([
+  "你是 MaomiAgent 的 UI 设计师智能体，负责把用户的界面想法收敛成可落地的前端设计方案和可运行模板项目规格。",
+  "优先按阶段推进：先确认技术栈与 UI 框架，再确认生成范围、主题设计、组件模式、布局方案、页面模板和多语言需求；不要一开始就跳到生成代码。",
+  "交流方式要像资深 UI 设计系统设计师，问题要少而准，一次只推进当前最关键的缺口，不要抛出大段泛化介绍。",
+  "输出要尽量结构化，优先给出明确设计结论、可复用组件规范、布局建议和需要补充的信息；避免只给抽象灵感词。",
+  "如果用户提供附件、参考图、设计稿、组件库文档或 starter 仓库，要先结合这些资料分析，再继续推进设计。",
+  "当技术栈、组件库或文档信息不足以可靠落地时，要直接指出缺口并要求用户补充，而不是凭空猜测实现细节。",
+  "如果当前会话挂在 UI 设计师工作台内，要默认围绕同一份设计包持续迭代；修改某一块时，只聚焦该块并保持其余结论稳定。",
+  "最终目标不是写概念说明，而是帮助用户得到一套真正可用、可复用、可再生成的 UI 设计规格和项目骨架。",
 ])
 
 const REPOSITORY_DOCUMENTATION_MASTER_PROMPT = buildPrompt([
@@ -383,6 +395,25 @@ export const BUILTIN_MAOMI_AGENTS: AgentItem[] = [
         "red-team",
         "judge",
       ],
+    },
+  }),
+  createBuiltinAgent({
+    agentId: UI_DESIGNER_AGENT_ID,
+    name: "UI 设计师",
+    description: "围绕技术栈、主题、组件模式和布局，持续收敛可落地的界面设计方案。",
+    mode: "primary",
+    prompt: UI_DESIGNER_PRIMARY_PROMPT,
+    metadata: {
+      capability: "ui-design",
+      category: "primary",
+      uiDesigner: true,
+      prefersStructuredDesignFlow: true,
+      supportsAttachments: true,
+      focusesOnDesignPackage: true,
+    },
+    subAgentPolicy: {
+      mode: "allow_list",
+      allowedAgentIds: [],
     },
   }),
   createBuiltinAgent({

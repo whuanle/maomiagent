@@ -16,6 +16,10 @@ import {
   resolveDesktopChannelModelMetadata,
   resolvePreferredDesktopConversationalDefaultSelection,
 } from "../../../../../shared/desktop-model-metadata";
+import {
+  isCustomProtocolProviderType,
+  readChannelProtocolMetadata,
+} from "../../../../../shared/desktop-model-channel-protocol";
 import type {
   DesktopDiscoveredChannelModel,
   DesktopModelBatchToggleInput,
@@ -497,6 +501,12 @@ function inferProviderProtocolFamily(
 ): DesktopModelProviderProtocolFamily | undefined {
   const explicit = normalizeProviderProtocolFamily(raw.protocol_family);
   if (explicit) {
+    if (
+      explicit === "ollama"
+      && (providerType.toLowerCase() === "ollama" || providerType.toLowerCase() === "ollama-cloud")
+    ) {
+      return "openai";
+    }
     return explicit;
   }
 
@@ -517,7 +527,7 @@ function inferProviderProtocolFamily(
       return "google";
     case "ollama":
     case "ollama-cloud":
-      return "ollama";
+      return "openai";
     default:
       break;
   }
@@ -628,6 +638,7 @@ function inferProviderApiStyle(
 }
 
 function inferProviderDiscoveryKind(
+  providerType: string,
   raw: RawProviderType,
   protocolFamily: DesktopModelProviderProtocolFamily | undefined,
   deploymentKind: DesktopModelProviderDeploymentKind | undefined,
@@ -638,6 +649,10 @@ function inferProviderDiscoveryKind(
   }
 
   if (protocolFamily === "openai" && deploymentKind !== "azure-openai") {
+    const normalizedProviderType = providerType.toLowerCase();
+    if (normalizedProviderType === "ollama") {
+      return "ollama-tags";
+    }
     return "openai-models";
   }
   if (protocolFamily === "ollama" && deploymentKind === "local-native") {
@@ -934,7 +949,12 @@ function isRemoteModelDiscoverySupported(
 ) {
   const protocolFamily = inferProviderProtocolFamily(providerType, raw);
   const deploymentKind = inferProviderDeploymentKind(providerType, raw, protocolFamily);
-  const discoveryKind = inferProviderDiscoveryKind(raw, protocolFamily, deploymentKind);
+  const discoveryKind = inferProviderDiscoveryKind(
+    providerType,
+    raw,
+    protocolFamily,
+    deploymentKind,
+  );
   if (discoveryKind === "manual") {
     return false;
   }
@@ -943,14 +963,11 @@ function isRemoteModelDiscoverySupported(
   return Boolean(providerMode);
 }
 
-function resolveRemoteModelDiscoveryMode(
-  providerType: string,
-  raw: RawProviderType,
-): RemoteModelDiscoveryMode | null {
-  const protocolFamily = inferProviderProtocolFamily(providerType, raw);
-  const deploymentKind = inferProviderDeploymentKind(providerType, raw, protocolFamily);
-  const discoveryKind = inferProviderDiscoveryKind(raw, protocolFamily, deploymentKind);
 
+function resolveProtocolDiscoveryMode(
+  protocolFamily: DesktopModelProviderProtocolFamily | undefined,
+  discoveryKind: DesktopModelProviderDiscoveryKind | undefined,
+): RemoteModelDiscoveryMode | null {
   if (discoveryKind === "openai-models") {
     return "openai";
   }
@@ -959,6 +976,33 @@ function resolveRemoteModelDiscoveryMode(
   }
   if (discoveryKind === "manual" || discoveryKind === "custom") {
     return null;
+  }
+
+  if (protocolFamily === "openai") {
+    return "openai";
+  }
+  if (protocolFamily === "ollama") {
+    return "ollama";
+  }
+
+  return null;
+}
+
+function resolveRemoteModelDiscoveryMode(
+  providerType: string,
+  raw: RawProviderType,
+): RemoteModelDiscoveryMode | null {
+  const protocolFamily = inferProviderProtocolFamily(providerType, raw);
+  const deploymentKind = inferProviderDeploymentKind(providerType, raw, protocolFamily);
+  const discoveryKind = inferProviderDiscoveryKind(
+    providerType,
+    raw,
+    protocolFamily,
+    deploymentKind,
+  );
+  const protocolMode = resolveProtocolDiscoveryMode(protocolFamily, discoveryKind);
+  if (protocolMode) {
+    return protocolMode;
   }
 
   const providerPackage = getProviderPackageId(raw);
@@ -980,7 +1024,12 @@ function normalizeProviderType(
   const env = normalizeProviderEnvKeys(raw);
   const protocolFamily = inferProviderProtocolFamily(providerType, raw);
   const deploymentKind = inferProviderDeploymentKind(providerType, raw, protocolFamily);
-  const discoveryKind = inferProviderDiscoveryKind(raw, protocolFamily, deploymentKind);
+  const discoveryKind = inferProviderDiscoveryKind(
+    providerType,
+    raw,
+    protocolFamily,
+    deploymentKind,
+  );
   const apiStyle = inferProviderApiStyle(providerType, raw, protocolFamily, deploymentKind);
   const models: DesktopModelProviderItem["models"] = Object.entries(raw.models ?? {}).map(
     ([modelKey, model]) => {
@@ -1033,6 +1082,59 @@ function normalizeProviderType(
     doc: normalizeOptionalString(raw.doc),
     supportsRemoteModelDiscovery: isRemoteModelDiscoverySupported(providerType, raw),
     models,
+  };
+}
+
+function resolveProtocolDefaultBaseUrl(
+  protocolFamily: DesktopModelProviderProtocolFamily | undefined,
+  apiStyle: DesktopModelProviderApiStyle | undefined,
+): string | undefined {
+  if (protocolFamily === "openai" && apiStyle === "responses") {
+    return "https://api.openai.com/v1";
+  }
+  if (protocolFamily === "openai" && apiStyle === "chat-completions") {
+    return "https://api.openai.com/v1";
+  }
+  if (protocolFamily === "anthropic" && apiStyle === "messages") {
+    return "https://api.anthropic.com/v1";
+  }
+  if (protocolFamily === "google" && apiStyle === "generate-content") {
+    return "https://generativelanguage.googleapis.com/v1beta";
+  }
+  if (protocolFamily === "ollama" && apiStyle === "ollama-chat") {
+    return "http://127.0.0.1:11434";
+  }
+
+  return undefined;
+}
+
+function resolveChannelRuntimeBinding(input: {
+  providerType: string;
+  provider?: Pick<DesktopModelProviderItem, "runtimeSupport" | "protocolFamily" | "apiStyle">;
+  channel: Pick<DesktopModelChannelItem, "providerType" | "metadata">;
+}) {
+  const protocol = readChannelProtocolMetadata(input.channel);
+  const effectiveProviderBindingId = protocol.providerBindingId;
+  const effectiveProtocolFamily = protocol.protocolFamily ?? input.provider?.protocolFamily;
+  const effectiveApiStyle = protocol.apiStyle ?? input.provider?.apiStyle;
+  const runtimeSupport =
+    protocol.runtimeSupport
+    ?? (
+      protocol.providerBindingId || protocol.protocolFamily || protocol.apiStyle
+        ? resolveDesktopAiProviderRuntimeSupport({
+          providerType: input.providerType,
+          protocolFamily: effectiveProtocolFamily,
+          apiStyle: effectiveApiStyle,
+        })
+        : input.provider?.runtimeSupport
+    );
+
+  return {
+    protocol,
+    providerBindingId: effectiveProviderBindingId,
+    protocolFamily: effectiveProtocolFamily,
+    apiStyle: effectiveApiStyle,
+    runtimeSupport,
   };
 }
 
@@ -1272,7 +1374,7 @@ export class DesktopModelsService implements DesktopModelsPort {
 
   private getExecutableModelsJsonCandidates(): string[] {
     const execPath = normalizeOptionalString(process.execPath);
-    if (!execPath || /(?:^|[\\/])bun(?:\.exe)?$/i.test(execPath)) {
+    if (!execPath) {
       return [];
     }
 
@@ -1478,8 +1580,25 @@ export class DesktopModelsService implements DesktopModelsPort {
 
   private async listProviderTypesInternal(): Promise<DesktopModelProviderItem[]> {
     const catalog = await this.loadProviderCatalog();
-    return Object.entries(catalog)
-      .map(([providerType, raw]) => normalizeProviderType(providerType, raw))
+    const storage = await this.loadStorage();
+    const catalogProviders = Object.entries(catalog)
+      .map(([providerType, raw]) => normalizeProviderType(providerType, raw));
+    const syntheticProtocolProviders = new Map<string, DesktopModelProviderItem>();
+
+    for (const channel of storage.channels) {
+      if (catalog[channel.providerType]) {
+        continue;
+      }
+
+      const provider = this.buildSyntheticProtocolProvider(channel);
+      if (!provider) {
+        continue;
+      }
+
+      syntheticProtocolProviders.set(provider.providerType, provider);
+    }
+
+    return [...catalogProviders, ...syntheticProtocolProviders.values()]
       .sort((left, right) =>
         left.displayName.localeCompare(right.displayName, "en", {
           sensitivity: "base",
@@ -1488,6 +1607,10 @@ export class DesktopModelsService implements DesktopModelsPort {
   }
 
   private async ensureProviderExists(providerType: string) {
+    if (isCustomProtocolProviderType(providerType)) {
+      return;
+    }
+
     const catalog = await this.loadProviderCatalog();
     if (!catalog[providerType]) {
       throw new DesktopModelsServiceError("NOT_FOUND", `provider '${providerType}' not found`, {
@@ -1527,6 +1650,40 @@ export class DesktopModelsService implements DesktopModelsPort {
       }
       throw error;
     }
+  }
+
+  private buildSyntheticProtocolProvider(
+    channel: DesktopModelChannelItem,
+  ): DesktopModelProviderItem | null {
+    const protocol = readChannelProtocolMetadata(channel);
+    if (protocol.source !== "protocol" || !protocol.protocolFamily || !protocol.apiStyle) {
+      return null;
+    }
+
+    const runtimeSupport = protocol.runtimeSupport ?? resolveDesktopAiProviderRuntimeSupport({
+      providerType: channel.providerType,
+      protocolFamily: protocol.protocolFamily,
+      apiStyle: protocol.apiStyle,
+    });
+    const supportsRemoteModelDiscovery = Boolean(
+      resolveProtocolDiscoveryMode(protocol.protocolFamily, protocol.discoveryKind),
+    );
+
+    return {
+      providerType: channel.providerType,
+      displayName: "Custom Protocol",
+      defaultBaseUrl:
+        channel.baseUrl
+        || resolveProtocolDefaultBaseUrl(protocol.protocolFamily, protocol.apiStyle),
+      protocolFamily: protocol.protocolFamily,
+      apiStyle: protocol.apiStyle,
+      deploymentKind: protocol.deploymentKind,
+      discoveryKind: protocol.discoveryKind,
+      runtimeSupport,
+      supportsRemoteModelDiscovery,
+      configSchema: [],
+      models: [],
+    };
   }
 
   private getChannelEnvMap(channel: Pick<DesktopModelChannelItem, "metadata">) {
@@ -1600,6 +1757,48 @@ export class DesktopModelsService implements DesktopModelsPort {
     return "";
   }
 
+  private readCustomProtocolConfigValueByRole(
+    channel: Pick<DesktopModelChannelItem, "providerType" | "metadata">,
+    role: DesktopModelProviderConfigFieldRole,
+  ) {
+    const protocol = readChannelProtocolMetadata(channel);
+    if (protocol.source !== "protocol") {
+      return "";
+    }
+
+    if (role === "apiKey") {
+      return this.readChannelConfigValue(channel, "apiKey");
+    }
+    if (role === "organization" && protocol.protocolFamily === "openai") {
+      return this.readChannelConfigValue(channel, "organization");
+    }
+    if (role === "project" && protocol.protocolFamily === "google") {
+      return this.readChannelConfigValue(channel, "project");
+    }
+    if (role === "baseUrlOverride") {
+      return this.readChannelConfigValue(channel, "baseUrlOverride");
+    }
+
+    return "";
+  }
+
+  private readChannelCustomHeaders(
+    channel: Pick<DesktopModelChannelItem, "providerType" | "metadata">,
+  ): Record<string, string> | undefined {
+    const protocol = readChannelProtocolMetadata(channel);
+    if (!protocol.headers) {
+      return undefined;
+    }
+
+    const entries = Object.entries(protocol.headers)
+      .map(([key, value]) => [key.trim(), value.trim()] as const)
+      .filter((entry) => entry[0].length > 0 && entry[1].length > 0);
+
+    return entries.length > 0
+      ? Object.fromEntries(entries)
+      : undefined;
+  }
+
   private scoreProviderEnvKey(key: string) {
     let score = 0;
 
@@ -1621,8 +1820,13 @@ export class DesktopModelsService implements DesktopModelsPort {
 
   private resolveChannelApiKey(
     provider: RawProviderType | undefined,
-    channel: Pick<DesktopModelChannelItem, "metadata">,
+    channel: Pick<DesktopModelChannelItem, "providerType" | "metadata">,
   ) {
+    const customProtocolApiKey = this.readCustomProtocolConfigValueByRole(channel, "apiKey");
+    if (customProtocolApiKey) {
+      return customProtocolApiKey;
+    }
+
     const configuredApiKey = this.readChannelProviderConfigValueByRole(provider, channel, "apiKey");
     if (configuredApiKey) {
       return configuredApiKey;
@@ -1646,18 +1850,45 @@ export class DesktopModelsService implements DesktopModelsPort {
     return undefined;
   }
 
+  private allowsMissingApiKeyForRuntime(
+    providerType: string,
+    channel: Pick<DesktopModelChannelItem, "providerType" | "metadata">,
+  ) {
+    if (providerType === "ollama") {
+      return true;
+    }
+
+    const protocol = readChannelProtocolMetadata(channel);
+    return (
+      protocol.protocolFamily === "openai"
+      && protocol.apiStyle === "chat-completions"
+      && protocol.discoveryKind === "ollama-tags"
+    );
+  }
+
   private resolveRuntimeBaseUrl(input: {
     providerType: string;
     provider: RawProviderType | undefined;
     providerDefaultBaseUrl?: string;
-    channel: Pick<DesktopModelChannelItem, "baseUrl" | "metadata">;
+    channel: Pick<DesktopModelChannelItem, "providerType" | "baseUrl" | "metadata">;
   }) {
-    const baseUrlOverride = this.readChannelProviderConfigValueByRole(
-      input.provider,
-      input.channel,
-      "baseUrlOverride",
-    );
-    const preferredBaseUrl = baseUrlOverride || input.channel.baseUrl || input.providerDefaultBaseUrl;
+    const protocol = readChannelProtocolMetadata(input.channel);
+    const baseUrlOverride =
+      this.readCustomProtocolConfigValueByRole(input.channel, "baseUrlOverride")
+      || this.readChannelProviderConfigValueByRole(
+        input.provider,
+        input.channel,
+        "baseUrlOverride",
+      );
+    const defaultProtocolBaseUrl =
+      protocol.source === "protocol" && protocol.protocolFamily && protocol.apiStyle
+        ? resolveProtocolDefaultBaseUrl(protocol.protocolFamily, protocol.apiStyle)
+        : undefined;
+    const preferredBaseUrl =
+      baseUrlOverride
+      || input.channel.baseUrl
+      || defaultProtocolBaseUrl
+      || input.providerDefaultBaseUrl;
 
     if (preferredBaseUrl) {
       return input.providerType === "azure"
@@ -1691,9 +1922,14 @@ export class DesktopModelsService implements DesktopModelsPort {
     mode: RemoteModelDiscoveryMode,
     providerType: string,
     provider: RawProviderType | undefined,
-    channel: Pick<DesktopModelChannelItem, "channelId" | "baseUrl" | "metadata">,
+    channel: Pick<DesktopModelChannelItem, "providerType" | "channelId" | "baseUrl" | "metadata">,
   ) {
-    const preferredBaseUrl = channel.baseUrl || normalizeOptionalString(provider?.api);
+    const protocol = readChannelProtocolMetadata(channel);
+    const defaultProtocolBaseUrl =
+      protocol.source === "protocol" && protocol.protocolFamily && protocol.apiStyle
+        ? resolveProtocolDefaultBaseUrl(protocol.protocolFamily, protocol.apiStyle)
+        : undefined;
+    const preferredBaseUrl = channel.baseUrl || defaultProtocolBaseUrl || normalizeOptionalString(provider?.api);
     if (preferredBaseUrl) {
       if (mode === "ollama") {
         return normalizeOllamaDiscoveryBaseUrl(preferredBaseUrl) ?? preferredBaseUrl;
@@ -1701,7 +1937,7 @@ export class DesktopModelsService implements DesktopModelsPort {
       return normalizeOpenAIProviderBaseUrl(preferredBaseUrl) ?? preferredBaseUrl;
     }
 
-    if (mode === "openai" && providerType === "openai") {
+    if (mode === "openai" && (providerType === "openai" || protocol.protocolFamily === "openai")) {
       return "https://api.openai.com/v1";
     }
     if (mode === "ollama") {
@@ -1724,7 +1960,10 @@ export class DesktopModelsService implements DesktopModelsPort {
     provider: RawProviderType | undefined,
     channel: DesktopModelChannelItem,
   ): Promise<Array<Omit<DesktopDiscoveredChannelModel, "knownProviderModel">>> {
-    const mode = resolveRemoteModelDiscoveryMode(providerType, provider ?? {});
+    const protocol = readChannelProtocolMetadata(channel);
+    const mode = protocol.source === "protocol"
+      ? resolveProtocolDiscoveryMode(protocol.protocolFamily, protocol.discoveryKind)
+      : resolveRemoteModelDiscoveryMode(providerType, provider ?? {});
     if (!mode) {
       throw new DesktopModelsServiceError(
         "INVALID_ARGUMENT",
@@ -1752,9 +1991,13 @@ export class DesktopModelsService implements DesktopModelsPort {
     const headers: Record<string, string> = {
       Accept: "application/json",
     };
+    const customHeaders = this.readChannelCustomHeaders(channel);
 
     if (mode === "openai" && apiKey) {
       headers.Authorization = `Bearer ${apiKey}`;
+    }
+    if (customHeaders) {
+      Object.assign(headers, customHeaders);
     }
 
     const discoveryUrl = mode === "ollama"
@@ -2008,15 +2251,25 @@ export class DesktopModelsService implements DesktopModelsPort {
       );
     }
 
-    if (provider.runtimeSupport?.status !== "implemented") {
+    const channelRuntimeBinding = resolveChannelRuntimeBinding({
+      providerType: selection.resolvedProviderType,
+      provider,
+      channel,
+    });
+    const effectiveProviderBindingId = channelRuntimeBinding.providerBindingId;
+    const effectiveProtocolFamily = channelRuntimeBinding.protocolFamily;
+    const effectiveApiStyle = channelRuntimeBinding.apiStyle;
+    const runtimeSupport = channelRuntimeBinding.runtimeSupport;
+
+    if (runtimeSupport?.status !== "implemented") {
       throw new DesktopModelsServiceError(
         "UNSUPPORTED_RUNTIME",
-        provider.runtimeSupport?.reason || "selected provider is not implemented in desktop ai runtime",
+        runtimeSupport?.reason || "selected provider is not implemented in desktop ai runtime",
         {
           providerType: selection.resolvedProviderType,
           channelId: selection.resolvedChannelId,
           modelId: selection.resolvedModelId,
-          runtimeSupport: provider.runtimeSupport,
+          runtimeSupport,
         },
       );
     }
@@ -2024,10 +2277,14 @@ export class DesktopModelsService implements DesktopModelsPort {
     const catalog = await this.loadProviderCatalog();
     const rawProvider = catalog[selection.resolvedProviderType];
     const apiKey = this.resolveChannelApiKey(rawProvider, channel);
-    if (!apiKey) {
+    if (
+      !apiKey
+      && !isCustomProtocolProviderType(channel.providerType)
+      && !this.allowsMissingApiKeyForRuntime(selection.resolvedProviderType, channel)
+    ) {
       throw new DesktopModelsServiceError(
         "INVALID_ARGUMENT",
-        "selected channel is missing API key required by the provider runtime",
+        "current channel is missing API key required by selected provider",
         {
           providerType: selection.resolvedProviderType,
           channelId: selection.resolvedChannelId,
@@ -2042,8 +2299,15 @@ export class DesktopModelsService implements DesktopModelsPort {
       providerDefaultBaseUrl: provider.defaultBaseUrl,
       channel,
     });
-    const organization = this.readChannelProviderConfigValueByRole(rawProvider, channel, "organization") || undefined;
-    const project = this.readChannelProviderConfigValueByRole(rawProvider, channel, "project") || undefined;
+    const organization =
+      this.readCustomProtocolConfigValueByRole(channel, "organization")
+      || this.readChannelProviderConfigValueByRole(rawProvider, channel, "organization")
+      || undefined;
+    const project =
+      this.readCustomProtocolConfigValueByRole(channel, "project")
+      || this.readChannelProviderConfigValueByRole(rawProvider, channel, "project")
+      || undefined;
+    const headers = this.readChannelCustomHeaders(channel);
     const modelMetadata = resolveDesktopChannelModelMetadata(
       snapshot.providers,
       channel,
@@ -2054,16 +2318,24 @@ export class DesktopModelsService implements DesktopModelsPort {
       providerType: selection.resolvedProviderType,
       channelId: selection.resolvedChannelId,
       modelId: selection.resolvedModelId,
-      protocolFamily: provider.protocolFamily,
-      apiStyle: provider.apiStyle,
+      ...(effectiveProviderBindingId ? { providerBindingId: effectiveProviderBindingId } : {}),
+      protocolFamily: effectiveProtocolFamily,
+      apiStyle: effectiveApiStyle,
+      ...(typeof modelMetadata?.supportsReasoning === "boolean"
+        ? { supportsReasoning: modelMetadata.supportsReasoning }
+        : {}),
       ...(typeof modelMetadata?.supportsFunctionCall === "boolean"
         ? { supportsFunctionCall: modelMetadata.supportsFunctionCall }
+        : {}),
+      ...(modelMetadata?.interleaved !== undefined
+        ? { interleaved: modelMetadata.interleaved }
         : {}),
       contextWindow: modelMetadata?.contextWindow,
       maxOutputTokens: modelMetadata?.maxOutputTokens,
       serviceConfig: {
-        apiKey,
+        apiKey: apiKey ?? "",
         ...(baseUrl ? { baseUrl } : {}),
+        ...(headers ? { headers } : {}),
         ...(organization ? { organization } : {}),
         ...(project ? { project } : {}),
       },
@@ -2103,6 +2375,11 @@ export class DesktopModelsService implements DesktopModelsPort {
     const models: DesktopModelRuntimeSelectionSnapshot["models"] = [];
     for (const channel of enabledChannels) {
       const provider = providerMap.get(channel.providerType);
+      const channelRuntimeBinding = resolveChannelRuntimeBinding({
+        providerType: channel.providerType,
+        provider,
+        channel,
+      });
       const enabledModels = [...listConversationalEnabledDesktopChannelModels(snapshot.providers, channel)]
         .sort((left, right) =>
           left.modelId.localeCompare(right.modelId, "en", {
@@ -2123,7 +2400,7 @@ export class DesktopModelsService implements DesktopModelsPort {
           label: modelMetadata?.displayName || state.modelId,
           providerType: channel.providerType,
           providerDisplayName: provider?.displayName,
-          runtimeSupport: provider?.runtimeSupport,
+          runtimeSupport: channelRuntimeBinding.runtimeSupport,
           channelId: channel.channelId,
           effectiveEnabled: true,
           family: modelMetadata?.family,
@@ -2195,9 +2472,25 @@ export class DesktopModelsService implements DesktopModelsPort {
       providerType: selection.resolvedProviderType,
       channelId: selection.resolvedChannelId || undefined,
       modelId: selection.resolvedModelId || undefined,
-      runtimeSupport: selection.resolvedProviderType
-        ? providerMap.get(selection.resolvedProviderType)?.runtimeSupport
-        : undefined,
+      runtimeSupport: (() => {
+        if (!selection.resolvedProviderType || !selection.resolvedChannelId) {
+          return undefined;
+        }
+
+        const resolvedChannel = enabledChannels.find((channel) =>
+          channel.providerType === selection.resolvedProviderType
+          && channel.channelId === selection.resolvedChannelId
+        );
+        if (!resolvedChannel) {
+          return undefined;
+        }
+
+        return resolveChannelRuntimeBinding({
+          providerType: resolvedChannel.providerType,
+          provider: providerMap.get(resolvedChannel.providerType),
+          channel: resolvedChannel,
+        }).runtimeSupport;
+      })(),
       resolution: selection.resolution,
     };
     const defaultSelection = {
@@ -2615,11 +2908,6 @@ export class DesktopModelsService implements DesktopModelsPort {
     const normalizedChannelId = normalizeChannelId(channelId);
     const catalog = await this.loadProviderCatalog();
     const provider = catalog[providerType];
-    if (!provider) {
-      throw new DesktopModelsServiceError("NOT_FOUND", `provider '${providerType}' not found`, {
-        providerType,
-      });
-    }
 
     const result = await this.runMutation(async () => {
       const storage = cloneStorage(await this.loadStorage());
@@ -2633,7 +2921,9 @@ export class DesktopModelsService implements DesktopModelsPort {
 
       const remoteModels = await this.fetchRemoteAvailableModels(providerType, provider, channel);
       const knownProviderModelIds = new Set(
-        normalizeProviderType(providerType, provider).models.map((item) => item.modelId),
+        provider
+          ? normalizeProviderType(providerType, provider).models.map((item) => item.modelId)
+          : [],
       );
       const customModels = extractCustomModels(channel);
       const customModelMap = new Map(customModels.map((item) => [item.modelId, item]));

@@ -6,7 +6,9 @@ import {
 import type {
   AiTurnEvent,
   AiTurnRequest,
+  PromptCodec,
 } from "../kernel-bridge";
+import type { OpenAIChatCompletionsPromptPayload } from "../implementation/openai";
 
 const originalFetch = globalThis.fetch;
 
@@ -126,6 +128,144 @@ describe("OpenAIChatCompletionsAiTurnPortAdapter", () => {
         providerResponseId: "chatcmpl_azure_1",
         providerReason: "stop",
       },
+    });
+  });
+
+  test("uses the selected execution profile model id for openai-compatible channels", async () => {
+    let capturedBody = "";
+
+    globalThis.fetch = (async (_input, init) => {
+      capturedBody = String(init?.body ?? "");
+
+      return new Response(JSON.stringify({
+        id: "chatcmpl_kimi_1",
+        choices: [{
+          index: 0,
+          finish_reason: "stop",
+          message: {
+            role: "assistant",
+            content: "ok",
+          },
+        }],
+      }), {
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    }) as typeof fetch;
+
+    const adapter = new OpenAIChatCompletionsAiTurnPortAdapter({
+      resolveConfig: () => ({
+        apiKey: "kimi-test-key",
+        baseUrl: "https://api.kimi.com/coding/v1",
+      }),
+    });
+
+    await collectEvents(adapter.stream({
+      ...createTurnRequest(),
+      executionProfile: {
+        id: "profile-kimi-coding" as AiTurnRequest["executionProfile"]["id"],
+        modelId: "kimi-k2.5",
+      },
+    }));
+
+    expect(JSON.parse(capturedBody)).toMatchObject({
+      model: "kimi-k2.5",
+    });
+  });
+
+  test("adds empty reasoning content to assistant tool call history when thinking is enabled", async () => {
+    let capturedBody = "";
+
+    const codec: PromptCodec<OpenAIChatCompletionsPromptPayload> = {
+      encode() {
+        return {
+          messages: [{
+            role: "user",
+            content: "Inspect workspace",
+          }, {
+            role: "assistant",
+            content: null,
+            tool_calls: [{
+              id: "tool_call_1",
+              type: "function",
+              function: {
+                name: "git.status",
+                arguments: "{\"path\":\".\"}",
+              },
+            }],
+          }],
+          tools: [{
+            type: "function",
+            function: {
+              name: "git.status",
+              parameters: {
+                type: "object",
+                properties: {
+                  path: {
+                    type: "string",
+                  },
+                },
+                required: ["path"],
+              },
+              strict: true,
+            },
+          }],
+          toolChoice: "auto",
+        };
+      },
+    };
+
+    globalThis.fetch = (async (_input, init) => {
+      capturedBody = String(init?.body ?? "");
+      return new Response(JSON.stringify({
+        id: "chatcmpl_reasoning_fix_1",
+        choices: [{
+          index: 0,
+          finish_reason: "stop",
+          message: {
+            role: "assistant",
+            content: "ok",
+          },
+        }],
+      }), {
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    }) as typeof fetch;
+
+    const adapter = new OpenAIChatCompletionsAiTurnPortAdapter({
+      codec,
+      resolveConfig: () => ({
+        apiKey: "test-key",
+        baseUrl: "https://api.openai.com/v1",
+        reasoning: {
+          effort: "medium",
+        },
+      }),
+    });
+
+    await collectEvents(adapter.stream(createTurnRequest()));
+
+    expect(JSON.parse(capturedBody)).toMatchObject({
+      reasoning_effort: "medium",
+      messages: [{
+        role: "user",
+        content: "Inspect workspace",
+      }, {
+        role: "assistant",
+        content: null,
+        reasoning_content: "",
+        tool_calls: [{
+          id: "tool_call_1",
+          type: "function",
+          function: {
+            name: "git.status",
+            arguments: "{\"path\":\".\"}",
+          },
+        }],
+      }],
     });
   });
 });

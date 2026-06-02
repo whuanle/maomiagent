@@ -165,6 +165,7 @@ describe("OpenAIChatCompletionsPromptCodec", () => {
       }, {
         role: "assistant",
         content: "I will inspect git status.",
+        reasoning_content: "",
         tool_calls: [{
           id: "tool_call_1",
           type: "function",
@@ -197,6 +198,45 @@ describe("OpenAIChatCompletionsPromptCodec", () => {
       }],
       toolChoice: "required",
     });
+  });
+
+  test("adds empty reasoning content for assistant tool calls when no reasoning text exists", () => {
+    const codec = new OpenAIChatCompletionsPromptCodec();
+    const request = createBaseTurnRequest();
+
+    request.prompt.messages = [{
+      message: {
+        id: "message_assistant_toolcall_without_reasoning" as PromptMessageId,
+        sessionId: "session_1" as PromptEnvelope["sessionId"],
+        role: "assistant",
+        createdAt: 2,
+      },
+      parts: [{
+        id: "message_assistant_toolcall_without_reasoning_part_1" as PromptMessagePartId,
+        type: "tool_call_ref",
+        toolCallId: asToolCallId("tool_call_without_reasoning"),
+        toolName: "workspace-check",
+        input: {
+          path: ".",
+        },
+      }],
+    }];
+
+    const payload = codec.encode(request);
+
+    expect(payload.messages).toEqual([{
+      role: "assistant",
+      content: null,
+      reasoning_content: "",
+      tool_calls: [{
+        id: "tool_call_without_reasoning",
+        type: "function",
+        function: {
+          name: "workspace-check",
+          arguments: '{"path":"."}',
+        },
+      }],
+    }]);
   });
 
   test("preserves assistant reasoning content alongside tool call history", () => {

@@ -5,6 +5,7 @@ import {
 } from "../../../../shared/desktop-model-metadata";
 import type {
   DesktopModelChannelItem,
+  DesktopModelInterleavedConfig,
   DesktopModelModalities,
   DesktopModelProviderItem,
 } from "../../../../shared/desktop-models";
@@ -23,6 +24,7 @@ export type DesktopChannelModelRow = {
   supportsFunctionCall?: boolean;
   supportsStructuredOutput?: boolean;
   supportsTemperature?: boolean;
+  interleaved?: DesktopModelInterleavedConfig;
   modalities?: DesktopModelModalities;
   contextWindow?: number;
   maxOutputTokens?: number;
@@ -94,6 +96,7 @@ export function buildDesktopChannelModelRows(
         supportsFunctionCall: metadata.supportsFunctionCall,
         supportsStructuredOutput: metadata.supportsStructuredOutput,
         supportsTemperature: metadata.supportsTemperature,
+        interleaved: metadata.interleaved,
         modalities: metadata.modalities,
         contextWindow: metadata.contextWindow,
         maxOutputTokens: metadata.maxOutputTokens,

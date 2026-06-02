@@ -5,7 +5,9 @@ import type {
 } from "../../kernel-bridge";
 import type {
   DesktopModelScope,
+  DesktopModelInterleavedConfig,
   DesktopModelProviderApiStyle,
+  DesktopModelProviderBindingId,
   DesktopModelProviderProtocolFamily,
 } from "../../../../../shared/desktop-models";
 import type {
@@ -28,9 +30,12 @@ export type DesktopAiOneShotTarget = {
   providerType: string;
   channelId: string;
   modelId: string;
+  providerBindingId?: DesktopModelProviderBindingId;
   protocolFamily?: DesktopModelProviderProtocolFamily;
   apiStyle?: DesktopModelProviderApiStyle;
+  supportsReasoning?: boolean;
   supportsFunctionCall?: boolean;
+  interleaved?: DesktopModelInterleavedConfig;
   contextWindow?: number;
   maxOutputTokens?: number;
 };

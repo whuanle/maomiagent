@@ -23,6 +23,11 @@ describe("desktop ai provider runtime bindings", () => {
       protocolFamily: "anthropic",
       apiStyle: "messages",
       adapterId: "anthropic-messages",
+    }, {
+      id: "google-generate-content",
+      protocolFamily: "google",
+      apiStyle: "generate-content",
+      adapterId: "google-generate-content",
     }]);
   });
 
@@ -54,6 +59,15 @@ describe("desktop ai provider runtime bindings", () => {
       apiStyle: "messages",
       adapterId: "anthropic-messages",
     });
+    expect(findDesktopAiProviderRuntimeBinding({
+      protocolFamily: "google",
+      apiStyle: "generate-content",
+    })).toEqual({
+      id: "google-generate-content",
+      protocolFamily: "google",
+      apiStyle: "generate-content",
+      adapterId: "google-generate-content",
+    });
   });
 });
 
@@ -69,18 +83,18 @@ describe("desktop ai provider runtime support", () => {
     });
   });
 
-  test("marks anthropic messages providers as implemented", () => {
+  test("marks kimi coding providers as implemented through openai chat completions", () => {
     expect(resolveDesktopAiProviderRuntimeSupport({
       providerType: "kimi-for-coding",
-      protocolFamily: "anthropic",
-      apiStyle: "messages",
+      protocolFamily: "openai",
+      apiStyle: "chat-completions",
     })).toEqual({
       status: "implemented",
-      adapterId: "anthropic-messages",
+      adapterId: "openai-chat-completions",
     });
   });
 
-  test("marks catalog-only providers that do not have a desktop ai adapter", () => {
+  test("marks openai providers as implemented and leaves legacy ollama protocol ids catalog-only", () => {
     expect(resolveDesktopAiProviderRuntimeSupport({
       providerType: "azure",
       protocolFamily: "openai",
@@ -99,14 +113,14 @@ describe("desktop ai provider runtime support", () => {
     });
   });
 
-  test("keeps google generate-content cataloged until a desktop ai runtime driver is implemented", () => {
+  test("marks google generate-content as implemented", () => {
     expect(resolveDesktopAiProviderRuntimeSupport({
       providerType: "google",
       protocolFamily: "google",
       apiStyle: "generate-content",
     })).toEqual({
-      status: "catalog-only",
-      reason: "google is cataloged as google/generate-content, but desktop ai has no matching runtime adapter yet",
+      status: "implemented",
+      adapterId: "google-generate-content",
     });
   });
 });

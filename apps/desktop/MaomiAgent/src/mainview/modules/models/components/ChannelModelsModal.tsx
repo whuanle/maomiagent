@@ -88,6 +88,9 @@ function buildCapabilityLabels(row: DesktopChannelModelRow, language: LanguageCo
   if (row.supportsReasoning) {
     labels.push(language === "en-US" ? "Reasoning" : "推理");
   }
+  if (row.interleaved) {
+    labels.push(language === "en-US" ? "Interleaved" : "交错推理");
+  }
   if (row.supportsFunctionCall) {
     labels.push(language === "en-US" ? "Tool" : "工具");
   }
@@ -115,6 +118,7 @@ function projectEditableCustomChannelModel(row: DesktopChannelModelRow): Editabl
     supportsFunctionCall: row.supportsFunctionCall === true,
     supportsStructuredOutput: row.supportsStructuredOutput === true,
     supportsTemperature: row.supportsTemperature === true,
+    interleaved: row.interleaved,
     modalities: {
       input: [...(row.modalities?.input ?? [])],
       output: [...(row.modalities?.output ?? [])],
@@ -313,7 +317,7 @@ export function ChannelModelsModal(props: ChannelModelsModalProps) {
   };
 
   const handleOpenCustomEditor = (row: DesktopChannelModelRow) => {
-    if (!channel || !row.customModel) {
+    if (!channel) {
       return;
     }
 
@@ -466,36 +470,32 @@ export function ChannelModelsModal(props: ChannelModelsModalProps) {
       },
     ];
 
-    if (hasCustomModels) {
-      nextColumns.push({
-        title: t("模型页.列.操作"),
-        key: "actions",
-        width: 84,
-        align: "center" as const,
-        render: (_value: unknown, row: DesktopChannelModelRow) => {
-          if (!row.customModel) {
-            return <Typography.Text type="secondary">-</Typography.Text>;
-          }
+    nextColumns.push({
+      title: t("模型页.列.操作"),
+      key: "actions",
+      width: 84,
+      align: "center" as const,
+      render: (_value: unknown, row: DesktopChannelModelRow) => {
+        const deleting = deletingCustomModelId === row.modelId;
+        const disabled =
+          batchBusy
+          || discovering
+          || resettingDefaults
+          || savingCustomModel
+          || (inlineEditing && editingModelId !== row.modelId)
+          || busyModelId === row.modelId;
 
-          const deleting = deletingCustomModelId === row.modelId;
-          const disabled =
-            batchBusy
-            || discovering
-            || resettingDefaults
-            || savingCustomModel
-            || (inlineEditing && editingModelId !== row.modelId)
-            || busyModelId === row.modelId;
-
-          return (
-            <Space size={4} className="models-page-actions">
-              <Button
-                type="text"
-                size="small"
-                className="models-page-action-btn"
-                icon={<EditOutlined />}
-                disabled={disabled || deleting}
-                onClick={() => handleOpenCustomEditor(row)}
-              />
+        return (
+          <Space size={4} className="models-page-actions">
+            <Button
+              type="text"
+              size="small"
+              className="models-page-action-btn"
+              icon={<EditOutlined />}
+              disabled={disabled || deleting}
+              onClick={() => handleOpenCustomEditor(row)}
+            />
+            {row.customModel ? (
               <Popconfirm
                 title={t("模型页.弹窗.删除模型标题")}
                 description={t("模型页.弹窗.删除模型说明")}
@@ -513,11 +513,11 @@ export function ChannelModelsModal(props: ChannelModelsModalProps) {
                   disabled={disabled || deleting}
                 />
               </Popconfirm>
-            </Space>
-          );
-        },
-      });
-    }
+            ) : null}
+          </Space>
+        );
+      },
+    });
 
     return nextColumns;
   }, [
@@ -530,7 +530,6 @@ export function ChannelModelsModal(props: ChannelModelsModalProps) {
     handleCancelCustomEditor,
     handleOpenCustomEditor,
     handleToggleModel,
-    hasCustomModels,
     inlineEditing,
     language,
     resettingDefaults,

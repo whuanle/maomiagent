@@ -28,6 +28,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@ai-sdk/google": "^3.0.80",
     "@ant-design/icons": "^6.1.0",
     "@fontsource/ibm-plex-mono": "latest",
     "@fontsource/space-grotesk": "latest",
@@ -44,6 +45,7 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@xiangfa/mindmap": "^0.6.5",
+    "ai": "^6.0.193",
     "antd": "^6.3.1",
     "dompurify": "^3.3.1",
     "electrobun": "latest",

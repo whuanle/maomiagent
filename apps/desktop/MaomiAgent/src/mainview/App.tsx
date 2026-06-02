@@ -34,6 +34,7 @@ import { McpPage } from "./modules/mcp";
 import { SkillsPage } from "./modules/skills";
 import { TasksPage } from "./modules/tasks";
 import { FeishuPage } from "./modules/feishu";
+import { UiDesignerPage } from "./modules/ui-designer";
 import { WechatPage } from "./modules/wechat";
 import {
   moveTitlebarMenuKey,
@@ -300,6 +301,12 @@ export default function App() {
                   active={routeActive}
                   language={language}
                   revealTerminalToken={chatTerminalRevealToken}
+                />
+              ) : route.key === "ui-designer" ? (
+                <UiDesignerPage
+                  active={routeActive}
+                  language={language}
+                  t={t}
                 />
               ) : route.key === "workspace" ? (
                 <WorkspacePage

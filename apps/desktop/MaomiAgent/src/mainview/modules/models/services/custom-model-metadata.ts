@@ -1,5 +1,6 @@
 import type {
   DesktopModelChannelItem,
+  DesktopModelInterleavedConfig,
   DesktopModelModalities,
 } from "../../../../shared/desktop-models";
 
@@ -14,6 +15,7 @@ export type EditableCustomChannelModel = {
   supportsFunctionCall: boolean;
   supportsStructuredOutput: boolean;
   supportsTemperature: boolean;
+  interleaved?: DesktopModelInterleavedConfig;
   modalities: DesktopModelModalities;
 };
 
@@ -74,6 +76,19 @@ function normalizeModalities(value: unknown): DesktopModelModalities {
   };
 }
 
+function normalizeInterleaved(value: unknown): DesktopModelInterleavedConfig | undefined {
+  if (value === true || value === false) {
+    return value;
+  }
+
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const field = normalizeOptionalString((value as { field?: unknown }).field);
+  return field ? { field } : {};
+}
+
 function cloneMetadata(metadata: DesktopModelChannelItem["metadata"]): Record<string, unknown> {
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
     return {};
@@ -118,6 +133,7 @@ function toEditableCustomChannelModel(entry: unknown): EditableCustomChannelMode
       supportsFunctionCall: false,
       supportsStructuredOutput: false,
       supportsTemperature: false,
+      interleaved: undefined,
       modalities: {
         input: [],
         output: [],
@@ -146,6 +162,7 @@ function toEditableCustomChannelModel(entry: unknown): EditableCustomChannelMode
     supportsFunctionCall: item.supportsFunctionCall === true,
     supportsStructuredOutput: item.supportsStructuredOutput === true,
     supportsTemperature: item.supportsTemperature === true,
+    interleaved: normalizeInterleaved(item.interleaved),
     modalities: normalizeModalities(item.modalities),
   };
 }
@@ -217,6 +234,16 @@ function buildSerializedCustomModel(
     nextEntry.supportsTemperature = true;
   } else {
     delete nextEntry.supportsTemperature;
+  }
+
+  if (model.interleaved === true) {
+    nextEntry.interleaved = true;
+  } else if (model.interleaved && typeof model.interleaved === "object") {
+    nextEntry.interleaved = model.interleaved.field
+      ? { field: model.interleaved.field }
+      : {};
+  } else {
+    delete nextEntry.interleaved;
   }
 
   if (modalities.input.length > 0 || modalities.output.length > 0) {

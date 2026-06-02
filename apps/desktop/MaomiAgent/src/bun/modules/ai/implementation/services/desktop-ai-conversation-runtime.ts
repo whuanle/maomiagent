@@ -223,6 +223,16 @@ function readExecutionProfileBooleanMetadata(
   return typeof metadata?.[key] === "boolean" ? metadata[key] as boolean : undefined;
 }
 
+function readExecutionProfileStringMetadata(
+  executionProfile: AiExecutionProfileRef,
+  key: string,
+): string | undefined {
+  const metadata = isRecord(executionProfile.metadata) ? executionProfile.metadata : undefined;
+  return typeof metadata?.[key] === "string" && metadata[key].trim()
+    ? metadata[key].trim()
+    : undefined;
+}
+
 function readExecutionProfileCompressionThresholdPercent(
   executionProfile: AiExecutionProfileRef,
 ): number {
@@ -243,6 +253,14 @@ export function applyConversationThinkingPreferenceToServiceConfig(input: {
   executionProfile: AiExecutionProfileRef;
   serviceConfig: DesktopAiProviderServiceConfig;
 }): DesktopAiProviderServiceConfig {
+  const apiStyle = readExecutionProfileStringMetadata(input.executionProfile, "apiStyle");
+  if (apiStyle === "chat-completions") {
+    return {
+      ...input.serviceConfig,
+      reasoning: undefined,
+    };
+  }
+
   if (readExecutionProfileBooleanMetadata(input.executionProfile, "thinkingEnabled") !== false) {
     return input.serviceConfig;
   }
@@ -2928,11 +2946,6 @@ class DesktopConversationTurnPort implements AiTurnPort {
   private async resolveExecutionMaterialization(
     executionProfile: AiExecutionProfileRef,
   ): Promise<DesktopAiExecutionMaterialization | undefined> {
-    const cached = this.materializationCache.get(executionProfile.id);
-    if (cached) {
-      return cached;
-    }
-
     const materializationInput = readExecutionProfileMaterializationInput(executionProfile);
     if (!materializationInput) {
       return undefined;
@@ -4324,11 +4337,6 @@ export class DesktopAiConversationRuntime {
   private async resolveExecutionMaterialization(
     executionProfile: AiExecutionProfileRef,
   ): Promise<DesktopAiExecutionMaterialization | undefined> {
-    const cached = this.executionMaterializations.get(executionProfile.id);
-    if (cached) {
-      return cached;
-    }
-
     const materializationInput = readExecutionProfileMaterializationInput(executionProfile);
     if (!materializationInput) {
       return undefined;

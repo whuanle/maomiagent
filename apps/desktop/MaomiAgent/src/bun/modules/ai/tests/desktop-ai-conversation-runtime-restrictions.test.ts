@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   applyConversationFunctionCallPreferenceToTurnRequest,
   applyConversationHistoryPruningToTurnRequest,
+  applyConversationReasoningHistoryNormalization,
   normalizeProviderFacingTurnRequest,
 } from "../implementation/shared/turn-request-normalizers";
 import {
@@ -21,6 +22,27 @@ describe("applyConversationThinkingPreferenceToServiceConfig", () => {
         modelId: "gpt-5" as never,
         metadata: {
           thinkingEnabled: false,
+        },
+      },
+      serviceConfig: {
+        apiKey: "test-key",
+        reasoning: {
+          effort: "medium",
+        },
+      },
+    })).toEqual({
+      apiKey: "test-key",
+    });
+  });
+
+  test("drops reasoning service config for chat completions runtimes even when thinking stays enabled", () => {
+    expect(applyConversationThinkingPreferenceToServiceConfig({
+      executionProfile: {
+        id: "profile-chat-completions" as never,
+        modelId: "kimi-k2.5" as never,
+        metadata: {
+          thinkingEnabled: true,
+          apiStyle: "chat-completions",
         },
       },
       serviceConfig: {
@@ -72,10 +94,14 @@ function createTurnRequestWithTools(): AiTurnRequest {
 
 function createTurnRequestWithHeavyToolHistory(input: {
   supportsFunctionCall: boolean;
+  interleaved?: boolean | {
+    field?: string;
+  };
 }): AiTurnRequest {
   const request = createTurnRequestWithTools();
   request.executionProfile.metadata = {
     supportsFunctionCall: input.supportsFunctionCall,
+    ...(input.interleaved !== undefined ? { interleaved: input.interleaved } : {}),
   };
   request.prompt.messages = [{
     message: {
@@ -313,9 +339,37 @@ describe("applyConversationHistoryPruningToTurnRequest", () => {
 });
 
 describe("normalizeProviderFacingTurnRequest", () => {
+  test("adds empty reasoning parts before assistant tool call history when missing", () => {
+    const request = createTurnRequestWithHeavyToolHistory({
+      supportsFunctionCall: true,
+      interleaved: {
+        field: "reasoning_content",
+      },
+    });
+
+    const normalized = applyConversationReasoningHistoryNormalization({
+      executionProfile: request.executionProfile,
+      request,
+    });
+
+    expect(normalized.prompt.messages[1]?.parts[0]).toEqual({
+      id: "message-assistant-older-tool-call:synthetic-reasoning",
+      type: "reasoning",
+      text: "",
+    });
+    expect(normalized.prompt.messages[4]?.parts[0]).toEqual({
+      id: "message-assistant-recent-tool-call:synthetic-reasoning",
+      type: "reasoning",
+      text: "",
+    });
+  });
+
   test("strips unsupported tool history before sending provider-facing requests", () => {
     const request = createTurnRequestWithHeavyToolHistory({
       supportsFunctionCall: false,
+      interleaved: {
+        field: "reasoning_content",
+      },
     });
 
     const normalized = normalizeProviderFacingTurnRequest({
@@ -334,6 +388,9 @@ describe("normalizeProviderFacingTurnRequest", () => {
   test("keeps pruning enabled for providers that still support function calling", () => {
     const request = createTurnRequestWithHeavyToolHistory({
       supportsFunctionCall: true,
+      interleaved: {
+        field: "reasoning_content",
+      },
     });
 
     const normalized = normalizeProviderFacingTurnRequest({
@@ -354,6 +411,32 @@ describe("normalizeProviderFacingTurnRequest", () => {
       type: "text",
       text: "[Earlier tool result omitted to keep the next reply responsive.]",
     }]);
+    expect(normalized.prompt.messages[1]?.parts[0]).toEqual({
+      id: "message-assistant-older-tool-call:synthetic-reasoning",
+      type: "reasoning",
+      text: "",
+    });
+  });
+
+  test("skips synthetic reasoning history for non-interleaved providers", () => {
+    const request = createTurnRequestWithHeavyToolHistory({
+      supportsFunctionCall: true,
+    });
+
+    const normalized = normalizeProviderFacingTurnRequest({
+      executionProfile: request.executionProfile,
+      request,
+    });
+
+    expect(normalized.prompt.messages[1]?.parts[0]).toEqual({
+      id: "message-assistant-older-tool-call-part",
+      type: "tool_call_ref",
+      toolCallId: "tool-call-older",
+      toolName: "workspace_write_file",
+      input: {
+        path: "drafts/old-plan.md",
+      },
+    });
   });
 });
 
@@ -373,7 +456,11 @@ describe("mergeConversationExecutionProfile", () => {
         modelId: "mimo-v2.5-pro",
         metadata: {
           channelId: "xiaomi",
+          supportsReasoning: true,
           supportsFunctionCall: false,
+          interleaved: {
+            field: "reasoning_content",
+          },
           contextWindow: 65536,
         },
       },
@@ -383,7 +470,11 @@ describe("mergeConversationExecutionProfile", () => {
       metadata: {
         channelId: "xiaomi",
         thinkingEnabled: true,
+        supportsReasoning: true,
         supportsFunctionCall: false,
+        interleaved: {
+          field: "reasoning_content",
+        },
         contextWindow: 65536,
       },
     });

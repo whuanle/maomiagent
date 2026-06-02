@@ -3,6 +3,9 @@ import {
   AnthropicMessagesAiTurnPortAdapter,
 } from "./implementation/anthropic";
 import {
+  GoogleGenerateContentAiTurnPortAdapter,
+} from "./implementation/google";
+import {
   OpenAIChatCompletionsAiTurnPortAdapter,
   OpenAIResponsesAiTurnPortAdapter,
 } from "./implementation/openai";
@@ -62,6 +65,19 @@ function createRuntimeDescriptor(
         ...binding,
         createTurnPort(input) {
           return new OpenAIChatCompletionsAiTurnPortAdapter({
+            resolveConfig: input.resolveServiceConfig,
+            ...(input.fetchFn ? { fetchFn: input.fetchFn } : {}),
+            ...(input.retryPolicy ? { retryPolicy: input.retryPolicy } : {}),
+            ...(input.sleepFn ? { sleepFn: input.sleepFn } : {}),
+            ...(input.telemetrySink ? { telemetrySink: input.telemetrySink } : {}),
+          });
+        },
+      };
+    case "google-generate-content":
+      return {
+        ...binding,
+        createTurnPort(input) {
+          return new GoogleGenerateContentAiTurnPortAdapter({
             resolveConfig: input.resolveServiceConfig,
             ...(input.fetchFn ? { fetchFn: input.fetchFn } : {}),
             ...(input.retryPolicy ? { retryPolicy: input.retryPolicy } : {}),

@@ -215,7 +215,9 @@ function buildAssistantMessage(
   return {
     role: "assistant",
     content: text || null,
-    ...(reasoning ? { reasoning_content: reasoning } : {}),
+    ...((reasoning || toolCalls.length > 0)
+      ? { reasoning_content: reasoning || "" }
+      : {}),
     ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
   };
 }

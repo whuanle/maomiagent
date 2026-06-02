@@ -120,6 +120,9 @@ const TEST_CATALOG = {
         name: "Kimi K2.5",
         reasoning: true,
         tool_call: true,
+        interleaved: {
+          field: "reasoning_content",
+        },
         modalities: {
           input: ["text"],
           output: ["text"],
@@ -235,6 +238,67 @@ describe("DesktopModelsService", () => {
     }
   });
 
+  test("loads providers from a packaged desktop layout when process.execPath points at bin bun", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "maomi-desktop-models-packaged-"));
+    const catalogPath = join(tempRoot, "data", "models.json");
+    const statePath = join(tempRoot, "desktop", "providers-state.json");
+    const portableBinDir = join(tempRoot, "bin");
+    const originalExecPath = process.execPath;
+    const originalCwd = process.cwd();
+
+    try {
+      await mkdir(portableBinDir, { recursive: true });
+      await writeJson(catalogPath, {
+        "portable-provider": {
+          name: "Portable Provider",
+          api: "https://portable.example/v1",
+          models: {
+            "portable-model": {
+              name: "Portable Model",
+              modalities: {
+                input: ["text"],
+                output: ["text"],
+              },
+            },
+          },
+        },
+      });
+
+      Object.defineProperty(process, "execPath", {
+        configurable: true,
+        value: join(portableBinDir, "bun.exe"),
+      });
+      process.chdir(portableBinDir);
+
+      const service = new DesktopModelsService(
+        createConfig({
+          "models.state.path": statePath,
+        }) as never,
+        createLogger() as never,
+      );
+
+      const providers = await service.listProviders();
+      expect(providers).toHaveLength(1);
+      expect(providers[0]).toMatchObject({
+        providerType: "portable-provider",
+        displayName: "Portable Provider",
+      });
+      expect(providers[0]?.models).toEqual([
+        expect.objectContaining({
+          modelId: "portable-model",
+          displayName: "Portable Model",
+        }),
+      ]);
+    } finally {
+      process.chdir(originalCwd);
+      Object.defineProperty(process, "execPath", {
+        configurable: true,
+        value: originalExecPath,
+      });
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   test("infers deployment-aware taxonomy from legacy provider catalog fields", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "maomi-desktop-models-"));
     const catalogPath = join(tempRoot, "data", "models.json");
@@ -286,12 +350,13 @@ describe("DesktopModelsService", () => {
         supportsRemoteModelDiscovery: false,
       });
       expect(providers.find((item) => item.providerType === "ollama")).toMatchObject({
-        protocolFamily: "ollama",
-        apiStyle: "ollama-chat",
+        protocolFamily: "openai",
+        apiStyle: "chat-completions",
         deploymentKind: "local-native",
         discoveryKind: "ollama-tags",
         runtimeSupport: {
-          status: "catalog-only",
+          status: "implemented",
+          adapterId: "openai-chat-completions",
         },
         supportsRemoteModelDiscovery: true,
       });
@@ -301,7 +366,8 @@ describe("DesktopModelsService", () => {
         deploymentKind: "direct",
         discoveryKind: "manual",
         runtimeSupport: {
-          status: "catalog-only",
+          status: "implemented",
+          adapterId: "google-generate-content",
         },
         supportsRemoteModelDiscovery: false,
       });
@@ -450,7 +516,7 @@ describe("DesktopModelsService", () => {
     }
   });
 
-  test("keeps anthropic-backed Kimi models selectable in runtime snapshots", async () => {
+  test("keeps Kimi models selectable in runtime snapshots through catalog-declared openai chat completions", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "maomi-desktop-models-"));
     const catalogPath = join(tempRoot, "data", "models.json");
     const statePath = join(tempRoot, "desktop", "providers-state.json");
@@ -467,6 +533,10 @@ describe("DesktopModelsService", () => {
             name: "Kimi Coding",
             enabled: true,
             metadata: {
+              source: "provider",
+              providerBindingId: "openai",
+              protocolFamily: "openai",
+              apiStyle: "chat-completions",
               env: {
                 KIMI_API_KEY: "kimi-test-key",
               },
@@ -500,9 +570,13 @@ describe("DesktopModelsService", () => {
         channelId: "kimicode",
         providerType: "kimi-for-coding",
         label: "Kimi K2.5",
+        supportsReasoning: true,
+        interleaved: {
+          field: "reasoning_content",
+        },
         runtimeSupport: {
           status: "implemented",
-          adapterId: "anthropic-messages",
+          adapterId: "openai-chat-completions",
         },
       })]);
     } finally {
@@ -582,6 +656,131 @@ describe("DesktopModelsService", () => {
     }
   });
 
+  test("prefers channel runtime binding metadata over provider defaults", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "maomi-desktop-models-"));
+    const catalogPath = join(tempRoot, "data", "models.json");
+    const statePath = join(tempRoot, "desktop", "providers-state.json");
+
+    try {
+      await writeJson(catalogPath, TEST_CATALOG);
+      await writeJson(statePath, {
+        version: "1.0",
+        updatedAt: "2026-04-27T00:00:00.000Z",
+        channels: [
+          {
+            providerType: "openai",
+            channelId: "compat-openai",
+            name: "Compatible OpenAI",
+            baseUrl: "https://api.compat.example/v1",
+            enabled: true,
+            metadata: {
+              source: "protocol",
+              providerBindingId: "openai",
+              protocolFamily: "openai",
+              apiStyle: "chat-completions",
+              config: {
+                apiKey: "compat-key",
+                organization: "compat-org",
+              },
+            },
+            createdAt: "2026-04-27T00:00:00.000Z",
+            updatedAt: "2026-04-27T00:00:00.000Z",
+            models: [
+              {
+                providerType: "openai",
+                channelId: "compat-openai",
+                modelId: "gpt-5.4",
+                enabled: true,
+                updatedAt: "2026-04-27T00:00:00.000Z",
+              },
+            ],
+          },
+        ],
+      });
+
+      const service = new DesktopModelsService(
+        createConfig({
+          "models.catalog.path": catalogPath,
+          "models.state.path": statePath,
+        }) as never,
+        createLogger() as never,
+      );
+
+      const target = await service.resolveRuntimeTarget({
+        workspaceId: "workspace-1",
+        selectedChannelId: "compat-openai",
+        selectedModelId: "gpt-5.4",
+      });
+
+      expect(target).toMatchObject({
+        providerType: "openai",
+        channelId: "compat-openai",
+        modelId: "gpt-5.4",
+        providerBindingId: "openai",
+        protocolFamily: "openai",
+        apiStyle: "chat-completions",
+        serviceConfig: {
+          apiKey: "compat-key",
+          baseUrl: "https://api.compat.example/v1",
+          organization: "compat-org",
+        },
+      });
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("does not duplicate catalog-backed providers when channels carry protocol metadata", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "maomi-desktop-models-"));
+    const catalogPath = join(tempRoot, "data", "models.json");
+    const statePath = join(tempRoot, "desktop", "providers-state.json");
+
+    try {
+      await writeJson(catalogPath, TEST_CATALOG);
+      await writeJson(statePath, {
+        version: "1.0",
+        updatedAt: "2026-04-27T00:00:00.000Z",
+        channels: [
+          {
+            providerType: "openai",
+            channelId: "compat-openai",
+            name: "Compatible OpenAI",
+            baseUrl: "https://api.compat.example/v1",
+            enabled: true,
+            metadata: {
+              source: "protocol",
+              providerBindingId: "openai",
+              protocolFamily: "openai",
+              apiStyle: "chat-completions",
+              config: {
+                apiKey: "compat-key",
+              },
+            },
+            createdAt: "2026-04-27T00:00:00.000Z",
+            updatedAt: "2026-04-27T00:00:00.000Z",
+            models: [],
+          },
+        ],
+      });
+
+      const service = new DesktopModelsService(
+        createConfig({
+          "models.catalog.path": catalogPath,
+          "models.state.path": statePath,
+        }) as never,
+        createLogger() as never,
+      );
+
+      const providers = await service.listProviders();
+      expect(providers.filter((item) => item.providerType === "openai")).toHaveLength(1);
+
+      const snapshot = await service.getSnapshot();
+      expect(snapshot.providers.filter((item) => item.providerType === "openai")).toHaveLength(1);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   test("derives Azure OpenAI chat completions baseUrl from configured resource name", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "maomi-desktop-models-"));
     const catalogPath = join(tempRoot, "data", "models.json");
@@ -652,6 +851,421 @@ describe("DesktopModelsService", () => {
           apiKey: "azure-test-key",
           baseUrl: "https://maomi-azure-resource.openai.azure.com/openai/v1",
         },
+      });
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves runtime target with reasoning capabilities from selected model", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "maomi-desktop-models-"));
+    const catalogPath = join(tempRoot, "data", "models.json");
+    const statePath = join(tempRoot, "desktop", "providers-state.json");
+
+    try {
+      await writeJson(catalogPath, TEST_CATALOG);
+      await writeJson(statePath, {
+        version: "1.0",
+        updatedAt: "2026-04-27T00:00:00.000Z",
+        channels: [
+          {
+            providerType: "kimi-for-coding",
+            channelId: "kimicode",
+            name: "Kimi Coding",
+            enabled: true,
+            metadata: {
+              source: "provider",
+              providerBindingId: "openai",
+              protocolFamily: "openai",
+              apiStyle: "chat-completions",
+              env: {
+                KIMI_API_KEY: "kimi-test-key",
+              },
+            },
+            createdAt: "2026-04-27T00:00:00.000Z",
+            updatedAt: "2026-04-27T00:00:00.000Z",
+            models: [
+              {
+                providerType: "kimi-for-coding",
+                channelId: "kimicode",
+                modelId: "kimi-k2.5",
+                enabled: true,
+                updatedAt: "2026-04-27T00:00:00.000Z",
+              },
+            ],
+          },
+        ],
+      });
+
+      const service = new DesktopModelsService(
+        createConfig({
+          "models.catalog.path": catalogPath,
+          "models.state.path": statePath,
+        }) as never,
+        createLogger() as never,
+      );
+
+      const target = await service.resolveRuntimeTarget({
+        workspaceId: "workspace-1",
+        selectedChannelId: "kimicode",
+        selectedModelId: "kimi-k2.5",
+      });
+
+      expect(target).toMatchObject({
+        providerType: "kimi-for-coding",
+        channelId: "kimicode",
+        modelId: "kimi-k2.5",
+        protocolFamily: "openai",
+        apiStyle: "chat-completions",
+        supportsReasoning: true,
+        supportsFunctionCall: true,
+        interleaved: {
+          field: "reasoning_content",
+        },
+        serviceConfig: {
+          apiKey: "kimi-test-key",
+          baseUrl: "https://api.kimi.com/coding/v1",
+        },
+      });
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps provider default baseUrl for provider-backed channels after protocol changes", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "maomi-desktop-models-"));
+    const catalogPath = join(tempRoot, "data", "models.json");
+    const statePath = join(tempRoot, "desktop", "providers-state.json");
+
+    try {
+      await writeJson(catalogPath, TEST_CATALOG);
+      await writeJson(statePath, {
+        version: "1.0",
+        updatedAt: "2026-04-27T00:00:00.000Z",
+        channels: [
+          {
+            providerType: "kimi-for-coding",
+            channelId: "compat-kimi",
+            name: "Compat Kimi",
+            enabled: true,
+            metadata: {
+              source: "provider",
+              providerBindingId: "openai",
+              protocolFamily: "openai",
+              apiStyle: "chat-completions",
+              config: {
+                apiKey: "compat-kimi-key",
+              },
+            },
+            createdAt: "2026-04-27T00:00:00.000Z",
+            updatedAt: "2026-04-27T00:00:00.000Z",
+            models: [
+              {
+                providerType: "kimi-for-coding",
+                channelId: "compat-kimi",
+                modelId: "kimi-k2.5",
+                enabled: true,
+                updatedAt: "2026-04-27T00:00:00.000Z",
+              },
+            ],
+          },
+        ],
+      });
+
+      const service = new DesktopModelsService(
+        createConfig({
+          "models.catalog.path": catalogPath,
+          "models.state.path": statePath,
+        }) as never,
+        createLogger() as never,
+      );
+
+      const target = await service.resolveRuntimeTarget({
+        workspaceId: "workspace-1",
+        selectedChannelId: "compat-kimi",
+        selectedModelId: "kimi-k2.5",
+      });
+
+      expect(target).toMatchObject({
+        providerType: "kimi-for-coding",
+        channelId: "compat-kimi",
+        modelId: "kimi-k2.5",
+        protocolFamily: "openai",
+        apiStyle: "chat-completions",
+        serviceConfig: {
+          apiKey: "compat-kimi-key",
+          baseUrl: "https://api.kimi.com/coding/v1",
+        },
+      });
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("creates and lists custom protocol channels without provider catalog entries", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "maomi-desktop-models-"));
+    const catalogPath = join(tempRoot, "data", "models.json");
+    const statePath = join(tempRoot, "desktop", "providers-state.json");
+
+    try {
+      await writeJson(catalogPath, TEST_CATALOG);
+
+      const service = new DesktopModelsService(
+        createConfig({
+          "models.catalog.path": catalogPath,
+          "models.state.path": statePath,
+        }) as never,
+        createLogger() as never,
+      );
+
+      await service.createChannel("custom-google-generate-content", {
+        channelId: "gemini_lab",
+        name: "Gemini Lab",
+        baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+        enabled: true,
+        metadata: {
+          source: "protocol",
+          protocolFamily: "google",
+          apiStyle: "generate-content",
+          deploymentKind: "direct",
+          discoveryKind: "manual",
+          runtimeSupport: {
+            status: "implemented",
+            adapterId: "google-generate-content",
+          },
+          config: {
+            apiKey: "gemini-key",
+          },
+          headers: {
+            "X-Maomi-Proxy": "edge",
+          },
+        },
+      });
+
+      const snapshot = await service.getSnapshot();
+      expect(snapshot.providers.find((item) => item.providerType === "custom-google-generate-content")).toMatchObject({
+        displayName: "Custom Protocol",
+        protocolFamily: "google",
+        apiStyle: "generate-content",
+        discoveryKind: "manual",
+        runtimeSupport: {
+          status: "implemented",
+          adapterId: "google-generate-content",
+        },
+      });
+      expect(snapshot.channels.find((item) => item.channelId === "gemini_lab")).toMatchObject({
+        providerType: "custom-google-generate-content",
+        metadata: {
+          source: "protocol",
+          protocolFamily: "google",
+          apiStyle: "generate-content",
+          headers: {
+            "X-Maomi-Proxy": "edge",
+          },
+        },
+      });
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves runtime target for custom protocols with headers and without requiring apiKey", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "maomi-desktop-models-"));
+    const catalogPath = join(tempRoot, "data", "models.json");
+    const statePath = join(tempRoot, "desktop", "providers-state.json");
+
+    try {
+      await writeJson(catalogPath, TEST_CATALOG);
+      await writeJson(statePath, {
+        version: "1.0",
+        updatedAt: "2026-04-27T00:00:00.000Z",
+        channels: [
+          {
+            providerType: "custom-google-generate-content",
+            channelId: "gemini_lab",
+            name: "Gemini Lab",
+            baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+            enabled: true,
+            metadata: {
+              source: "protocol",
+              protocolFamily: "google",
+              apiStyle: "generate-content",
+              deploymentKind: "direct",
+              discoveryKind: "manual",
+              runtimeSupport: {
+                status: "implemented",
+                adapterId: "google-generate-content",
+              },
+              headers: {
+                "x-goog-api-key": "gemini-key",
+                "X-Maomi-Proxy": "edge",
+              },
+            },
+            createdAt: "2026-04-27T00:00:00.000Z",
+            updatedAt: "2026-04-27T00:00:00.000Z",
+            models: [
+              {
+                providerType: "custom-google-generate-content",
+                channelId: "gemini_lab",
+                modelId: "gemini-2.5-pro",
+                enabled: true,
+                updatedAt: "2026-04-27T00:00:00.000Z",
+              },
+            ],
+          },
+        ],
+      });
+
+      const service = new DesktopModelsService(
+        createConfig({
+          "models.catalog.path": catalogPath,
+          "models.state.path": statePath,
+        }) as never,
+        createLogger() as never,
+      );
+
+      await expect(service.resolveRuntimeTarget({
+        workspaceId: "workspace-1",
+        selectedChannelId: "gemini_lab",
+        selectedModelId: "gemini-2.5-pro",
+      })).resolves.toMatchObject({
+        providerType: "custom-google-generate-content",
+        channelId: "gemini_lab",
+        modelId: "gemini-2.5-pro",
+        providerBindingId: "google",
+        protocolFamily: "google",
+        apiStyle: "generate-content",
+        serviceConfig: {
+          apiKey: "",
+          baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+          headers: {
+            "x-goog-api-key": "gemini-key",
+            "X-Maomi-Proxy": "edge",
+          },
+        },
+      });
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("normalizes legacy ollama channel metadata onto openai chat runtime resolution", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "maomi-desktop-models-"));
+    const catalogPath = join(tempRoot, "data", "models.json");
+    const statePath = join(tempRoot, "desktop", "providers-state.json");
+
+    try {
+      await writeJson(catalogPath, TEST_CATALOG);
+      await writeJson(statePath, {
+        version: "1.0",
+        updatedAt: "2026-04-27T00:00:00.000Z",
+        channels: [
+          {
+            providerType: "ollama",
+            channelId: "ollama_local",
+            name: "Ollama Local",
+            baseUrl: "http://localhost:11434/api",
+            enabled: true,
+            metadata: {
+              source: "provider",
+              protocolFamily: "ollama",
+              apiStyle: "ollama-chat",
+              runtimeSupport: {
+                status: "catalog-only",
+              },
+            },
+            createdAt: "2026-04-27T00:00:00.000Z",
+            updatedAt: "2026-04-27T00:00:00.000Z",
+            models: [
+              {
+                providerType: "ollama",
+                channelId: "ollama_local",
+                modelId: "llama3.2",
+                enabled: true,
+                updatedAt: "2026-04-27T00:00:00.000Z",
+              },
+            ],
+          },
+        ],
+      });
+
+      const service = new DesktopModelsService(
+        createConfig({
+          "models.catalog.path": catalogPath,
+          "models.state.path": statePath,
+        }) as never,
+        createLogger() as never,
+      );
+
+      const target = await service.resolveRuntimeTarget({
+        workspaceId: "workspace-1",
+        selectedChannelId: "ollama_local",
+        selectedModelId: "llama3.2",
+      });
+
+      expect(target).toMatchObject({
+        providerType: "ollama",
+        channelId: "ollama_local",
+        modelId: "llama3.2",
+        providerBindingId: "openai",
+        protocolFamily: "openai",
+        apiStyle: "chat-completions",
+        serviceConfig: {
+          apiKey: "",
+          baseUrl: "http://localhost:11434/api",
+        },
+      });
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects catalog-backed runtime targets when API key material is missing", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "maomi-desktop-models-"));
+    const catalogPath = join(tempRoot, "data", "models.json");
+    const statePath = join(tempRoot, "desktop", "providers-state.json");
+
+    try {
+      await writeJson(catalogPath, TEST_CATALOG);
+      await writeJson(statePath, {
+        version: "1.0",
+        updatedAt: "2026-04-27T00:00:00.000Z",
+        channels: [
+          {
+            providerType: "openai",
+            channelId: "missing-key",
+            name: "Missing Key",
+            enabled: true,
+            createdAt: "2026-04-27T00:00:00.000Z",
+            updatedAt: "2026-04-27T00:00:00.000Z",
+            models: [
+              {
+                providerType: "openai",
+                channelId: "missing-key",
+                modelId: "gpt-5.4",
+                enabled: true,
+                updatedAt: "2026-04-27T00:00:00.000Z",
+              },
+            ],
+          },
+        ],
+      });
+
+      const service = new DesktopModelsService(
+        createConfig({
+          "models.catalog.path": catalogPath,
+          "models.state.path": statePath,
+        }) as never,
+        createLogger() as never,
+      );
+
+      await expect(service.resolveRuntimeTarget({
+        workspaceId: "workspace-1",
+        selectedChannelId: "missing-key",
+        selectedModelId: "gpt-5.4",
+      })).rejects.toMatchObject({
+        code: "INVALID_ARGUMENT",
+        message: "current channel is missing API key required by selected provider",
       });
     } finally {
       await rm(tempRoot, { recursive: true, force: true });

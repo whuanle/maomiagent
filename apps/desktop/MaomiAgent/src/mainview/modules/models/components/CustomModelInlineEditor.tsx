@@ -16,6 +16,7 @@ const COMMON_MODALITY_OPTIONS = [
 
 const CAPABILITY_ATTACHMENTS = "attachments";
 const CAPABILITY_REASONING = "reasoning";
+const CAPABILITY_INTERLEAVED = "interleaved";
 const CAPABILITY_FUNCTION_CALL = "function-call";
 const CAPABILITY_STRUCTURED_OUTPUT = "structured-output";
 const CAPABILITY_TEMPERATURE = "temperature";
@@ -29,6 +30,7 @@ type CustomModelFormState = {
   inputModalities: string[];
   outputModalities: string[];
   capabilityKeys: string[];
+  interleavedField?: string;
 };
 
 type CustomModelInlineEditorProps = {
@@ -81,6 +83,9 @@ export function CustomModelInlineEditor(props: CustomModelInlineEditorProps) {
     if (model.supportsReasoning) {
       capabilityKeys.push(CAPABILITY_REASONING);
     }
+    if (model.interleaved) {
+      capabilityKeys.push(CAPABILITY_INTERLEAVED);
+    }
     if (model.supportsFunctionCall) {
       capabilityKeys.push(CAPABILITY_FUNCTION_CALL);
     }
@@ -100,12 +105,17 @@ export function CustomModelInlineEditor(props: CustomModelInlineEditorProps) {
       inputModalities: [...model.modalities.input],
       outputModalities: [...model.modalities.output],
       capabilityKeys,
+      interleavedField:
+        model.interleaved && typeof model.interleaved === "object"
+          ? model.interleaved.field
+          : undefined,
     });
   }, [form, model]);
 
   const capabilityOptions = [
     { label: t("模型页.字段.能力.多模态"), value: CAPABILITY_ATTACHMENTS },
     { label: t("模型页.字段.能力.推理"), value: CAPABILITY_REASONING },
+    { label: t("模型页.字段.能力.交错推理"), value: CAPABILITY_INTERLEAVED },
     { label: t("模型页.字段.能力.工具"), value: CAPABILITY_FUNCTION_CALL },
     { label: t("模型页.字段.能力.结构化"), value: CAPABILITY_STRUCTURED_OUTPUT },
     { label: t("模型页.字段.能力.温度"), value: CAPABILITY_TEMPERATURE },
@@ -113,6 +123,8 @@ export function CustomModelInlineEditor(props: CustomModelInlineEditorProps) {
 
   const handleFinish = (values: CustomModelFormState) => {
     const capabilitySet = new Set(values.capabilityKeys ?? []);
+    const interleavedField = normalizeOptionalString(values.interleavedField);
+    const interleavedEnabled = capabilitySet.has(CAPABILITY_INTERLEAVED);
     void onSubmit({
       modelId: values.modelId,
       displayName: values.displayName?.trim() ?? "",
@@ -120,10 +132,13 @@ export function CustomModelInlineEditor(props: CustomModelInlineEditorProps) {
       contextWindow: values.contextWindow ?? undefined,
       maxOutputTokens: values.maxOutputTokens ?? undefined,
       supportsAttachments: capabilitySet.has(CAPABILITY_ATTACHMENTS),
-      supportsReasoning: capabilitySet.has(CAPABILITY_REASONING),
+      supportsReasoning: capabilitySet.has(CAPABILITY_REASONING) || interleavedEnabled,
       supportsFunctionCall: capabilitySet.has(CAPABILITY_FUNCTION_CALL),
       supportsStructuredOutput: capabilitySet.has(CAPABILITY_STRUCTURED_OUTPUT),
       supportsTemperature: capabilitySet.has(CAPABILITY_TEMPERATURE),
+      interleaved: interleavedEnabled
+        ? (interleavedField ? { field: interleavedField } : true)
+        : undefined,
       modalities: {
         input: normalizeModalityValues(values.inputModalities),
         output: normalizeModalityValues(values.outputModalities),
@@ -195,6 +210,23 @@ export function CustomModelInlineEditor(props: CustomModelInlineEditorProps) {
 
         <Form.Item label={t("模型页.字段.模型能力")} name="capabilityKeys">
           <Checkbox.Group options={capabilityOptions} className="models-page-custom-model-capabilities" />
+        </Form.Item>
+
+        <Form.Item
+          noStyle
+          shouldUpdate={(prev, next) => prev.capabilityKeys !== next.capabilityKeys}
+        >
+          {({ getFieldValue }) => (
+            getFieldValue("capabilityKeys")?.includes(CAPABILITY_INTERLEAVED) ? (
+              <Form.Item
+                label={t("模型页.字段.交错推理字段")}
+                name="interleavedField"
+                extra={t("模型页.字段.交错推理字段.提示")}
+              >
+                <Input placeholder="reasoning_content" />
+              </Form.Item>
+            ) : null
+          )}
         </Form.Item>
       </Form>
     </div>

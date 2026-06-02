@@ -13,6 +13,7 @@ import { TITLEBAR_MENU_ITEMS } from "../config/titlebar";
 describe("desktop route ownership", () => {
   test("keeps desktop routes on the native desktop shell", () => {
     expect(parseRouteFromHash("#logs")).toBe("logs");
+    expect(parseRouteFromHash("#ui-designer")).toBe("ui-designer");
     expect(parseRouteFromHash("#shell")).toBe("shell");
     expect(getMainviewRouteOwner("logs")).toBe("native");
     expect(isNativeMainviewRoute("logs")).toBe(true);
@@ -22,12 +23,15 @@ describe("desktop route ownership", () => {
     expect(isNativeMainviewRoute("workspace")).toBe(true);
     expect(getMainviewRouteOwner("chat")).toBe("native");
     expect(isNativeMainviewRoute("chat")).toBe(true);
+    expect(getMainviewRouteOwner("ui-designer")).toBe("native");
+    expect(isNativeMainviewRoute("ui-designer")).toBe(true);
     expect(getMainviewRouteOwner("shell")).toBe("legacy");
     expect(isNativeMainviewRoute("shell")).toBe(false);
   });
 
   test("parses only known desktop hash routes", () => {
     expect(parseRouteFromHash("#logs")).toBe("logs");
+    expect(parseRouteFromHash("#ui-designer")).toBe("ui-designer");
     expect(parseRouteFromHash("settings")).toBe("settings");
     expect(parseRouteFromHash("#browser")).toBeNull();
     expect(parseRouteFromHash("#missing-route")).toBeNull();

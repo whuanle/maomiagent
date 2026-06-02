@@ -39,6 +39,11 @@ export type DesktopModelProviderApiStyle =
   | "ollama-generate"
   | "custom";
 
+export type DesktopModelProviderBindingId =
+  | "openai"
+  | "anthropic"
+  | "google";
+
 export type DesktopModelProviderDeploymentKind =
   | "direct"
   | "azure-openai"
@@ -64,7 +69,11 @@ export type DesktopModelProviderRuntimeSupport = {
   reason?: string;
 };
 
+export type DesktopModelChannelSource = "provider" | "protocol";
+
 export type DesktopModelProviderConfigValue = string | number | boolean;
+
+export type DesktopModelChannelHeaderMap = Record<string, string>;
 
 export type DesktopModelProviderConfigFieldType =
   | "text"
@@ -163,6 +172,18 @@ export type DesktopModelChannelItem = {
   createdAt: string;
   updatedAt: string;
   models: DesktopModelChannelStateItem[];
+};
+
+export type DesktopModelChannelProtocolMetadata = {
+  source?: DesktopModelChannelSource;
+  providerBindingId?: DesktopModelProviderBindingId;
+  protocolFamily?: DesktopModelProviderProtocolFamily;
+  apiStyle?: DesktopModelProviderApiStyle;
+  deploymentKind?: DesktopModelProviderDeploymentKind;
+  discoveryKind?: DesktopModelProviderDiscoveryKind;
+  runtimeSupport?: DesktopModelProviderRuntimeSupport;
+  config?: Record<string, DesktopModelProviderConfigValue>;
+  headers?: DesktopModelChannelHeaderMap;
 };
 
 export type DesktopModelsSnapshot = {

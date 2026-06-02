@@ -8,6 +8,9 @@ import type {
   AiTurnEvent,
   AiTurnRequest,
 } from "../kernel-bridge";
+import {
+  asToolCallId,
+} from "../kernel-bridge";
 
 const originalFetch = globalThis.fetch;
 
@@ -248,5 +251,103 @@ describe("AnthropicMessagesAiTurnPortAdapter", () => {
       "first_ai_event",
       "stream_finished",
     ]);
+  });
+
+  test("includes reasoning_content for assistant tool history on Kimi anthropic-compatible turns", async () => {
+    let capturedBody = "";
+    const request = createTurnRequest();
+    request.prompt.messages = [{
+      message: {
+        id: "message_user_history_1" as PromptMessageId,
+        sessionId: request.prompt.sessionId,
+        role: "user",
+        createdAt: 1,
+      },
+      parts: [{
+        id: "message_user_history_1_part_1" as PromptMessagePartId,
+        type: "text",
+        text: "Inspect workspace",
+      }],
+    }, {
+      message: {
+        id: "message_assistant_history_1" as PromptMessageId,
+        sessionId: request.prompt.sessionId,
+        role: "assistant",
+        createdAt: 2,
+      },
+      parts: [{
+        id: "message_assistant_history_1_part_1" as PromptMessagePartId,
+        type: "tool_call_ref",
+        toolCallId: asToolCallId("tool_call_1"),
+        toolName: "git.status",
+        input: {
+          path: ".",
+        },
+      }],
+    }];
+    request.prompt.tools = [{
+      name: "git.status",
+      description: "Read git status",
+      inputSchema: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+          },
+        },
+        required: ["path"],
+      },
+    }];
+    request.settings.toolChoice = "auto";
+
+    globalThis.fetch = (async (_input, init) => {
+      capturedBody = String(init?.body ?? "");
+      return new Response(JSON.stringify({
+        id: "msg_reasoning_fix_1",
+        content: [{
+          type: "text",
+          text: "ok",
+        }],
+        stop_reason: "end_turn",
+        usage: {
+          input_tokens: 10,
+          output_tokens: 2,
+        },
+      }), {
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    }) as typeof fetch;
+
+    const adapter = new AnthropicMessagesAiTurnPortAdapter({
+      resolveConfig: () => ({
+        apiKey: "kimi-test-key",
+        baseUrl: "https://api.kimi.com/coding/v1",
+      }),
+    });
+
+    await collectEvents(adapter.stream(request));
+
+    expect(JSON.parse(capturedBody)).toMatchObject({
+      messages: [{
+        role: "user",
+        content: [{
+          type: "text",
+          text: "Inspect workspace",
+        }],
+      }, {
+        role: "assistant",
+        reasoning_content: "",
+        content: [{
+          type: "tool_use",
+          id: "tool_call_1",
+          name: "git.status",
+          input: {
+            path: ".",
+          },
+        }],
+      }],
+    });
   });
 });

@@ -25,6 +25,10 @@ import type {
   DesktopModelProviderConfigValue,
   DesktopModelProviderItem,
 } from "../../../shared/desktop-models";
+import {
+  isCustomProtocolProviderType,
+  readChannelProtocolMetadata,
+} from "../../../shared/desktop-model-channel-protocol";
 import { AppTableCard } from "../../components/shared/AppTableCard";
 import {
   DESKTOP_MODELS_BRIDGE_READY_EVENT,
@@ -37,6 +41,12 @@ import {
   updateDesktopModelChannel,
 } from "../../lib/desktop-models";
 import { buildDesktopChannelModelRows } from "./services/channel-models";
+import {
+  buildCustomChannelProtocolMetadata,
+  buildPresetProviderChannelMetadata,
+  getCustomChannelProtocolPreset,
+  resolveChannelProtocolLabelKey,
+} from "./services/channel-protocol";
 import { ChannelFormModal } from "./components/ChannelFormModal";
 import { ChannelModelsModal } from "./components/ChannelModelsModal";
 import type {
@@ -44,6 +54,7 @@ import type {
   ModelsChannelFormValues,
   ModelsPageProps,
 } from "./types";
+import { buildModelsChannelHeaders } from "./types";
 import "./models-page.css";
 
 const CHANNEL_PAGE_SIZE = 20;
@@ -53,6 +64,7 @@ type ModelsChannelRow = {
   key: string;
   providerType: string;
   providerDisplayName: string;
+  protocolLabel: string;
   channelId: string;
   name: string;
   baseUrl?: string;
@@ -69,88 +81,6 @@ function getErrorMessage(error: unknown) {
 
 function normalizeText(value?: string) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
-}
-
-function normalizeChannelConfig(values: Record<string, DesktopModelProviderConfigValue>) {
-  return Object.fromEntries(
-    Object.entries(values)
-      .map(([key, value]) => {
-        if (typeof value === "string") {
-          return [key, value.trim()] as const;
-        }
-
-        return [key, value] as const;
-      })
-      .filter((entry) => {
-        if (typeof entry[1] === "string") {
-          return entry[1].length > 0;
-        }
-
-        return entry[1] !== undefined && entry[1] !== null;
-      }),
-  );
-}
-
-function buildChannelMetadata(
-  channel: DesktopModelChannelItem | undefined,
-  config: Record<string, DesktopModelProviderConfigValue>,
-  configSchema?: DesktopModelProviderItem["configSchema"],
-) {
-  const normalizedConfig = normalizeChannelConfig(config);
-  const allowedConfigKeys = configSchema?.map((field) => field.key) ?? [];
-  const nextConfig = allowedConfigKeys.length > 0
-    ? Object.fromEntries(
-        Object.entries(normalizedConfig).filter(([key]) => allowedConfigKeys.includes(key)),
-      )
-    : normalizedConfig;
-  const existing = channel?.metadata && typeof channel.metadata === "object" && !Array.isArray(channel.metadata)
-    ? { ...channel.metadata }
-    : {};
-
-  if (Object.keys(nextConfig).length > 0) {
-    existing.config = nextConfig;
-  } else {
-    delete existing.config;
-  }
-
-  const existingEnv = existing.env && typeof existing.env === "object" && !Array.isArray(existing.env)
-    ? Object.fromEntries(
-        Object.entries(existing.env as Record<string, unknown>)
-          .filter((entry): entry is [string, string] => typeof entry[1] === "string"),
-      )
-    : {};
-  const managedEnvKeys = new Set(
-    (configSchema ?? [])
-      .map((field) => field.envKey)
-      .filter((value): value is string => typeof value === "string" && value.length > 0),
-  );
-  const nextEnv = Object.fromEntries(
-    Object.entries(existingEnv).filter(([key]) => !managedEnvKeys.has(key)),
-  ) as Record<string, string>;
-
-  for (const field of configSchema ?? []) {
-    if (!field.envKey) {
-      continue;
-    }
-
-    const value = nextConfig[field.key];
-    if (typeof value === "string" && value.length > 0) {
-      nextEnv[field.envKey] = value;
-      continue;
-    }
-
-    if (typeof value === "number" || typeof value === "boolean") {
-      nextEnv[field.envKey] = String(value);
-    }
-  }
-
-  if (Object.keys(nextEnv).length > 0) {
-    existing.env = nextEnv;
-  } else {
-    delete existing.env;
-  }
-
-  return Object.keys(existing).length > 0 ? existing : undefined;
 }
 
 function providerSupportsRemoteSync(provider: DesktopModelProviderItem | undefined) {
@@ -266,11 +196,22 @@ export function ModelsPage(props: ModelsPageProps) {
   const rows = useMemo<ModelsChannelRow[]>(() => {
     return channels.map((item) => {
       const provider = providers.find((entry) => entry.providerType === item.providerType);
+      const protocol = readChannelProtocolMetadata(item);
+      const protocolLabelKey = resolveChannelProtocolLabelKey(item);
       const totalModelCount = buildDesktopChannelModelRows(providers, item).length;
       return {
         key: `${item.providerType}::${item.channelId}`,
         providerType: item.providerType,
-        providerDisplayName: provider?.displayName ?? item.providerType,
+        providerDisplayName: protocol.source === "protocol"
+          ? t("模型页.值.自定义")
+          : provider?.displayName ?? item.providerType,
+        protocolLabel: protocolLabelKey
+          ? t(protocolLabelKey as never)
+          : (
+            (protocol.protocolFamily ?? provider?.protocolFamily) && (protocol.apiStyle ?? provider?.apiStyle)
+              ? `${protocol.protocolFamily ?? provider?.protocolFamily}/${protocol.apiStyle ?? provider?.apiStyle}`
+              : "-"
+          ),
         channelId: item.channelId,
         name: item.name,
         baseUrl: item.baseUrl,
@@ -281,7 +222,7 @@ export function ModelsPage(props: ModelsPageProps) {
         item,
       };
     });
-  }, [channels, providers]);
+  }, [channels, providers, t]);
 
   const filteredRows = useMemo(() => {
     const searchToken = normalizeText(deferredSearchText);
@@ -297,6 +238,7 @@ export function ModelsPage(props: ModelsPageProps) {
         item.channelId,
         item.providerDisplayName,
         item.providerType,
+        item.protocolLabel,
         item.baseUrl,
       ].filter(Boolean).join(" ")).includes(searchToken);
     });
@@ -323,6 +265,20 @@ export function ModelsPage(props: ModelsPageProps) {
     try {
       const provider = providers.find((item) => item.providerType === values.providerType);
       const providerConfigSchema = provider?.configSchema ?? [];
+      const protocolPreset = getCustomChannelProtocolPreset(values.protocolId);
+      const customHeaders = buildModelsChannelHeaders(values.headers);
+      const providerType = values.sourceMode === "protocol"
+        ? protocolPreset?.providerType ?? values.providerType
+        : values.providerType;
+      const metadata = values.sourceMode === "protocol"
+        ? buildCustomChannelProtocolMetadata(protocolPreset, values.config, customHeaders)
+        : buildPresetProviderChannelMetadata({
+          channel: editor?.mode === "edit" ? editor.item : undefined,
+          provider,
+          providerProtocolId: values.providerProtocolId,
+          config: values.config,
+          configSchema: providerConfigSchema,
+        });
 
       if (editor?.mode === "edit") {
         await updateDesktopModelChannel(
@@ -331,15 +287,15 @@ export function ModelsPage(props: ModelsPageProps) {
           {
             name: values.name.trim(),
             baseUrl: values.baseUrl?.trim() || undefined,
-            metadata: buildChannelMetadata(editor.item, values.config, providerConfigSchema),
+            metadata,
           },
         );
       } else {
-        await createDesktopModelChannel(values.providerType, {
+        await createDesktopModelChannel(providerType, {
           channelId: values.channelId.trim(),
           name: values.name.trim(),
           baseUrl: values.baseUrl?.trim() || undefined,
-          metadata: buildChannelMetadata(undefined, values.config, providerConfigSchema),
+          metadata,
           enabled: values.enabled,
         });
       }
@@ -412,6 +368,15 @@ export function ModelsPage(props: ModelsPageProps) {
             {row.providerType}
           </Typography.Text>
         </div>
+      ),
+    },
+    {
+      title: t("模型页.列.协议"),
+      dataIndex: "protocolLabel",
+      key: "protocol",
+      width: 220,
+      render: (value: string) => (
+        <Typography.Text>{value}</Typography.Text>
       ),
     },
     {
@@ -561,7 +526,10 @@ export function ModelsPage(props: ModelsPageProps) {
                       icon={<PlusOutlined />}
                       onClick={() => setEditor({
                         mode: "create",
-                        preferredProviderType: providerFilter !== "all" ? providerFilter : undefined,
+                        preferredProviderType:
+                          providerFilter !== "all" && !isCustomProtocolProviderType(providerFilter)
+                            ? providerFilter
+                            : undefined,
                       })}
                     >
                       {t("模型页.按钮.新建渠道")}

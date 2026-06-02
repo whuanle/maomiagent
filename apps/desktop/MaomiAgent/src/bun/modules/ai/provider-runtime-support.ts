@@ -29,6 +29,11 @@ export const DESKTOP_AI_PROVIDER_RUNTIME_BINDINGS: readonly DesktopAiProviderRun
   protocolFamily: "anthropic",
   apiStyle: "messages",
   adapterId: "anthropic-messages",
+}, {
+  id: "google-generate-content",
+  protocolFamily: "google",
+  apiStyle: "generate-content",
+  adapterId: "google-generate-content",
 }];
 
 function normalizeOptionalText(value: string | undefined): string | undefined {

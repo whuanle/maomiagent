@@ -254,6 +254,19 @@ export {
   type DesktopWorkspacePort,
   type DesktopWorkspaceQueryPort,
 } from "./modules/workspace";
+export {
+  DESKTOP_UI_DESIGNER_COMMAND_PORT,
+  DESKTOP_UI_DESIGNER_PORT,
+  DESKTOP_UI_DESIGNER_QUERY_PORT,
+  DesktopUiDesignerModule,
+  type DesktopUiDesignerCommandPort,
+  type DesktopUiDesignerPort,
+  type DesktopUiDesignerQueryPort,
+  type DesktopUiDesignerState,
+  type DesktopUiDesignerStateQuery,
+  type DesktopUiDesignerDesignPackageSaveInput,
+  type DesktopUiDesignerDesignPackageSaveResponse,
+} from "./modules/ui-designer";
 
 export {
   DESKTOP_SCHEDULED_TASK_HANDLER,

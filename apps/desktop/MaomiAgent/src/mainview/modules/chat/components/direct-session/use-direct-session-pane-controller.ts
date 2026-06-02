@@ -136,11 +136,11 @@ export function useDirectSessionPaneController(
         ariaLabel: isEn ? "Session status" : "会话状态",
         title: sessionTitle,
         titleHint: sessionTitle,
-        editable: Boolean(session?.sessionId),
+        editable: Boolean(session?.sessionId) && props.allowRenameSession !== false,
         savingTitle: props.renamingSessionId === session?.sessionId,
         renamePlaceholder: isEn ? "Conversation title" : "会话标题",
         renameActionLabel: isEn ? "Rename conversation" : "重命名会话",
-        onRename: session?.sessionId
+        onRename: session?.sessionId && props.allowRenameSession !== false
           ? (title) => props.onRenameSession(session.sessionId, title)
           : undefined,
         statusLabel: session
@@ -193,6 +193,11 @@ export function useDirectSessionPaneController(
         selectedModelValue: props.selectedComposerModelValue,
         selectedAgentId: props.selectedComposerAgentId,
         composerMode: props.composerMode,
+        showAttachmentButton: props.composerPresentation?.showAttachmentButton,
+        showModeSwitch: props.composerPresentation?.showModeSwitch,
+        showModelSelect: props.composerPresentation?.showModelSelect,
+        showAgentSelect: props.composerPresentation?.showAgentSelect,
+        disableAgentSelect: props.composerPresentation?.disableAgentSelect,
         tokenBudgetUsage,
         contextCompressionStatus,
         modelOptions: props.composerModelOptions,

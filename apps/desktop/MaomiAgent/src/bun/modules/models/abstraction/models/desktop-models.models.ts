@@ -45,9 +45,12 @@ export type DesktopModelResolvedRuntimeTarget = {
   providerType: string;
   channelId: string;
   modelId: string;
+  providerBindingId?: import("../../../../../shared/desktop-models").DesktopModelProviderBindingId;
   protocolFamily?: import("../../../../../shared/desktop-models").DesktopModelProviderProtocolFamily;
   apiStyle?: import("../../../../../shared/desktop-models").DesktopModelProviderApiStyle;
+  supportsReasoning?: boolean;
   supportsFunctionCall?: boolean;
+  interleaved?: import("../../../../../shared/desktop-models").DesktopModelInterleavedConfig;
   contextWindow?: number;
   maxOutputTokens?: number;
   serviceConfig: DesktopAiProviderServiceConfig;

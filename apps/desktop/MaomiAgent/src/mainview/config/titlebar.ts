@@ -6,6 +6,7 @@ export type AppRouteOwner = "native" | "legacy";
 
 export type AppRouteKey =
   | "chat"
+  | "ui-designer"
   | "browser"
   | "workspace"
   | "git"
@@ -34,6 +35,7 @@ export type TitlebarMenuItem = AppRouteItem & {
 
 export const APP_ROUTE_ITEMS: AppRouteItem[] = [
   { key: "chat", labelKey: "菜单.聊天", inMenu: true, owner: "native" },
+  { key: "ui-designer", labelKey: "菜单.UI设计师", inMenu: true, owner: "native" },
   { key: "workspace", labelKey: "菜单.工作区", inMenu: true, owner: "native" },
   { key: "git", labelKey: "菜单.Git", inMenu: true, owner: "native" },
   { key: "shell", labelKey: "菜单.Shell", inMenu: false, owner: "legacy" },

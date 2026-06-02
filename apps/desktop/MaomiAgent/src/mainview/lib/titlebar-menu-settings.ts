@@ -2,7 +2,7 @@ import { TITLEBAR_MENU_ITEMS, type TitlebarMenuItem } from "../config/titlebar";
 
 const TITLEBAR_MENU_SETTINGS_STORAGE_KEYS = ["maomiagent.titlebar-menu-settings"] as const;
 const TITLEBAR_MENU_SETTINGS_VERSION = 1;
-const DEFAULT_COLLAPSED_MENU_KEYS = ["settings"] as const;
+const DEFAULT_COLLAPSED_MENU_KEYS = ["tasks", "memory", "settings"] as const;
 const ALWAYS_EXPANDED_MENU_KEYS = ["git"] as const;
 
 type TitlebarMenuKey = TitlebarMenuItem["key"];

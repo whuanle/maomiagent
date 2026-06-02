@@ -195,6 +195,10 @@ export function installElectrobunWindowBridge() {
       }),
       removeDesktopWorkspace: (workspaceId) => rpc.request.removeDesktopWorkspace({ workspaceId }),
     };
+    window.maomiDesktopUiDesigner = {
+      getDesktopUiDesignerState: (query) => rpc.request.getDesktopUiDesignerState(query),
+      saveDesktopUiDesignerDesignPackage: (input) => rpc.request.saveDesktopUiDesignerDesignPackage(input),
+    };
     window.maomiDesktopGit = {
       getDesktopGitIgnore: (workspaceId) => rpc.request.getDesktopGitIgnore({ workspaceId }),
       getDesktopGitChanges: (workspaceId) => rpc.request.getDesktopGitChanges({ workspaceId }),

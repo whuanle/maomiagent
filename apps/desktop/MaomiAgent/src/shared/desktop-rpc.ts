@@ -183,6 +183,12 @@ import type {
   DesktopWorkspaceUpdateInput,
 } from "./desktop-workspace";
 import type {
+  DesktopUiDesignerDesignPackageSaveInput,
+  DesktopUiDesignerDesignPackageSaveResponse,
+  DesktopUiDesignerState,
+  DesktopUiDesignerStateQuery,
+} from "./desktop-ui-designer";
+import type {
   WechatAccountStatusInput,
   WechatConfigInput,
   WechatQrLoginPollInput,
@@ -706,6 +712,14 @@ export type DesktopRendererRPC = {
         };
         response: DesktopWorkspaceFileContentResult;
       };
+      getDesktopUiDesignerState: {
+        params: DesktopUiDesignerStateQuery;
+        response: DesktopUiDesignerState;
+      };
+      saveDesktopUiDesignerDesignPackage: {
+        params: DesktopUiDesignerDesignPackageSaveInput;
+        response: DesktopUiDesignerDesignPackageSaveResponse;
+      };
       getDesktopGitIgnore: {
         params: {
           workspaceId: string;
@@ -1139,14 +1153,6 @@ export type DesktopRendererRPC = {
           workspaceId: string;
         };
         response: DesktopWorkspaceItem | null;
-      };
-      writeDesktopWorkspaceTextFile: {
-        params: {
-          workspaceId: string;
-          path: string;
-          content: string;
-        };
-        response: DesktopWorkspaceFileContentResult;
       };
       createDesktopWorkspace: {
         params: DesktopWorkspaceCreateInput;

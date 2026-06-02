@@ -61,6 +61,14 @@ export type DirectConversationSessionPaneProps = {
   onLoadFullSessionDetail?: (sessionId: string) => void | Promise<void>;
   onCollapseFullSessionDetail?: (sessionId: string) => void | Promise<void>;
   renderStageShell?: boolean;
+  allowRenameSession?: boolean;
+  composerPresentation?: {
+    showAttachmentButton?: boolean;
+    showModeSwitch?: boolean;
+    showModelSelect?: boolean;
+    showAgentSelect?: boolean;
+    disableAgentSelect?: boolean;
+  };
 };
 
 export type DirectSessionHeaderViewModel = {
@@ -123,6 +131,11 @@ export type DirectSessionComposerViewModel = {
   selectedModelValue?: string;
   selectedAgentId?: string;
   composerMode: "agent" | "plan";
+  showAttachmentButton?: boolean;
+  showModeSwitch?: boolean;
+  showModelSelect?: boolean;
+  showAgentSelect?: boolean;
+  disableAgentSelect?: boolean;
   tokenBudgetUsage?: {
     percent: number;
     usedTokens: number;

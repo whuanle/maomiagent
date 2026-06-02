@@ -9,6 +9,9 @@ import {
   AnthropicMessagesAiTurnPortAdapter,
 } from "../implementation/anthropic";
 import {
+  GoogleGenerateContentAiTurnPortAdapter,
+} from "../implementation/google";
+import {
   OpenAIChatCompletionsAiTurnPortAdapter,
   OpenAIResponsesAiTurnPortAdapter,
 } from "../implementation/openai";
@@ -35,6 +38,11 @@ describe("desktop ai provider runtime registry", () => {
       protocolFamily: "anthropic",
       apiStyle: "messages",
       adapterId: "anthropic-messages",
+    }, {
+      id: "google-generate-content",
+      protocolFamily: "google",
+      apiStyle: "generate-content",
+      adapterId: "google-generate-content",
     }]);
   });
 
@@ -86,6 +94,230 @@ describe("desktop ai provider runtime registry", () => {
     expect(turnPort).toBeInstanceOf(AnthropicMessagesAiTurnPortAdapter);
   });
 
+  test("resolves the google descriptor and builds the matching ai turn port", () => {
+    const descriptor = findDesktopAiProviderRuntimeDescriptor({
+      protocolFamily: "google",
+      apiStyle: "generate-content",
+    });
+
+    expect(descriptor).toBeDefined();
+    const turnPort = descriptor?.createTurnPort({
+      resolveServiceConfig: async () => ({
+        apiKey: "google-test-key",
+      }),
+    });
+
+    expect(turnPort).toBeInstanceOf(GoogleGenerateContentAiTurnPortAdapter);
+  });
+
+  test("streams google turns through the AI SDK provider runtime with custom base url and headers", async () => {
+    const descriptor = findDesktopAiProviderRuntimeDescriptor({
+      protocolFamily: "google",
+      apiStyle: "generate-content",
+    });
+    const requests: Array<{
+      url: string;
+      headers: Record<string, string>;
+      body: string;
+    }> = [];
+
+    const turnPort = descriptor?.createTurnPort({
+      resolveServiceConfig: async () => ({
+        apiKey: "google-test-key",
+        baseUrl: "https://google.example.test/v1beta",
+        headers: {
+          "x-test-header": "runtime-registry",
+        },
+        project: "maomi-google-project",
+      }),
+      fetchFn: (async (
+        requestInfo: Parameters<typeof fetch>[0],
+        requestInit?: Parameters<typeof fetch>[1],
+      ) => {
+        requests.push({
+          url: String(requestInfo),
+          headers: Object.fromEntries(new Headers(requestInit?.headers).entries()),
+          body: String(requestInit?.body ?? ""),
+        });
+        return new Response([
+          'data: {"candidates":[{"content":{"parts":[{"text":"Hello from Google"}]}}]}\n\n',
+          'data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":4,"candidatesTokenCount":2}}\n\n',
+        ].join(""), {
+          headers: {
+            "content-type": "text/event-stream",
+          },
+        });
+      }) as unknown as typeof fetch,
+    });
+
+    expect(turnPort).toBeInstanceOf(GoogleGenerateContentAiTurnPortAdapter);
+
+    const events: Array<{
+      type: string;
+      delta?: string;
+      reason?: string;
+      metadata?: Record<string, unknown>;
+    }> = [];
+    for await (const event of turnPort!.stream({
+      executionProfile: {
+        id: "profile-registry-google" as never,
+        modelId: "gemini-2.5-flash",
+      },
+      prompt: {
+        sessionId: "session-registry-google" as never,
+        runId: "run-registry-google" as never,
+        turnId: "turn-registry-google" as never,
+        agentId: "assistant.default",
+        systemBlocks: [],
+        contextBlocks: [],
+        messages: [{
+          message: {
+            id: "message-user-registry-google" as never,
+            sessionId: "session-registry-google" as never,
+            role: "user",
+            createdAt: 1,
+          },
+          parts: [{
+            id: "part-user-registry-google" as never,
+            type: "text",
+            text: "Probe google runtime",
+          }],
+        }],
+        tools: [],
+        outputMode: {
+          kind: "text",
+        },
+      },
+      settings: {
+        toolChoice: "none",
+      },
+    })) {
+      events.push(event);
+    }
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toEqual({
+      url: "https://google.example.test/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+      headers: expect.objectContaining({
+        "content-type": "application/json",
+        "x-goog-api-key": "google-test-key",
+        "x-goog-user-project": "maomi-google-project",
+        "x-test-header": "runtime-registry",
+      }),
+      body: JSON.stringify({
+        generationConfig: {},
+        contents: [{
+          role: "user",
+          parts: [{
+            text: "Probe google runtime",
+          }],
+        }],
+      }),
+    });
+    expect(events).toContainEqual({
+      type: "text.delta",
+      delta: "Hello from Google",
+    });
+    expect(events).toContainEqual({
+      type: "finish",
+      reason: "stop",
+      metadata: expect.objectContaining({
+        providerReason: "STOP",
+      }),
+    });
+  });
+
+  test("prefers explicit google auth headers when the channel omits apiKey", async () => {
+    const descriptor = findDesktopAiProviderRuntimeDescriptor({
+      protocolFamily: "google",
+      apiStyle: "generate-content",
+    });
+    const requests: Array<{
+      url: string;
+      headers: Record<string, string>;
+    }> = [];
+
+    const turnPort = descriptor?.createTurnPort({
+      resolveServiceConfig: async () => ({
+        apiKey: "",
+        baseUrl: "https://google.example.test/v1beta",
+        headers: {
+          "x-goog-api-key": "header-google-key",
+          "x-test-header": "header-only-auth",
+        },
+      }),
+      fetchFn: (async (
+        requestInfo: Parameters<typeof fetch>[0],
+        requestInit?: Parameters<typeof fetch>[1],
+      ) => {
+        requests.push({
+          url: String(requestInfo),
+          headers: Object.fromEntries(new Headers(requestInit?.headers).entries()),
+        });
+        return new Response([
+          'data: {"candidates":[{"content":{"parts":[{"text":"Header auth works"}]}}]}\n\n',
+          'data: {"candidates":[{"finishReason":"STOP"}]}\n\n',
+        ].join(""), {
+          headers: {
+            "content-type": "text/event-stream",
+          },
+        });
+      }) as unknown as typeof fetch,
+    });
+
+    const events: Array<{ type: string; delta?: string }> = [];
+    for await (const event of turnPort!.stream({
+      executionProfile: {
+        id: "profile-registry-google-header-only" as never,
+        modelId: "gemini-2.5-flash",
+      },
+      prompt: {
+        sessionId: "session-registry-google-header-only" as never,
+        runId: "run-registry-google-header-only" as never,
+        turnId: "turn-registry-google-header-only" as never,
+        agentId: "assistant.default",
+        systemBlocks: [],
+        contextBlocks: [],
+        messages: [{
+          message: {
+            id: "message-user-registry-google-header-only" as never,
+            sessionId: "session-registry-google-header-only" as never,
+            role: "user",
+            createdAt: 1,
+          },
+          parts: [{
+            id: "part-user-registry-google-header-only" as never,
+            type: "text",
+            text: "Use header auth",
+          }],
+        }],
+        tools: [],
+        outputMode: {
+          kind: "text",
+        },
+      },
+      settings: {
+        toolChoice: "none",
+      },
+    })) {
+      events.push(event);
+    }
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toEqual({
+      url: "https://google.example.test/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+      headers: expect.objectContaining({
+        "content-type": "application/json",
+        "x-goog-api-key": "header-google-key",
+        "x-test-header": "header-only-auth",
+      }),
+    });
+    expect(events).toContainEqual({
+      type: "text.delta",
+      delta: "Header auth works",
+    });
+  });
+
   test("passes the telemetry sink through the registry into the resolved adapter", async () => {
     const descriptor = findDesktopAiProviderRuntimeDescriptor({
       protocolFamily: "anthropic",
@@ -108,7 +340,7 @@ describe("desktop ai provider runtime registry", () => {
         headers: {
           "content-type": "text/plain; charset=utf-8",
         },
-      })) as typeof fetch,
+      })) as unknown as typeof fetch,
       telemetrySink: async (event) => {
         telemetry.push(event.stage);
       },

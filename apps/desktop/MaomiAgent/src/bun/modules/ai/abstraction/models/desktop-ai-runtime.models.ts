@@ -1,5 +1,6 @@
 import type {
   DesktopModelProviderApiStyle,
+  DesktopModelProviderBindingId,
   DesktopModelProviderProtocolFamily,
 } from "../../../../../shared/desktop-models";
 import type {
@@ -9,6 +10,7 @@ import type {
 
 export type DesktopAiProviderRuntimeLookupInput = {
   bindingId?: string;
+  providerBindingId?: DesktopModelProviderBindingId;
   protocolFamily?: DesktopModelProviderProtocolFamily;
   apiStyle?: DesktopModelProviderApiStyle;
 };
@@ -48,6 +50,7 @@ export type DesktopAiProviderTelemetryEvent = {
   requestDurationMs?: number;
   firstByteLatencyMs?: number;
   firstEventLatencyMs?: number;
+  requestMessageSummary?: string;
 };
 
 export type DesktopAiProviderTelemetrySink = (
