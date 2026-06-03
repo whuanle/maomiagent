@@ -178,6 +178,22 @@ function normalizePseudoToolParameterName(input: string): string {
   return normalized.replace(/[_-]([a-z])/gi, (_match, letter: string) => letter.toUpperCase())
 }
 
+function readPseudoTerminalCommandInput(input: Record<string, unknown>): string | undefined {
+  const commandLikeValue = [
+    input.command,
+    input.text,
+    input.commandPreview,
+    input.commandChars,
+    input.commandLines,
+    input.script,
+    input.cmd,
+  ].find((value) => typeof value === "string" && value.trim())
+
+  return typeof commandLikeValue === "string"
+    ? commandLikeValue.trim()
+    : undefined
+}
+
 function normalizePseudoToolParameterValue(input: string): unknown {
   const value = input.replace(/\r\n/g, "\n").trim()
   if (!value) {
@@ -233,9 +249,9 @@ function parsePseudoToolCallBlock(input: string): ParsedPseudoToolCall | undefin
   }
 
   if (toolName === "terminal_execute" && typeof parsedInput.command !== "string") {
-    const text = typeof parsedInput.text === "string" ? parsedInput.text : undefined
-    if (text) {
-      parsedInput.command = text
+    const command = readPseudoTerminalCommandInput(parsedInput)
+    if (command) {
+      parsedInput.command = command
     }
   }
 

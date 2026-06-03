@@ -295,6 +295,10 @@ describe("desktop conversation builtin tools", () => {
       "terminal_close_session",
       "maomi_managed_task",
     ]);
+    expect(catalog.tools.find((tool) => tool.name === "terminal_create_session")?.description)
+      .toContain("PowerShell");
+    expect(catalog.tools.find((tool) => tool.name === "terminal_execute")?.description)
+      .toContain("Get-Content");
 
     const workspaceReadHandler = bundle.toolHandlers.find((handler) => handler.descriptor.name === "workspace_read_file");
     const workspaceWriteFileHandler = bundle.toolHandlers.find((handler) => handler.descriptor.name === "workspace_write_file");

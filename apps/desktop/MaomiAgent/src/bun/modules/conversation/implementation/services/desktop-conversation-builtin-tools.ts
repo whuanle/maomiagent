@@ -198,7 +198,7 @@ const MANAGED_TASK_DESCRIPTOR: ToolDescriptor = {
 
 const TERMINAL_CREATE_SESSION_DESCRIPTOR: ToolDescriptor = {
   name: "terminal_create_session",
-  description: "Create a terminal session that can be reused for command execution and output inspection.",
+  description: "Create a terminal session that can be reused for command execution and output inspection. On Windows, prefer PowerShell sessions and PowerShell-native command syntax unless the workspace explicitly requires another shell.",
   inputSchema: {
     type: "object",
     properties: {
@@ -222,7 +222,7 @@ const TERMINAL_CREATE_SESSION_DESCRIPTOR: ToolDescriptor = {
 
 const TERMINAL_EXECUTE_DESCRIPTOR: ToolDescriptor = {
   name: "terminal_execute",
-  description: "Execute one command in an existing terminal session.",
+  description: "Execute one command in an existing terminal session. Always put the literal command text in `command`. On Windows, prefer PowerShell-native commands such as `Get-ChildItem` or `Get-Content` instead of mixing Unix aliases or `cmd /c` unless the workspace explicitly requires them.",
   inputSchema: {
     type: "object",
     properties: {

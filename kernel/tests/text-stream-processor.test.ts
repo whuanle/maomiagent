@@ -409,6 +409,98 @@ describe("TextStreamProcessor", () => {
     })
   })
 
+  it("recovers terminal_execute command text from common command-like pseudo parameters", async () => {
+    const savedCalls: ToolCallRecord[] = []
+    let nextId = 0
+
+    const processor = new TextStreamProcessor({
+      messageStore: {
+        async append() {},
+        async appendParts() {},
+        async listBySession(): Promise<readonly MessageRecordWithParts[]> {
+          return []
+        },
+      },
+      toolCallStore: {
+        async save(call: ToolCallRecord) {
+          savedCalls.push(call)
+        },
+        async patch() {
+          throw new Error("patch should not be called in this test")
+        },
+        async listByRun() {
+          return []
+        },
+        async listByTurn() {
+          return []
+        },
+      },
+      clock: {
+        now: () => 888,
+      },
+      idGenerator: {
+        next(prefix) {
+          nextId += 1
+          return `${prefix}_${nextId}`
+        },
+      },
+    })
+
+    const handle = await processor.start({
+      session: {
+        id: asSessionId("session_regular"),
+        createdAt: 1,
+        updatedAt: 1,
+        status: "running",
+      },
+      run: {
+        id: asRunId("run_1"),
+        sessionId: asSessionId("session_regular"),
+        createdAt: 1,
+        updatedAt: 1,
+        status: "running",
+      },
+      turn: {
+        id: asTurnId("turn_1"),
+        runId: asRunId("run_1"),
+        sequence: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        status: "running",
+      },
+      assistantMessage: {
+        id: asMessageId("message_assistant"),
+        sessionId: asSessionId("session_regular"),
+        runId: asRunId("run_1"),
+        turnId: asTurnId("turn_1"),
+        role: "assistant",
+        createdAt: 1,
+      },
+    })
+
+    await handle.accept({
+      type: "text.delta",
+      delta: [
+        "<tool_call>",
+        "<function=terminal_execute>",
+        "<parameter=session_id>blog-setup</parameter>",
+        "<parameter=commandPreview>Get-Location</parameter>",
+        "</function>",
+        "</tool_call>",
+      ].join("\n"),
+    })
+
+    const result = await handle.complete()
+
+    expect(result.boundary.kind).toBe("continue")
+    expect(savedCalls).toHaveLength(1)
+    expect(savedCalls[0]?.toolName).toBe("terminal_execute")
+    expect(savedCalls[0]?.input).toEqual({
+      sessionId: "blog-setup",
+      command: "Get-Location",
+    })
+  })
+
   it("publishes reasoning deltas incrementally while coalescing persisted reasoning text", async () => {
     const persistedBatches: string[] = []
     const publishedReasoningParts: MessagePart[] = []
