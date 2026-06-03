@@ -4,6 +4,7 @@ import {
   applyConversationFunctionCallPreferenceToTurnRequest,
   applyConversationHistoryPruningToTurnRequest,
   applyConversationReasoningHistoryNormalization,
+  applySessionHistoryCompactionToTurnRequest,
   normalizeProviderFacingTurnRequest,
 } from "../implementation/shared/turn-request-normalizers";
 import {
@@ -218,6 +219,107 @@ function createTurnRequestWithHeavyToolHistory(input: {
   return request;
 }
 
+function createTurnRequestWithSessionCompactionHistory(): AiTurnRequest {
+  const request = createTurnRequestWithTools();
+  request.executionProfile.metadata = {
+    supportsFunctionCall: true,
+    interleaved: {
+      field: "reasoning_content",
+    },
+  };
+  request.prompt.messages = [{
+    message: {
+      id: "message-user-initial" as AiTurnRequest["prompt"]["messages"][number]["message"]["id"],
+      sessionId: "session-1" as AiTurnRequest["prompt"]["sessionId"],
+      role: "user",
+      createdAt: 1,
+    },
+    parts: [{
+      id: "message-user-initial-text" as AiTurnRequest["prompt"]["messages"][number]["parts"][number]["id"],
+      type: "text",
+      text: "请生成业务财务一体化文档",
+    }],
+  }, {
+    message: {
+      id: "message-assistant-initial" as AiTurnRequest["prompt"]["messages"][number]["message"]["id"],
+      sessionId: "session-1" as AiTurnRequest["prompt"]["sessionId"],
+      role: "assistant",
+      createdAt: 2,
+    },
+    parts: [{
+      id: "message-assistant-initial-reasoning" as AiTurnRequest["prompt"]["messages"][number]["parts"][number]["id"],
+      type: "reasoning",
+      text: "r".repeat(10_000),
+    }, {
+      id: "message-assistant-initial-tool-call" as AiTurnRequest["prompt"]["messages"][number]["parts"][number]["id"],
+      type: "tool_call_ref",
+      toolCallId: "tool-call-initial" as never,
+      toolName: "workspace_write_file",
+      input: {
+        path: "drafts/session-summary.md",
+        content: "x".repeat(20_000),
+      },
+    }],
+  }, {
+    message: {
+      id: "message-tool-initial" as AiTurnRequest["prompt"]["messages"][number]["message"]["id"],
+      sessionId: "session-1" as AiTurnRequest["prompt"]["sessionId"],
+      role: "tool",
+      createdAt: 3,
+    },
+    parts: [{
+      id: "message-tool-initial-result" as AiTurnRequest["prompt"]["messages"][number]["parts"][number]["id"],
+      type: "tool_result_ref",
+      toolCallId: "tool-call-initial" as never,
+      toolName: "workspace_write_file",
+      output: {
+        path: "drafts/session-summary.md",
+      },
+    }, {
+      id: "message-tool-initial-text" as AiTurnRequest["prompt"]["messages"][number]["parts"][number]["id"],
+      type: "text",
+      text: "已写入 1429 行 Markdown",
+    }],
+  }, {
+    message: {
+      id: "message-user-recent" as AiTurnRequest["prompt"]["messages"][number]["message"]["id"],
+      sessionId: "session-1" as AiTurnRequest["prompt"]["sessionId"],
+      role: "user",
+      createdAt: 4,
+    },
+    parts: [{
+      id: "message-user-recent-text" as AiTurnRequest["prompt"]["messages"][number]["parts"][number]["id"],
+      type: "text",
+      text: "改成飞书格式",
+    }],
+  }, {
+    message: {
+      id: "message-assistant-recent" as AiTurnRequest["prompt"]["messages"][number]["message"]["id"],
+      sessionId: "session-1" as AiTurnRequest["prompt"]["sessionId"],
+      role: "assistant",
+      createdAt: 5,
+    },
+    parts: [{
+      id: "message-assistant-recent-text" as AiTurnRequest["prompt"]["messages"][number]["parts"][number]["id"],
+      type: "text",
+      text: "我会重新整理标题和列表格式。",
+    }],
+  }, {
+    message: {
+      id: "message-user-latest" as AiTurnRequest["prompt"]["messages"][number]["message"]["id"],
+      sessionId: "session-1" as AiTurnRequest["prompt"]["sessionId"],
+      role: "user",
+      createdAt: 6,
+    },
+    parts: [{
+      id: "message-user-latest-text" as AiTurnRequest["prompt"]["messages"][number]["parts"][number]["id"],
+      type: "text",
+      text: "保留所有飞书原生块",
+    }],
+  }];
+  return request;
+}
+
 describe("applyConversationFunctionCallPreferenceToTurnRequest", () => {
   test("drops tools and disables tool choice when function call is unsupported", () => {
     const request = createTurnRequestWithTools();
@@ -400,21 +502,18 @@ describe("normalizeProviderFacingTurnRequest", () => {
       request,
     });
 
-    expect(normalized.prompt.messages[2]?.parts).toEqual([{
-      id: "message-tool-older-result",
+    expect(normalized.prompt.contextBlocks.some((block) => block.id === "session-history-summary")).toBe(true);
+    expect(normalized.prompt.messages[2]?.parts[0]).toEqual({
+      id: "message-tool-recent-result",
       type: "tool_result_ref",
-      toolCallId: "tool-call-older",
+      toolCallId: "tool-call-recent",
       toolName: "workspace_write_file",
       output: {
-        path: "drafts/old-plan.md",
+        path: "drafts/current-plan.md",
       },
-    }, {
-      id: "message-tool-older-text",
-      type: "text",
-      text: "[Earlier tool result omitted to keep the next reply responsive.]",
-    }]);
+    });
     expect(normalized.prompt.messages[1]?.parts[0]).toEqual({
-      id: "message-assistant-older-tool-call:synthetic-reasoning",
+      id: "message-assistant-recent-tool-call:synthetic-reasoning",
       type: "reasoning",
       text: "",
     });
@@ -431,12 +530,12 @@ describe("normalizeProviderFacingTurnRequest", () => {
     });
 
     expect(normalized.prompt.messages[1]?.parts[0]).toEqual({
-      id: "message-assistant-older-tool-call-part",
+      id: "message-assistant-recent-tool-call-part",
       type: "tool_call_ref",
-      toolCallId: "tool-call-older",
+      toolCallId: "tool-call-recent",
       toolName: "workspace_write_file",
       input: {
-        path: "drafts/old-plan.md",
+        path: "drafts/current-plan.md",
       },
     });
   });
@@ -462,15 +561,46 @@ describe("normalizeProviderFacingTurnRequest", () => {
     });
 
     expect(normalized.prompt.messages[1]?.parts[0]).toEqual({
-      id: "message-assistant-older-tool-call:synthetic-reasoning",
-      type: "reasoning",
-      text: "",
-    });
-    expect(normalized.prompt.messages[4]?.parts[0]).toEqual({
       id: "message-assistant-recent-tool-call:synthetic-reasoning",
       type: "reasoning",
       text: "",
     });
+  });
+
+  test("injects session summary into context blocks when heavy history exceeds the threshold", () => {
+    const request = createTurnRequestWithSessionCompactionHistory();
+
+    const normalized = applySessionHistoryCompactionToTurnRequest({
+      request,
+    });
+
+    const summaryBlock = normalized.prompt.contextBlocks.find((block) => block.id === "session-history-summary");
+
+    expect(summaryBlock?.content).toContain("Session Summary");
+    expect(summaryBlock?.metadata).toEqual(expect.objectContaining({
+      providerFacingHistoryMode: "summary_with_recent_tail",
+      droppedMessageCount: 3,
+      recentTailUserTurns: 2,
+      historySelectionMs: expect.any(Number),
+      turnDigestBuildMs: expect.any(Number),
+      sessionSummaryMergeMs: expect.any(Number),
+    }));
+    expect(normalized.prompt.messages.map((message) => message.message.id)).toEqual([
+      "message-user-recent",
+      "message-assistant-recent",
+      "message-user-latest",
+    ]);
+  });
+
+  test("keeps existing raw history when the conversation is still small", () => {
+    const request = createTurnRequestWithTools();
+
+    const normalized = applySessionHistoryCompactionToTurnRequest({
+      request,
+    });
+
+    expect(normalized.prompt.contextBlocks).toEqual(request.prompt.contextBlocks);
+    expect(normalized.prompt.messages).toEqual(request.prompt.messages);
   });
 });
 

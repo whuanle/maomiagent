@@ -2,11 +2,28 @@ import { pruneOldToolOutputs } from "#maomiagent/kernel/src/core/algorithms/cont
 import type { DesktopModelInterleavedConfig } from "../../../../../shared/desktop-models";
 
 import type { AiExecutionProfileRef, AiTurnRequest } from "../../kernel-bridge";
+import { buildSessionHistoryCompaction } from "./session-history-compaction";
 
 const TOOL_RESULT_PRUNE_PROTECT_RECENT_USER_TURNS = 2;
 const TOOL_RESULT_PRUNE_PROTECT_TOKENS = 4_000;
 const TOOL_RESULT_PRUNE_MINIMUM_TOKENS = 1_000;
 const TOOL_RESULT_PRUNED_OUTPUT_TEXT = "[Earlier tool result omitted to keep the next reply responsive.]";
+const SESSION_HISTORY_SUMMARY_BLOCK_ID = "session-history-summary";
+
+function buildSessionHistorySummaryContent(input: {
+  summaryText: string;
+  diagnostics: {
+    recentTailUserTurns: number;
+    droppedMessageCount: number;
+  };
+}): string {
+  return [
+    input.summaryText,
+    "",
+    `Tail preserved: last ${input.diagnostics.recentTailUserTurns} user turns.`,
+    `Older raw messages omitted from the provider-facing prompt: ${input.diagnostics.droppedMessageCount}.`,
+  ].join("\n");
+}
 
 function readExecutionProfileBooleanMetadata(
   executionProfile: AiExecutionProfileRef,
@@ -181,6 +198,48 @@ export function applyConversationHistoryPruningToTurnRequest(input: {
   };
 }
 
+export function applySessionHistoryCompactionToTurnRequest(input: {
+  request: AiTurnRequest;
+}): AiTurnRequest {
+  const compaction = buildSessionHistoryCompaction({
+    messages: input.request.prompt.messages,
+  });
+
+  if (compaction.mode === "raw" || !compaction.summaryText) {
+    return input.request;
+  }
+
+  const summaryBlock = {
+    id: SESSION_HISTORY_SUMMARY_BLOCK_ID,
+    kind: "custom" as const,
+    priority: 40,
+    content: buildSessionHistorySummaryContent({
+      summaryText: compaction.summaryText,
+      diagnostics: compaction.diagnostics,
+    }),
+    metadata: {
+      providerFacingHistoryMode: compaction.mode,
+      historySelectionMs: compaction.diagnostics.historySelectionMs,
+      turnDigestBuildMs: compaction.diagnostics.turnDigestBuildMs,
+      sessionSummaryMergeMs: compaction.diagnostics.sessionSummaryMergeMs,
+      droppedMessageCount: compaction.diagnostics.droppedMessageCount,
+      recentTailUserTurns: compaction.diagnostics.recentTailUserTurns,
+    },
+  } satisfies AiTurnRequest["prompt"]["contextBlocks"][number];
+
+  return {
+    ...input.request,
+    prompt: {
+      ...input.request.prompt,
+      contextBlocks: [
+        ...input.request.prompt.contextBlocks.filter((block) => block.id !== SESSION_HISTORY_SUMMARY_BLOCK_ID),
+        summaryBlock,
+      ],
+      messages: compaction.messages,
+    },
+  };
+}
+
 export function normalizeProviderFacingTurnRequest(input: {
   executionProfile: AiExecutionProfileRef;
   request: AiTurnRequest;
@@ -188,7 +247,12 @@ export function normalizeProviderFacingTurnRequest(input: {
   return applyConversationHistoryPruningToTurnRequest({
     request: applyConversationReasoningHistoryNormalization({
       executionProfile: input.executionProfile,
-      request: applyConversationFunctionCallPreferenceToTurnRequest(input),
+      request: applyConversationFunctionCallPreferenceToTurnRequest({
+        executionProfile: input.executionProfile,
+        request: applySessionHistoryCompactionToTurnRequest({
+          request: input.request,
+        }),
+      }),
     }),
   });
 }
