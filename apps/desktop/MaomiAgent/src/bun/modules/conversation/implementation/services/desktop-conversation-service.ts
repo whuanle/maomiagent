@@ -66,6 +66,10 @@ import type {
   DesktopTaskRunMode,
 } from "../../../../../shared/desktop-tasks";
 import { ConversationSessionMutationQueues } from "./conversation-session-mutation-queues";
+import {
+  CHAT_STREAMING_DIAGNOSTIC_MESSAGE,
+  ChatStreamingDiagnosticsTracker,
+} from "./chat-streaming-diagnostics";
 
 const SESSION_ID_RE = /^[a-z0-9][a-z0-9._-]{1,95}$/;
 const SESSION_TITLE_MAX_LENGTH = 160;
@@ -994,6 +998,7 @@ function matchesQuery(item: DesktopConversationSessionItem, queryText: string): 
 export class DesktopConversationService implements DesktopConversationPort {
   private globalMutationQueue: Promise<void> = Promise.resolve();
   private readonly sessionMutationQueues = new ConversationSessionMutationQueues();
+  private readonly streamingDiagnostics = new ChatStreamingDiagnosticsTracker();
   private conversationRuntime: DesktopAiConversationRuntimePort | null = null;
   private readonly pendingConversationTaskSeeds = new Map<string, PendingConversationTaskSeed>();
   private readonly sessionMetadataOverlays = new Map<string, Record<string, unknown>>();
@@ -1019,6 +1024,18 @@ export class DesktopConversationService implements DesktopConversationPort {
 
   async publishRuntimeEventsUpdate(update: DesktopConversationRuntimeEventsUpdateEvent) {
     await this.syncConversationTaskFromRuntimeEvents(update);
+
+    const runtimeEventPublishedAt = Date.now();
+    for (const context of this.streamingDiagnostics.recordRuntimeEventsPublished(
+      update,
+      runtimeEventPublishedAt,
+    )) {
+      void this.logger.debug(CHAT_STREAMING_DIAGNOSTIC_MESSAGE, {
+        context,
+        workspaceId: context.workspaceId,
+        runId: context.runId,
+      });
+    }
 
     if (!this.runtimeEventsPublisher) {
       return;
@@ -1373,6 +1390,18 @@ export class DesktopConversationService implements DesktopConversationPort {
           ...(effectiveSelectedAgentId ? { selectedAgentId: effectiveSelectedAgentId } : {}),
           ...(runMetadata ? { metadata: runMetadata } : {}),
         });
+        for (const context of this.streamingDiagnostics.associateRunContext({
+          sessionId,
+          workspaceId: preflightSummary.workspaceId,
+          runId: output.run.id,
+          turnId: output.run.currentTurnId,
+        })) {
+          void this.logger.debug(CHAT_STREAMING_DIAGNOSTIC_MESSAGE, {
+            context,
+            workspaceId: context.workspaceId,
+            runId: context.runId,
+          });
+        }
         const synced = await this.syncSessionSummaryFromKernel(preflightSummary, output.run.id);
         const retryResult = await this.retryManagedConversationIfNeeded({
           item: synced,
@@ -1821,6 +1850,17 @@ export class DesktopConversationService implements DesktopConversationPort {
             context: event,
             runId: event.runId,
           });
+          const providerTelemetryAt = Date.now();
+          for (const context of this.streamingDiagnostics.recordProviderTelemetry(
+            event,
+            providerTelemetryAt,
+          )) {
+            void this.logger.debug(CHAT_STREAMING_DIAGNOSTIC_MESSAGE, {
+              context,
+              workspaceId: context.workspaceId,
+              runId: context.runId,
+            });
+          }
         },
       });
     }
@@ -1981,7 +2021,18 @@ export class DesktopConversationService implements DesktopConversationPort {
     }
 
     try {
+      const detailLoadStartedAt = Date.now();
       const detail = await this.loadSessionDetail(item);
+      const detailLoadedAt = Date.now();
+      void this.logger.debug(CHAT_STREAMING_DIAGNOSTIC_MESSAGE, {
+        context: this.streamingDiagnostics.buildDetailLoadedContext({
+          detail,
+          at: detailLoadedAt,
+          elapsedMs: detailLoadedAt - detailLoadStartedAt,
+        }),
+        workspaceId: detail.workspaceId,
+        runId: detail.runs.at(-1)?.id,
+      });
       await this.publishSessionDetailUpdate({
         detail,
         reason: "progress",
@@ -2042,7 +2093,18 @@ export class DesktopConversationService implements DesktopConversationPort {
         return;
       }
 
+      const detailLoadStartedAt = Date.now();
       const detail = await this.loadSessionDetail(current);
+      const detailLoadedAt = Date.now();
+      void this.logger.debug(CHAT_STREAMING_DIAGNOSTIC_MESSAGE, {
+        context: this.streamingDiagnostics.buildDetailLoadedContext({
+          detail,
+          at: detailLoadedAt,
+          elapsedMs: detailLoadedAt - detailLoadStartedAt,
+        }),
+        workspaceId: detail.workspaceId,
+        runId: detail.runs.at(-1)?.id,
+      });
       const signature = JSON.stringify(detail);
       if (signature === lastSignature) {
         return;
@@ -2100,7 +2162,19 @@ export class DesktopConversationService implements DesktopConversationPort {
     }
 
     try {
+      const detailPublishStartedAt = Date.now();
       await this.sessionDetailPublisher(update);
+      const detailPublishedAt = Date.now();
+      void this.logger.debug(CHAT_STREAMING_DIAGNOSTIC_MESSAGE, {
+        context: this.streamingDiagnostics.buildDetailPublishedContext({
+          detail: update.detail,
+          reason: update.reason,
+          at: detailPublishedAt,
+          elapsedMs: detailPublishedAt - detailPublishStartedAt,
+        }),
+        workspaceId: update.detail.workspaceId,
+        runId: update.detail.runs.at(-1)?.id,
+      });
     } catch {
       // Ignore bridge publish failures so the mutation result remains the source of truth.
     }

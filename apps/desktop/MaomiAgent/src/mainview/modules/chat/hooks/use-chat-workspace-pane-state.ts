@@ -29,6 +29,7 @@ import {
   DESKTOP_MODELS_INVALIDATED_EVENT,
   getDesktopModelRuntimeSelectionSnapshot,
 } from "../../../lib/desktop-models";
+import { writeRuntimeLog } from "../../../lib/desktop-runtime-logs";
 import {
   buildDesktopRuntimeModelOptionGroups,
   buildDesktopRuntimeModelOptions,
@@ -62,6 +63,10 @@ import {
   mergeDesktopConversationRuntimeEvents,
   shouldDeferRuntimeEventsWhileStopping,
 } from "./desktop-conversation-runtime-events";
+import {
+  createChatStreamingRendererDiagnostics,
+  resolveChatStreamingRendererCorrelation,
+} from "./chat-streaming-diagnostics";
 import type {
   ChatActionErrorType,
   ChatComposerAttachment,
@@ -388,6 +393,9 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
   const [selectedComposerAgentId, setSelectedComposerAgentId] = useState<string>();
   const deferredSearchText = useDeferredValue(searchText);
   const runtimeEventActivityBySessionIdRef = useRef<Record<string, number>>({});
+  const streamingDiagnosticsRef = useRef(createChatStreamingRendererDiagnostics({
+    writeLog: writeRuntimeLog,
+  }));
   const managedTakeoverAttemptKeysRef = useRef<Record<string, true>>({});
   const sessionDetailsByIdRef = useRef<Record<string, DesktopConversationSessionDetail>>({});
   const stoppingSessionIdsRef = useRef<Record<string, true>>({});
@@ -1020,11 +1028,18 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
       }
 
       if (matchesSelectedSession) {
+        const streamingCorrelation = resolveChatStreamingRendererCorrelation({
+          sessionId: runtimeUpdate.sessionId,
+          workspaceId: runtimeUpdate.workspaceId,
+          events: runtimeUpdate.events,
+        });
+        streamingDiagnosticsRef.current.recordFirstRuntimeEventReceived(streamingCorrelation);
         const currentDetail = sessionDetailsByIdRef.current[runtimeUpdate.sessionId];
         if (currentDetail) {
           const merged = mergeDesktopConversationRuntimeEvents(currentDetail, runtimeUpdate.events);
           if (!merged.requiresReload) {
             setLoadingSessionDetail(false);
+            streamingDiagnosticsRef.current.recordFirstRuntimeEventMerged(streamingCorrelation);
             applySessionDetail(merged.detail, {
               clearSendingForSessionId: runtimeUpdate.sessionId,
               clearStoppingForSessionId: runtimeUpdate.sessionId,

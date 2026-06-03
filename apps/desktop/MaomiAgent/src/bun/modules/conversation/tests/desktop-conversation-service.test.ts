@@ -6005,9 +6005,10 @@ describe("DesktopConversationService", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "maomi-desktop-conversation-streaming-"));
     const configuration = new DesktopConfigurationService(createRuntimeContext(tempRoot));
     const database = new DesktopDatabaseService(configuration);
-    const logger = new RuntimeLogsService(
+    const logs = new RuntimeLogsService(
       new RuntimeLogsStore(database.getConnection("runtimeLogs")),
-    ).createLogger({
+    );
+    const logger = logs.createLogger({
       source: "desktop",
       module: "desktop.conversation.streaming-test",
     });
@@ -6135,6 +6136,9 @@ describe("DesktopConversationService", () => {
         },
       ]);
       expect(runtimeUpdates.flatMap((update) => update.eventTypes).filter((type) => type === "message.parts.appended")).toHaveLength(2);
+      const diagnosticLogs = logs.query({ level: "debug" }).items.filter((item) => item.message === "Chat streaming diagnostic");
+      expect(diagnosticLogs.some((item) => item.context?.phase === "conversation.first_runtime_event_publish")).toBe(true);
+      expect(diagnosticLogs.some((item) => item.context?.phase === "conversation.first_message_part_publish")).toBe(true);
     } finally {
       releaseStream?.();
       service.dispose();
@@ -6216,6 +6220,18 @@ describe("DesktopConversationService", () => {
                   runId: "run-provider-telemetry",
                   turnId: "turn-provider-telemetry",
                 });
+                await input.telemetrySink?.({
+                  stage: "first_protocol_frame",
+                  modelId: "moonshot-v1-8k",
+                  runId: "run-provider-telemetry",
+                  turnId: "turn-provider-telemetry",
+                });
+                await input.telemetrySink?.({
+                  stage: "first_ai_event",
+                  modelId: "moonshot-v1-8k",
+                  runId: "run-provider-telemetry",
+                  turnId: "turn-provider-telemetry",
+                });
                 yield { type: "text.start" };
                 yield { type: "text.delta", delta: "telemetry wired" };
                 yield { type: "text.end" };
@@ -6242,13 +6258,18 @@ describe("DesktopConversationService", () => {
       });
 
       expect(result.detail.status).toBe("idle");
-      const debugLog = logs.query({ level: "debug" }).items.find((item) => item.message === "Desktop AI provider stage");
-      expect(debugLog?.context).toEqual(expect.objectContaining({
-        stage: "request_sent",
-        modelId: "moonshot-v1-8k",
-        runId: "run-provider-telemetry",
-        turnId: "turn-provider-telemetry",
-      }));
+      const providerStageLogs = logs.query({ level: "debug" }).items.filter((item) => item.message === "Desktop AI provider stage");
+      expect(providerStageLogs.map((item) => item.context?.stage)).toEqual(expect.arrayContaining([
+        "request_sent",
+        "first_protocol_frame",
+        "first_ai_event",
+      ]));
+      const diagnosticLogs = logs.query({ level: "debug" }).items.filter((item) => item.message === "Chat streaming diagnostic");
+      expect(diagnosticLogs.map((item) => item.context?.phase)).toEqual(expect.arrayContaining([
+        "provider.request_sent",
+        "provider.first_protocol_frame",
+        "provider.first_ai_event",
+      ]));
     } finally {
       service.dispose();
       database.dispose();
