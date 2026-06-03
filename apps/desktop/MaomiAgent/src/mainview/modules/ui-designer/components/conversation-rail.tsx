@@ -31,7 +31,9 @@ type ConversationRailProps = Pick<
   | "selectedSession"
   | "selectedSessionDetail"
   | "sendingMessage"
+  | "stoppingMessage"
   | "selectedWorkspace"
+  | "workspaceSettings"
   | "workspaceId"
   | "workspaces"
   | "createSession"
@@ -41,6 +43,7 @@ type ConversationRailProps = Pick<
   | "resetConversation"
   | "removeComposerAttachment"
   | "sendMessage"
+  | "stopMessage"
   | "setSelectedComposerModelValue"
   | "setDraftMessage"
 > & {
@@ -159,12 +162,6 @@ function createUiDesignerChatCopy(language: LanguageCode): ChatCopy {
   };
 }
 
-const FIXED_UI_DESIGNER_AGENT_OPTIONS = [{
-  value: UI_DESIGNER_AGENT_ID,
-  label: "UI 设计师",
-  description: "固定使用内置 UI 设计师会话。",
-}];
-
 const NOOP = () => undefined;
 
 export function ConversationRail(props: ConversationRailProps) {
@@ -219,13 +216,14 @@ export function ConversationRail(props: ConversationRailProps) {
                   loadingSessionDetail={props.loadingSessionDetail}
                   modelsBridgeAvailable={props.modelsBridgeAvailable}
                   selectedWorkspace={props.selectedWorkspace}
+                  workspaceAvatarSettings={props.workspaceSettings}
                   selectedSession={selectedSessionView}
                   creatingSession={props.creatingSession}
                   renamingSessionId={null}
                   draftMessage={props.draftMessage}
                   sendingMessage={props.sendingMessage}
-                  stoppingMessage={false}
-                  composerAgentOptions={FIXED_UI_DESIGNER_AGENT_OPTIONS}
+                  stoppingMessage={props.stoppingMessage}
+                  composerAgentOptions={[]}
                   composerModelOptions={props.composerModelOptions}
                   composerModelSelectOptions={props.composerModelSelectOptions}
                   composerAttachments={props.composerAttachments}
@@ -245,7 +243,7 @@ export function ConversationRail(props: ConversationRailProps) {
                   onComposerModelChange={props.setSelectedComposerModelValue}
                   onComposerModeChange={NOOP}
                   onSendMessage={() => void props.sendMessage()}
-                  onStopMessage={NOOP}
+                  onStopMessage={() => void props.stopMessage()}
                   onAnswerInteraction={NOOP}
                   onApproveInteraction={NOOP}
                   onRejectInteraction={NOOP}
@@ -256,8 +254,7 @@ export function ConversationRail(props: ConversationRailProps) {
                     showAttachmentButton: true,
                     showModeSwitch: false,
                     showModelSelect: true,
-                    showAgentSelect: true,
-                    disableAgentSelect: true,
+                    showAgentSelect: false,
                   }}
                 />
               )

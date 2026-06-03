@@ -111,6 +111,304 @@ describe("TextStreamProcessor", () => {
     ])
   })
 
+  it("recovers pseudo tool-call markup as a real tool call for ui-designer sessions", async () => {
+    const persistedBatches: string[] = []
+    const savedCalls: ToolCallRecord[] = []
+    let nextId = 0
+
+    const processor = new TextStreamProcessor({
+      messageStore: {
+        async append(_message: MessageRecord, parts: readonly MessagePart[]) {
+          persistedBatches.push(`append:${parts.map((part) => part.type === "text" ? part.text : part.type).join("|")}`)
+        },
+        async appendParts(_messageId, parts) {
+          persistedBatches.push(`appendParts:${parts.map((part) => part.type === "text" ? part.text : part.type).join("|")}`)
+        },
+        async listBySession(): Promise<readonly MessageRecordWithParts[]> {
+          return []
+        },
+      },
+      toolCallStore: {
+        async save(call: ToolCallRecord) {
+          savedCalls.push(call)
+        },
+        async patch() {
+          throw new Error("patch should not be called in this test")
+        },
+        async listByRun() {
+          return []
+        },
+        async listByTurn() {
+          return []
+        },
+      },
+      clock: {
+        now: () => 321,
+      },
+      idGenerator: {
+        next(prefix) {
+          nextId += 1
+          return `${prefix}_${nextId}`
+        },
+      },
+    })
+
+    const handle = await processor.start({
+      session: {
+        id: asSessionId("session_ui_designer"),
+        createdAt: 1,
+        updatedAt: 1,
+        status: "running",
+        metadata: {
+          surface: "ui-designer",
+        },
+      },
+      run: {
+        id: asRunId("run_1"),
+        sessionId: asSessionId("session_ui_designer"),
+        createdAt: 1,
+        updatedAt: 1,
+        status: "running",
+      },
+      turn: {
+        id: asTurnId("turn_1"),
+        runId: asRunId("run_1"),
+        sequence: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        status: "running",
+      },
+      assistantMessage: {
+        id: asMessageId("message_assistant"),
+        sessionId: asSessionId("session_ui_designer"),
+        runId: asRunId("run_1"),
+        turnId: asTurnId("turn_1"),
+        role: "assistant",
+        createdAt: 1,
+      },
+    })
+
+    await handle.accept({
+      type: "text.delta",
+      delta: "先检查当前目录。\n<tool_",
+    })
+    await handle.accept({
+      type: "text.delta",
+      delta: "call>\n<function=terminal_execute>\n<parameter=session_id>blog-setup</parameter>\n<parameter=command>pwd</parameter>\n</function>\n</tool_call>",
+    })
+    await handle.accept({
+      type: "finish",
+      reason: "stop",
+    })
+
+    const result = await handle.complete()
+
+    expect(result.boundary.kind).toBe("continue")
+    expect(savedCalls).toHaveLength(1)
+    expect(savedCalls[0]?.toolName).toBe("terminal_execute")
+    expect(savedCalls[0]?.input).toEqual({
+      sessionId: "blog-setup",
+      command: "pwd",
+    })
+    expect(persistedBatches).toEqual([
+      "append:先检查当前目录。\n",
+      "appendParts:tool_call_ref",
+    ])
+  })
+
+  it("recovers pseudo tool-call markup as real tool calls for regular agent sessions", async () => {
+    const persistedBatches: string[] = []
+    const savedCalls: ToolCallRecord[] = []
+    let nextId = 0
+
+    const processor = new TextStreamProcessor({
+      messageStore: {
+        async append(_message: MessageRecord, parts: readonly MessagePart[]) {
+          persistedBatches.push(`append:${parts.map((part) => part.type === "text" ? part.text : part.type).join("|")}`)
+        },
+        async appendParts(_messageId, parts) {
+          persistedBatches.push(`appendParts:${parts.map((part) => part.type === "text" ? part.text : part.type).join("|")}`)
+        },
+        async listBySession(): Promise<readonly MessageRecordWithParts[]> {
+          return []
+        },
+      },
+      toolCallStore: {
+        async save(call: ToolCallRecord) {
+          savedCalls.push(call)
+        },
+        async patch() {
+          throw new Error("patch should not be called in this test")
+        },
+        async listByRun() {
+          return []
+        },
+        async listByTurn() {
+          return []
+        },
+      },
+      clock: {
+        now: () => 654,
+      },
+      idGenerator: {
+        next(prefix) {
+          nextId += 1
+          return `${prefix}_${nextId}`
+        },
+      },
+    })
+
+    const handle = await processor.start({
+      session: {
+        id: asSessionId("session_regular"),
+        createdAt: 1,
+        updatedAt: 1,
+        status: "running",
+      },
+      run: {
+        id: asRunId("run_1"),
+        sessionId: asSessionId("session_regular"),
+        createdAt: 1,
+        updatedAt: 1,
+        status: "running",
+      },
+      turn: {
+        id: asTurnId("turn_1"),
+        runId: asRunId("run_1"),
+        sequence: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        status: "running",
+      },
+      assistantMessage: {
+        id: asMessageId("message_assistant"),
+        sessionId: asSessionId("session_regular"),
+        runId: asRunId("run_1"),
+        turnId: asTurnId("turn_1"),
+        role: "assistant",
+        createdAt: 1,
+      },
+    })
+
+    await handle.accept({
+      type: "text.delta",
+      delta: [
+        "<tool_call>",
+        "<function=workspace.read_file>",
+        "<parameter=path>./package.json</parameter>",
+        "</function>",
+        "</tool_call><tool_call>",
+        "<function=git_status>",
+        "</function>",
+        "</tool_call>",
+      ].join("\n"),
+    })
+
+    const result = await handle.complete()
+
+    expect(result.boundary.kind).toBe("continue")
+    expect(savedCalls).toHaveLength(2)
+    expect(savedCalls[0]?.toolName).toBe("workspace_read_file")
+    expect(savedCalls[0]?.input).toEqual({
+      path: "./package.json",
+    })
+    expect(savedCalls[1]?.toolName).toBe("git_list_changes")
+    expect(savedCalls[1]?.input).toEqual({})
+    expect(persistedBatches).toEqual([
+      "append:",
+      "appendParts:tool_call_ref",
+      "appendParts:tool_call_ref",
+    ])
+  })
+
+  it("maps terminal_create_session label markup to schema-safe input", async () => {
+    const savedCalls: ToolCallRecord[] = []
+    let nextId = 0
+
+    const processor = new TextStreamProcessor({
+      messageStore: {
+        async append() {},
+        async appendParts() {},
+        async listBySession(): Promise<readonly MessageRecordWithParts[]> {
+          return []
+        },
+      },
+      toolCallStore: {
+        async save(call: ToolCallRecord) {
+          savedCalls.push(call)
+        },
+        async patch() {
+          throw new Error("patch should not be called in this test")
+        },
+        async listByRun() {
+          return []
+        },
+        async listByTurn() {
+          return []
+        },
+      },
+      clock: {
+        now: () => 777,
+      },
+      idGenerator: {
+        next(prefix) {
+          nextId += 1
+          return `${prefix}_${nextId}`
+        },
+      },
+    })
+
+    const handle = await processor.start({
+      session: {
+        id: asSessionId("session_ui_designer"),
+        createdAt: 1,
+        updatedAt: 1,
+        status: "running",
+        metadata: {
+          surface: "ui-designer",
+        },
+      },
+      run: {
+        id: asRunId("run_1"),
+        sessionId: asSessionId("session_ui_designer"),
+        createdAt: 1,
+        updatedAt: 1,
+        status: "running",
+      },
+      turn: {
+        id: asTurnId("turn_1"),
+        runId: asRunId("run_1"),
+        sequence: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        status: "running",
+      },
+      assistantMessage: {
+        id: asMessageId("message_assistant"),
+        sessionId: asSessionId("session_ui_designer"),
+        runId: asRunId("run_1"),
+        turnId: asTurnId("turn_1"),
+        role: "assistant",
+        createdAt: 1,
+      },
+    })
+
+    await handle.accept({
+      type: "text.delta",
+      delta: "<tool_call>\n<function=terminal_create_session>\n<parameter=label>blog-setup</parameter>\n<parameter=shell_kind>powershell</parameter>\n<parameter=unexpected>drop-me</parameter>\n</function>\n</tool_call>",
+    })
+
+    const result = await handle.complete()
+
+    expect(result.boundary.kind).toBe("continue")
+    expect(savedCalls).toHaveLength(1)
+    expect(savedCalls[0]?.toolName).toBe("terminal_create_session")
+    expect(savedCalls[0]?.input).toEqual({
+      title: "blog-setup",
+      shellKind: "powershell",
+    })
+  })
+
   it("publishes reasoning deltas incrementally while coalescing persisted reasoning text", async () => {
     const persistedBatches: string[] = []
     const publishedReasoningParts: MessagePart[] = []

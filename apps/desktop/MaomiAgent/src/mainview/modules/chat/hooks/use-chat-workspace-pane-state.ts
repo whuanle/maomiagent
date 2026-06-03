@@ -1,6 +1,7 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
+  DesktopConversationAttachmentInput,
   DesktopConversationAttachmentKind,
   DesktopConversationRuntimeEventsUpdateEvent,
   DesktopConversationSessionDetail,
@@ -127,6 +128,17 @@ function mergeSessionSummary(
   nextItems[index] = buildSessionItemFromDetail(detail, nextItems[index]);
   nextItems.sort(compareSessions);
   return nextItems;
+}
+
+function buildComposerAttachmentInputs(attachments: ChatComposerAttachment[]): DesktopConversationAttachmentInput[] {
+  return attachments.map((attachment) => ({
+    attachmentId: attachment.id,
+    kind: attachment.kind,
+    fileName: attachment.name,
+    dataBase64: attachment.dataBase64,
+    ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
+    ...(typeof attachment.sizeBytes === "number" ? { sizeBytes: attachment.sizeBytes } : {}),
+  }));
 }
 
 function normalizeOptionalText(value: unknown): string | undefined {
@@ -638,7 +650,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
   }, [clearExpandedSessionDetailState, selectedSessionId, updateSessionDetailsById]);
 
   const reloadComposerModels = useCallback(async (detail?: DesktopConversationSessionDetail) => {
-    if (!modelsBridgeAvailable || !selectedSessionId) {
+    if (!modelsBridgeAvailable) {
       setComposerModelOptions([]);
       setComposerModelSelectOptions([]);
       setSelectedComposerModelValueState(undefined);
@@ -646,10 +658,10 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
     }
 
     try {
-      const resolvedDetailChannelId = detail?.sessionId === selectedSessionId
+      const resolvedDetailChannelId = selectedSessionId && detail?.sessionId === selectedSessionId
         ? normalizeOptionalText(detail.metadata?.selectedChannelId)
         : undefined;
-      const resolvedDetailModelId = detail?.sessionId === selectedSessionId
+      const resolvedDetailModelId = selectedSessionId && detail?.sessionId === selectedSessionId
         ? normalizeOptionalText(detail.metadata?.selectedModelId)
         : undefined;
       const storedSelectedChannelId = normalizeOptionalText(workspaceSettings.selectedChannelId);
@@ -662,11 +674,22 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
         ?? selectedSessionDetailModelId
         ?? selectedSessionSummaryModelId
         ?? (storedSelectedChannelId && storedSelectedModelId ? storedSelectedModelId : undefined);
-      const response = await getDesktopModelRuntimeSelectionSnapshot({
-        workspaceId,
-        selectedChannelId,
-        selectedModelId,
-      });
+      let response;
+      try {
+        response = await getDesktopModelRuntimeSelectionSnapshot({
+          workspaceId,
+          selectedChannelId,
+          selectedModelId,
+        });
+      } catch (error) {
+        if (!selectedChannelId && !selectedModelId) {
+          throw error;
+        }
+
+        response = await getDesktopModelRuntimeSelectionSnapshot({
+          workspaceId,
+        });
+      }
       const runtimeOptions = buildDesktopRuntimeModelOptions({
         snapshot: response.item,
         selectedChannelId,
@@ -990,6 +1013,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
               clearSendingForSessionId: runtimeUpdate.sessionId,
               clearStoppingForSessionId: runtimeUpdate.sessionId,
             });
+            setSendingMessage(merged.detail.status === "active" && stoppingSessionIdRef.current !== runtimeUpdate.sessionId);
             return;
           }
         }
@@ -1257,14 +1281,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
     }
 
     const text = draftMessage.trim();
-    const attachments = composerAttachments.map((attachment) => ({
-      attachmentId: attachment.id,
-      kind: attachment.kind,
-      fileName: attachment.name,
-      dataBase64: attachment.dataBase64,
-      ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
-      ...(typeof attachment.sizeBytes === "number" ? { sizeBytes: attachment.sizeBytes } : {}),
-    }));
+    const attachments = buildComposerAttachmentInputs(composerAttachments);
 
     if (!text && attachments.length === 0) {
       return false;
@@ -1474,6 +1491,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
     modelsBridgeAvailable,
     agentsBridgeAvailable,
     workspaceId,
+    workspaceSettings,
     sessions,
     sessionDetailsById,
     selectedSessionId,

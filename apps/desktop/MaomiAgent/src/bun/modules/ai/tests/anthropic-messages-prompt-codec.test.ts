@@ -26,6 +26,9 @@ function createBaseTurnRequest(): AiTurnRequest {
     executionProfile: {
       id: "profile_kimi_main" as AiTurnRequest["executionProfile"]["id"],
       modelId: "kimi-k2.5",
+      metadata: {
+        supportsReasoning: true,
+      },
     },
     prompt: {
       sessionId,
@@ -249,6 +252,38 @@ describe("AnthropicMessagesPromptCodec", () => {
       }],
       reasoning_content: "Need to inspect the workspace before editing.",
     }]);
+  });
+
+  test("skips anthropic thinking config when execution metadata disables thinking", () => {
+    const codec = new AnthropicMessagesPromptCodec();
+    const request = createBaseTurnRequest();
+
+    request.executionProfile = {
+      ...request.executionProfile,
+      metadata: {
+        thinkingEnabled: false,
+      },
+    };
+
+    const payload = codec.encode(request);
+
+    expect(payload.thinking).toBeUndefined();
+  });
+
+  test("skips anthropic thinking config when execution metadata does not support reasoning", () => {
+    const codec = new AnthropicMessagesPromptCodec();
+    const request = createBaseTurnRequest();
+
+    request.executionProfile = {
+      ...request.executionProfile,
+      metadata: {
+        supportsReasoning: false,
+      },
+    };
+
+    const payload = codec.encode(request);
+
+    expect(payload.thinking).toBeUndefined();
   });
 
   test("injects json schema output constraints into the system prompt", () => {

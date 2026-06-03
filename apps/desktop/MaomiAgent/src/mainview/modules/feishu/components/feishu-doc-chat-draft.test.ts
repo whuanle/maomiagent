@@ -18,6 +18,7 @@ describe("buildFeishuDocChatDraftText", () => {
     expect(draft.startsWith("\n\n---\n注意：\n")).toBe(true)
     expect(draft).not.toContain("请在上方填写你的问题或任务。")
     expect(draft).toContain("处理前先读取工作区里的原始 Markdown 文件。")
+    expect(draft).toContain("如果原始 Markdown 文件内容为空，也表示已读取到一个空白飞书文档，不要因此跳过本地草稿生成。")
     expect(draft).toContain("如需生成修改稿，只能写入本地 Markdown 草稿，不要直接改动或推送飞书远端。")
     expect(draft).toContain("<feishu_doc_context>")
     expect(draft).toContain("doc_token: doc_token_1")

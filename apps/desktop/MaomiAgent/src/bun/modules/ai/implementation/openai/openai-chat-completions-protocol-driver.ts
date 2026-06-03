@@ -40,33 +40,6 @@ export type OpenAIChatCompletionsRequestBody = {
   reasoning_effort?: string;
 };
 
-function summarizeRequestMessages(
-  messages: OpenAIChatCompletionsPromptPayload["messages"],
-): string {
-  return messages.map((message, index) => {
-    if (message.role === "assistant") {
-      const toolCallCount = Array.isArray(message.tool_calls) ? message.tool_calls.length : 0;
-      const reasoningState = Object.prototype.hasOwnProperty.call(message, "reasoning_content")
-        ? `reasoning:${typeof message.reasoning_content === "string" ? message.reasoning_content.length : String(message.reasoning_content)}`
-        : "reasoning:missing";
-      const contentState = typeof message.content === "string"
-        ? `content:${message.content.length}`
-        : `content:${String(message.content)}`;
-      return `${index}:${message.role}[${contentState};tool_calls:${toolCallCount};${reasoningState}]`;
-    }
-
-    if (message.role === "tool") {
-      return `${index}:${message.role}[tool_call_id:${message.tool_call_id};content:${message.content.length}]`;
-    }
-
-    if (Array.isArray(message.content)) {
-      return `${index}:${message.role}[parts:${message.content.length}]`;
-    }
-
-    return `${index}:${message.role}[content:${message.content.length}]`;
-  }).join(" | ");
-}
-
 function normalizeAssistantReasoningContent(
   messages: OpenAIChatCompletionsPromptPayload["messages"],
 ): OpenAIChatCompletionsPromptPayload["messages"] {
@@ -82,6 +55,116 @@ function normalizeAssistantReasoningContent(
           reasoning_content: "",
         };
   });
+}
+
+function isOpenAICompatibleToolName(value: string): boolean {
+  return /^[A-Za-z][A-Za-z0-9_-]*$/.test(value);
+}
+
+function toOpenAICompatibleToolName(value: string): string {
+  const normalized = value.replace(/[^A-Za-z0-9_-]/g, "_");
+  return /^[A-Za-z]/.test(normalized) ? normalized : `tool_${normalized}`;
+}
+
+function buildOpenAIToolNameMaps(payload: OpenAIChatCompletionsPromptPayload): {
+  originalToEncoded: ReadonlyMap<string, string>;
+  encodedToOriginal: ReadonlyMap<string, string>;
+} {
+  const originalToEncoded = new Map<string, string>();
+  const encodedToOriginal = new Map<string, string>();
+  const used = new Set<string>();
+
+  const reserve = (originalName: string): void => {
+    if (originalToEncoded.has(originalName)) {
+      return;
+    }
+
+    const baseName = toOpenAICompatibleToolName(originalName);
+    let encodedName = baseName;
+    let suffix = 2;
+    while (used.has(encodedName)) {
+      encodedName = `${baseName}_${suffix}`;
+      suffix += 1;
+    }
+
+    used.add(encodedName);
+    originalToEncoded.set(originalName, encodedName);
+    if (encodedName !== originalName) {
+      encodedToOriginal.set(encodedName, originalName);
+    }
+  };
+
+  for (const tool of payload.tools ?? []) {
+    reserve(tool.function.name);
+  }
+
+  for (const message of payload.messages) {
+    if (message.role !== "assistant" || !Array.isArray(message.tool_calls)) {
+      continue;
+    }
+    for (const toolCall of message.tool_calls) {
+      reserve(toolCall.function.name);
+    }
+  }
+
+  return { originalToEncoded, encodedToOriginal };
+}
+
+function encodeToolName(input: {
+  name: string;
+  originalToEncoded: ReadonlyMap<string, string>;
+}): string {
+  return input.originalToEncoded.get(input.name)
+    ?? (isOpenAICompatibleToolName(input.name) ? input.name : toOpenAICompatibleToolName(input.name));
+}
+
+function normalizeOpenAIToolNames(payload: OpenAIChatCompletionsPromptPayload): {
+  payload: OpenAIChatCompletionsPromptPayload;
+  toolNameMap: ReadonlyMap<string, string>;
+} {
+  const maps = buildOpenAIToolNameMaps(payload);
+  if (maps.encodedToOriginal.size === 0) {
+    return {
+      payload,
+      toolNameMap: maps.encodedToOriginal,
+    };
+  }
+
+  return {
+    payload: {
+      ...payload,
+      messages: payload.messages.map((message) => {
+        if (message.role !== "assistant" || !Array.isArray(message.tool_calls)) {
+          return message;
+        }
+
+        return {
+          ...message,
+          tool_calls: message.tool_calls.map((toolCall) => ({
+            ...toolCall,
+            function: {
+              ...toolCall.function,
+              name: encodeToolName({
+                name: toolCall.function.name,
+                originalToEncoded: maps.originalToEncoded,
+              }),
+            },
+          })),
+        };
+      }),
+      tools: payload.tools?.map((tool) => ({
+        ...tool,
+        function: {
+          ...tool.function,
+          name: encodeToolName({
+            name: tool.function.name,
+            originalToEncoded: maps.originalToEncoded,
+          }),
+        },
+      })),
+    },
+    toolNameMap: maps.encodedToOriginal,
+  };
 }
 
 type CreateOpenAIChatCompletionsProtocolDriverOptions = {
@@ -232,6 +315,7 @@ function buildRequestBody(
 }
 
 function buildHeaders(config: OpenAIChatCompletionsServiceConfig): Record<string, string> {
+  const configuredHeaders = config.headers;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(isAzureOpenAIBaseUrl(config.baseUrl)
@@ -241,10 +325,10 @@ function buildHeaders(config: OpenAIChatCompletionsServiceConfig): Record<string
     ...(config.project ? { "OpenAI-Project": config.project } : {}),
   };
 
-  return config.headers
+  return configuredHeaders
     ? {
         ...headers,
-        ...config.headers,
+        ...configuredHeaders,
       }
     : headers;
 }
@@ -273,18 +357,10 @@ export function createOpenAIChatCompletionsProtocolDriver(
       supportsTemperature: true,
     },
     async *execute(input) {
-      const requestBody = buildRequestBody(input.request, codec.encode(input.request), input.config);
-      const requestMessageSummary = summarizeRequestMessages(requestBody.messages);
+      const normalized = normalizeOpenAIToolNames(codec.encode(input.request));
+      const requestBody = buildRequestBody(input.request, normalized.payload, input.config);
       const endpoint = buildOpenAIChatCompletionsEndpoint(input.config.baseUrl);
       let attempt = 1;
-
-      await input.telemetrySink?.({
-        stage: "request_built",
-        modelId: input.request.executionProfile.modelId,
-        runId: input.request.trace?.runId ?? input.request.prompt.runId,
-        turnId: input.request.trace?.turnId ?? input.request.prompt.turnId,
-        requestMessageSummary,
-      });
 
       while (true) {
         const requestTimeout = startRequestTimeout(input.config.timeoutMs);
@@ -319,23 +395,17 @@ export function createOpenAIChatCompletionsProtocolDriver(
         }
 
         if (!response.ok) {
+          const bodyText = await readResponseBodyText(response);
           requestSignal.dispose();
           requestTimeout.cancel();
           const kernelError = normalizeOpenAIHttpError({
             status: response.status,
             statusText: response.statusText,
-            bodyText: await readResponseBodyText(response),
+            bodyText,
           });
-          const errorWithRequestSummary = {
-            ...kernelError,
-            metadata: {
-              ...(kernelError.metadata ?? {}),
-              requestMessageSummary,
-            },
-          };
           const retried = await retryIfNeeded({
             attempt,
-            error: errorWithRequestSummary,
+            error: kernelError,
             headers: response.headers,
             retryPolicy: options.retryPolicy,
             sleepFn,
@@ -345,7 +415,7 @@ export function createOpenAIChatCompletionsProtocolDriver(
             continue;
           }
 
-          throw errorWithRequestSummary;
+          throw kernelError;
         }
 
         try {
@@ -360,7 +430,9 @@ export function createOpenAIChatCompletionsProtocolDriver(
               kind: "byte",
               chunk: "",
             };
-            for await (const event of streamOpenAIChatCompletionEvents(response)) {
+            for await (const event of streamOpenAIChatCompletionEvents(response, {
+              toolNameMap: normalized.toolNameMap,
+            })) {
               yield {
                 kind: "event",
                 event,
@@ -370,7 +442,9 @@ export function createOpenAIChatCompletionsProtocolDriver(
           }
 
           const payload = await response.json();
-          for await (const event of readOpenAIChatCompletionJsonEvents(payload)) {
+          for await (const event of readOpenAIChatCompletionJsonEvents(payload, {
+            toolNameMap: normalized.toolNameMap,
+          })) {
             yield {
               kind: "event",
               event,

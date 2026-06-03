@@ -17,6 +17,7 @@ export function buildFeishuDocChatDraftText(input: FeishuDocChatDraftTextInput):
     "注意：",
     "",
     "处理前先读取工作区里的原始 Markdown 文件。",
+    "如果原始 Markdown 文件内容为空，也表示已读取到一个空白飞书文档，不要因此跳过本地草稿生成。",
     "如需生成修改稿，只能写入本地 Markdown 草稿，不要直接改动或推送飞书远端。",
     "",
     "<feishu_doc_context>",

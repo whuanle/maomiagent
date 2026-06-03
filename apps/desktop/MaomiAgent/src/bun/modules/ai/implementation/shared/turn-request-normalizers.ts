@@ -47,7 +47,20 @@ function executionProfileRequiresReasoningHistory(
   executionProfile: AiExecutionProfileRef,
 ): boolean {
   const interleaved = readExecutionProfileInterleavedMetadata(executionProfile);
-  return interleaved !== undefined && interleaved !== false;
+  if (interleaved !== undefined && interleaved !== false) {
+    return true;
+  }
+
+  const metadata = executionProfile.metadata;
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return false;
+  }
+
+  const record = metadata as Record<string, unknown>;
+  return record.protocolFamily === "anthropic"
+    && record.apiStyle === "messages"
+    && record.supportsReasoning === true
+    && record.thinkingEnabled !== false;
 }
 
 function messageNeedsSyntheticReasoning(

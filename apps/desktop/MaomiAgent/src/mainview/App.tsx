@@ -360,6 +360,7 @@ export default function App() {
                 />
               ) : route.key === "settings" ? (
                 <SettingsPage
+                  active={routeActive}
                   status={status}
                   language={language}
                   themeMode={themeMode}

@@ -16,20 +16,37 @@ describe("resolveDirectSessionComposerSubmitState", () => {
     })).toEqual({
       label: "正在停止",
       disabled: true,
+      action: "stop",
     });
   });
 
-  test("keeps stop label when still streaming without a stop request", () => {
+  test("keeps stop label while streaming without allowing another send", () => {
     expect(resolveDirectSessionComposerSubmitState({
       language: "en-US",
       sendLabel: "Send",
       disabled: false,
-      sendDisabled: false,
+      sendDisabled: true,
       sending: true,
       stopping: false,
     })).toEqual({
       label: "Stop",
       disabled: false,
+      action: "stop",
+    });
+  });
+
+  test("keeps stop label while streaming even when a draft is present", () => {
+    expect(resolveDirectSessionComposerSubmitState({
+      language: "zh-CN",
+      sendLabel: "发送",
+      disabled: false,
+      sendDisabled: true,
+      sending: true,
+      stopping: false,
+    })).toEqual({
+      label: "停止",
+      disabled: false,
+      action: "stop",
     });
   });
 });
@@ -46,6 +63,14 @@ describe("shouldFocusPrefilledDraft", () => {
     expect(shouldFocusPrefilledDraft(
       "用户已经输入了问题",
       "用户已经输入了问题，并继续补充",
+    )).toBe(false);
+  });
+
+  test("does not refocus the composer after the first typed character", () => {
+    expect(shouldFocusPrefilledDraft(
+      "",
+      "你",
+      { composerFocused: true },
     )).toBe(false);
   });
 });

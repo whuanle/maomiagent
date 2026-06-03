@@ -979,4 +979,173 @@ describe("desktop conversation builtin tools", () => {
       sessionId: "term_1",
     }));
   });
+
+  test("auto-creates a terminal session when terminal_execute receives an unknown session label", async () => {
+    const executedSessionIds: string[] = [];
+    const createdSessions: Array<Record<string, unknown>> = [];
+    const bundle = createDesktopConversationBuiltinToolBundle({
+      workspaceQuery: {
+        async list() {
+          return {
+            items: [{
+              workspaceId: "workspace-1",
+              name: "MaomiAgent",
+              directoryPath: "E:/workspace/MaomiAgent",
+              isPinned: false,
+              tags: [],
+              createdAt: "2026-05-04T00:00:00.000Z",
+              updatedAt: "2026-05-04T00:00:00.000Z",
+            }],
+            meta: {
+              total: 1,
+              limit: 20,
+              offset: 0,
+              hasMore: false,
+            },
+          };
+        },
+        async get(workspaceId) {
+          return workspaceId === "workspace-1"
+            ? {
+              workspaceId: "workspace-1",
+              name: "MaomiAgent",
+              directoryPath: "E:/workspace/MaomiAgent",
+              isPinned: false,
+              tags: [],
+              createdAt: "2026-05-04T00:00:00.000Z",
+              updatedAt: "2026-05-04T00:00:00.000Z",
+            }
+            : null;
+        },
+        async getFileContent() {
+          throw new Error("not used");
+        },
+      },
+      gitQuery: {
+        async getGitChanges() {
+          throw new Error("not used");
+        },
+        async getGitReviewDetail() {
+          throw new Error("not used");
+        },
+      },
+      terminalQuery: {
+        async getDetail() {
+          throw new Error("not used");
+        },
+      },
+      terminalCommand: {
+        async create(input) {
+          createdSessions.push({ ...input });
+          return {
+            sessionId: "term_auto",
+            title: input.title ?? "Workspace shell",
+            shellKind: input.shellKind ?? "powershell",
+            status: "running",
+            cwd: input.cwd ?? "E:/workspace/MaomiAgent",
+            workspaceId: input.workspaceId,
+            createdAt: "2026-05-04T00:00:00.000Z",
+            updatedAt: "2026-05-04T00:00:00.000Z",
+          };
+        },
+        async execute(sessionId) {
+          executedSessionIds.push(sessionId);
+          if (sessionId !== "term_auto") {
+            return null;
+          }
+
+          return {
+            sessionId,
+            title: "blog-setup",
+            shellKind: "powershell",
+            status: "running",
+            cwd: "E:/workspace/MaomiAgent",
+            workspaceId: "workspace-1",
+            createdAt: "2026-05-04T00:00:00.000Z",
+            updatedAt: "2026-05-04T00:00:00.000Z",
+          };
+        },
+        async close() {
+          throw new Error("not used");
+        },
+      },
+      taskBridge: {
+        async patchManagedConversationRootTask() {
+          throw new Error("not used");
+        },
+      },
+    });
+
+    const terminalExecuteHandler = bundle.toolHandlers.find((handler) => handler.descriptor.name === "terminal_execute");
+    expect(terminalExecuteHandler).toBeTruthy();
+
+    const context: ToolHandlerContext = {
+      descriptor: terminalExecuteHandler!.descriptor,
+      signal: new AbortController().signal,
+      session: {
+        id: asSessionId("session_builtin_tools"),
+        title: "Builtin tools",
+        status: "active",
+        createdAt: 1,
+        updatedAt: 1,
+        metadata: {
+          workspaceId: "workspace-1",
+        },
+      },
+      run: {
+        id: asRunId("run_builtin_tools"),
+        sessionId: asSessionId("session_builtin_tools"),
+        status: "streaming",
+        startedAt: 2,
+        updatedAt: 2,
+        trigger: {
+          kind: "user_message",
+          refId: asMessageId("message_user_1"),
+        },
+      },
+      turn: {
+        id: asTurnId("turn_builtin_tools"),
+        sessionId: asSessionId("session_builtin_tools"),
+        runId: asRunId("run_builtin_tools"),
+        sequence: 1,
+        agentId: "desktop.primary",
+        executionProfile: {
+          id: "desktop.openai.test" as never,
+          modelId: "test-model",
+        },
+        status: "streaming",
+        startedAt: 3,
+      },
+      recentMessages: [],
+    };
+
+    const result = await terminalExecuteHandler!.execute({
+      call: {
+        id: asToolCallId("tool_call_terminal_execute_autocreate"),
+        sessionId: asSessionId("session_builtin_tools"),
+        runId: asRunId("run_builtin_tools"),
+        turnId: asTurnId("turn_builtin_tools"),
+        messageId: asMessageId("message_assistant_1"),
+        toolName: "terminal_execute",
+        input: {
+          sessionId: "blog-setup",
+          command: "pwd",
+        },
+        status: "executing",
+        startedAt: 4,
+        updatedAt: 4,
+      },
+      context,
+    });
+
+    expect(executedSessionIds).toEqual(["blog-setup", "term_auto"]);
+    expect(createdSessions).toEqual([{
+      workspaceId: "workspace-1",
+      title: "blog-setup",
+    }]);
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      sessionId: "term_auto",
+    }));
+  });
 });

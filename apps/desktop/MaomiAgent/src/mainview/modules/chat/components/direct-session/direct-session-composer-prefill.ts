@@ -1,5 +1,13 @@
-export function shouldFocusPrefilledDraft(previousDraft: string, nextDraft: string) {
+export function shouldFocusPrefilledDraft(
+  previousDraft: string,
+  nextDraft: string,
+  input: { composerFocused?: boolean } = {},
+) {
   if (previousDraft === nextDraft) {
+    return false;
+  }
+
+  if (input.composerFocused) {
     return false;
   }
 

@@ -62,6 +62,27 @@ type DesktopConversationBridge = {
   ) => Promise<DesktopConversationInteractionReplyResponse>;
 };
 
+type DesktopConversationClientDefaults = {
+  createSession?: Partial<DesktopConversationCreateSessionInput>;
+  sendMessage?: Partial<DesktopConversationSendMessageInput>;
+};
+
+export type DesktopConversationClient = {
+  listSessions: (query?: DesktopConversationSessionListQuery) => Promise<DesktopConversationSessionListResponse>;
+  getSession: (sessionId: string) => Promise<DesktopConversationSessionItem | null>;
+  getSessionDetail: (sessionId: string) => Promise<DesktopConversationSessionDetail | null>;
+  createSession: (
+    input: DesktopConversationCreateSessionInput,
+  ) => Promise<DesktopConversationCreateSessionResponse>;
+  hideSession: (sessionId: string) => Promise<DesktopConversationHideSessionResponse>;
+  sendMessage: (
+    input: DesktopConversationSendMessageInput,
+  ) => Promise<DesktopConversationSendMessageResponse>;
+  stopMessage: (
+    input: DesktopConversationStopMessageInput,
+  ) => Promise<DesktopConversationStopMessageResponse>;
+};
+
 declare global {
   interface Window {
     maomiDesktopConversation?: DesktopConversationBridge;
@@ -94,6 +115,26 @@ function emitDesktopConversationInvalidated(
       at: new Date().toISOString(),
     },
   }));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function mergeConversationMetadata(
+  base: unknown,
+  override: unknown,
+): Record<string, unknown> | undefined {
+  const normalizedBase = isRecord(base) ? base : undefined;
+  const normalizedOverride = isRecord(override) ? override : undefined;
+  if (!normalizedBase && !normalizedOverride) {
+    return undefined;
+  }
+
+  return {
+    ...(normalizedBase ?? {}),
+    ...(normalizedOverride ?? {}),
+  };
 }
 
 export function emitDesktopConversationSessionDetailUpdated(
@@ -215,4 +256,26 @@ export async function rejectDesktopConversationInteraction(
   const response = await getDesktopConversationBridge().rejectDesktopConversationInteraction(input);
   emitDesktopConversationInvalidated("session.updated", response.detail.sessionId);
   return response;
+}
+
+export function createDesktopConversationClient(
+  defaults: DesktopConversationClientDefaults = {},
+): DesktopConversationClient {
+  return {
+    listSessions: (query) => listDesktopConversationSessions(query),
+    getSession: (sessionId) => getDesktopConversationSession(sessionId),
+    getSessionDetail: (sessionId) => getDesktopConversationSessionDetail(sessionId),
+    createSession: (input) => createDesktopConversationSession({
+      ...defaults.createSession,
+      ...input,
+      metadata: mergeConversationMetadata(defaults.createSession?.metadata, input.metadata),
+    }),
+    hideSession: (sessionId) => hideDesktopConversationSession(sessionId),
+    sendMessage: (input) => sendDesktopConversationMessage({
+      ...defaults.sendMessage,
+      ...input,
+      metadata: mergeConversationMetadata(defaults.sendMessage?.metadata, input.metadata),
+    }),
+    stopMessage: (input) => stopDesktopConversationMessage(input),
+  };
 }

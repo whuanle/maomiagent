@@ -438,6 +438,38 @@ describe("normalizeProviderFacingTurnRequest", () => {
       },
     });
   });
+
+  test("adds synthetic reasoning history for anthropic messages thinking turns even without interleaved metadata", () => {
+    const request = createTurnRequestWithHeavyToolHistory({
+      supportsFunctionCall: true,
+    });
+    request.executionProfile = {
+      ...request.executionProfile,
+      metadata: {
+        ...(request.executionProfile.metadata ?? {}),
+        protocolFamily: "anthropic",
+        apiStyle: "messages",
+        supportsReasoning: true,
+        thinkingEnabled: true,
+      },
+    };
+
+    const normalized = normalizeProviderFacingTurnRequest({
+      executionProfile: request.executionProfile,
+      request,
+    });
+
+    expect(normalized.prompt.messages[1]?.parts[0]).toEqual({
+      id: "message-assistant-older-tool-call:synthetic-reasoning",
+      type: "reasoning",
+      text: "",
+    });
+    expect(normalized.prompt.messages[4]?.parts[0]).toEqual({
+      id: "message-assistant-recent-tool-call:synthetic-reasoning",
+      type: "reasoning",
+      text: "",
+    });
+  });
 });
 
 describe("mergeConversationExecutionProfile", () => {

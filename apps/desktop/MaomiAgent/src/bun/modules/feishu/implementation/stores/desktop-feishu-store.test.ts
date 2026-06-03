@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import type { DesktopConfigurationPort } from "../../../configuration";
 import type { RuntimeLogger, RuntimeLogRecord } from "../../../logs";
@@ -215,6 +215,39 @@ describe("DesktopFeishuStore", () => {
         selectedChannelId: "channel-alpha",
         selectedModelId: "model-alpha",
       });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  test("falls back to copying the temp snapshot when Windows rejects rename", async () => {
+    const fixture = await createStoreFixture();
+    const store = new DesktopFeishuStore(createConfiguration(fixture.storeFilePath), createLogger(), {
+      mkdir,
+      readFile,
+      writeFile,
+      copyFile,
+      unlink,
+      rename: async () => {
+        const error = new Error("operation not permitted") as NodeJS.ErrnoException;
+        error.code = "EPERM";
+        throw error;
+      },
+    });
+
+    try {
+      const snapshot = await store.read();
+      snapshot.state.smartAssistant.enabled = true;
+      snapshot.state.smartAssistant.appId = "cli_test_app";
+
+      await store.write(snapshot);
+
+      const persisted = JSON.parse(await readFile(fixture.storeFilePath, "utf8")) as DesktopFeishuStoreSnapshot;
+      expect(persisted.state.smartAssistant.enabled).toBe(true);
+      expect(persisted.state.smartAssistant.appId).toBe("cli_test_app");
+
+      const files = await readdir(dirname(fixture.storeFilePath));
+      expect(files.filter((file) => file.endsWith(".tmp"))).toEqual([]);
     } finally {
       await fixture.cleanup();
     }

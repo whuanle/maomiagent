@@ -298,7 +298,7 @@ implements PromptCodec<OpenAIChatCompletionsPromptPayload> {
   private readonly systemMessageRole: "developer" | "system";
 
   constructor(options: OpenAIChatCompletionsPromptCodecOptions = {}) {
-    this.systemMessageRole = options.systemMessageRole ?? "developer";
+    this.systemMessageRole = options.systemMessageRole ?? "system";
   }
 
   encode(input: AiTurnRequest): OpenAIChatCompletionsPromptPayload {

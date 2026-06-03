@@ -164,6 +164,40 @@ class ScriptedCapabilityToolTurnPort implements AiTurnPort {
   }
 }
 
+class ScriptedPseudoToolMarkupTurnPort implements AiTurnPort {
+  callCount = 0;
+
+  async *stream(input: AiTurnRequest): AsyncIterable<AiTurnEvent> {
+    this.callCount += 1;
+    const hasToolResult = input.prompt.messages.some((message) =>
+      message.message.role === "tool"
+      || message.parts.some((part) => part.type === "tool_result_ref"));
+
+    if (!hasToolResult) {
+      yield { type: "text.start" };
+      yield {
+        type: "text.delta",
+        delta: [
+          "我先读取工作区状态。",
+          "<tool_call>",
+          "<function=workspace.read_file>",
+          "<parameter=path>./package.json</parameter>",
+          "</function>",
+          "</tool_call>",
+        ].join("\n"),
+      };
+      yield { type: "text.end" };
+      yield { type: "finish", reason: "stop" };
+      return;
+    }
+
+    yield { type: "text.start" };
+    yield { type: "text.delta", delta: "Recovered pseudo tool call completed" };
+    yield { type: "text.end" };
+    yield { type: "finish", reason: "stop" };
+  }
+}
+
 class ScriptedRetryableFailureThenSuccessTurnPort implements AiTurnPort {
   callCount = 0;
   readonly prompts: AiTurnRequest["prompt"][] = [];
@@ -1511,6 +1545,74 @@ describe("DesktopConversationService", () => {
           echoed: "capability payload",
           workspaceId: "workspace-1",
         }));
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  test("recovers provider text pseudo tool calls and continues the agent loop", async () => {
+    const turnPort = new ScriptedPseudoToolMarkupTurnPort();
+    const workspaceReadDescriptor = {
+      name: "workspace_read_file",
+      description: "Reads a workspace file for pseudo tool-call recovery tests.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          path: { type: "string" },
+        },
+        required: ["path"],
+        additionalProperties: false,
+      },
+    };
+    const fixture = createRuntimeBackedConversationService({
+      tempPrefix: "maomi-desktop-conversation-pseudo-tool-recovery-",
+      turnPort,
+      toolSources: [createStaticToolSource({
+        sourceId: "mock-workspace-source",
+        toolName: "workspace_read_file",
+      })],
+      toolHandlers: [{
+        descriptor: workspaceReadDescriptor,
+        async execute({ call }) {
+          return {
+            path: (call.input as Record<string, unknown>).path,
+            text: "{\"name\":\"maomiagent-test\"}",
+          };
+        },
+      }],
+    });
+
+    try {
+      const created = await fixture.service.createSession({
+        workspaceId: "workspace-1",
+        title: "Pseudo tool recovery session",
+      });
+
+      const sent = await fixture.service.sendMessage({
+        sessionId: created.item.sessionId,
+        text: "读取 package.json 后继续回答",
+        scope: "workspace",
+        selectedChannelId: "xiaomi",
+        selectedModelId: "mimo-v2.5-pro",
+      });
+
+      const assistantText = sent.detail.messages.flatMap((message) =>
+        message.role === "assistant"
+          ? message.parts.flatMap((part) => part.type === "text" ? [part.text] : [])
+          : []).join("\n");
+
+      expect(turnPort.callCount).toBe(2);
+      expect(sent.detail.status).toBe("idle");
+      expect(sent.detail.toolCalls).toHaveLength(1);
+      expect(sent.detail.toolCalls[0]).toEqual(expect.objectContaining({
+        toolName: "workspace_read_file",
+        status: "completed",
+        input: {
+          path: "./package.json",
+        },
+      }));
+      expect(assistantText).toContain("Recovered pseudo tool call completed");
+      expect(assistantText).not.toContain("<tool_call>");
     } finally {
       fixture.dispose();
     }
@@ -3658,12 +3760,12 @@ describe("DesktopConversationService", () => {
         part.type === "text" && part.text.includes("Diagnostic completed"))).toBe(true);
       expect(resumed.detail.runs).toHaveLength(1);
       expect(resumed.detail.runs[0]?.status).toBe("completed");
-      expect(materializerCalls).toEqual([{
-        scope: "workspace",
-        workspaceId: "workspace-1",
-        selectedChannelId: "kimi",
-        selectedModelId: "moonshot-v1-8k",
-      }]);
+      expect(materializerCalls).toHaveLength(4);
+      expect(materializerCalls.every((call) =>
+        call.scope === "workspace"
+        && call.workspaceId === "workspace-1"
+        && call.selectedChannelId === "kimi"
+        && call.selectedModelId === "moonshot-v1-8k")).toBe(true);
       expect(runtimeSelectors).toHaveLength(3);
       expect(runtimeSelectors.every((selector) =>
         selector.protocolFamily === "openai" && selector.apiStyle === "responses")).toBe(true);
@@ -4097,7 +4199,7 @@ describe("DesktopConversationService", () => {
       expect(turnPort.prompts[0]?.systemBlocks.some((block) =>
         block.metadata?.source === "desktop.agent"
         && block.metadata?.agentId === WECHAT_AGENT_ID
-        && block.content.includes("微信专用智能体"))).toBe(true);
+        && block.content.includes("微信轻量执行器"))).toBe(true);
     } finally {
       fixture.dispose();
     }
@@ -5462,8 +5564,10 @@ describe("DesktopConversationService", () => {
       expect(sent.detail.currentContextBudget).toEqual(expect.objectContaining({
         runId: sent.detail.runs.at(-1)?.id,
         compressionThresholdPercent: 50,
+        compressionThresholdTokens: 200,
         contextWindowTokens: 400,
-        shouldAutoCompress: false,
+        shouldAutoCompress: true,
+        thresholdUsagePercent: 100,
         compaction: expect.objectContaining({
           status: "completed",
           reason: "budget_exceeded",

@@ -1961,9 +1961,8 @@ export class DesktopModelsService implements DesktopModelsPort {
     channel: DesktopModelChannelItem,
   ): Promise<Array<Omit<DesktopDiscoveredChannelModel, "knownProviderModel">>> {
     const protocol = readChannelProtocolMetadata(channel);
-    const mode = protocol.source === "protocol"
-      ? resolveProtocolDiscoveryMode(protocol.protocolFamily, protocol.discoveryKind)
-      : resolveRemoteModelDiscoveryMode(providerType, provider ?? {});
+    const mode = resolveProtocolDiscoveryMode(protocol.protocolFamily, protocol.discoveryKind)
+      ?? resolveRemoteModelDiscoveryMode(providerType, provider ?? {});
     if (!mode) {
       throw new DesktopModelsServiceError(
         "INVALID_ARGUMENT",

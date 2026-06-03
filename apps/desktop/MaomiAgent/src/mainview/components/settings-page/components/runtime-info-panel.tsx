@@ -34,7 +34,7 @@ export function RuntimeInfoPanel(props: Props) {
     <section className="settings-page-card settings-page-runtime-card">
       <header className="settings-page-card-header settings-page-runtime-header">
         <div className="settings-page-card-title-row">
-          <h2>{props.t("设置页.标题.运行时信息")}</h2>
+          <h2>{props.t("设置页.标题.运行时消息")}</h2>
         </div>
         <Tag color={statusTone}>{statusLabel}</Tag>
       </header>

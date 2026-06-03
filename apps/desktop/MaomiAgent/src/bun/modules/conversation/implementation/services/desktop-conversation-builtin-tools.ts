@@ -957,7 +957,8 @@ function resolveRecentTerminalSessionId(recentMessages: readonly MessageRecordWi
 }
 
 function createTerminalExecuteHandler(
-  terminalCommand: Pick<DesktopTerminalsCommandPort, "execute">,
+  workspaceQuery: Pick<DesktopWorkspaceQueryPort, "list" | "get">,
+  terminalCommand: Pick<DesktopTerminalsCommandPort, "create" | "execute">,
 ): RegisteredToolHandler {
   return {
     descriptor: TERMINAL_EXECUTE_DESCRIPTOR,
@@ -990,6 +991,22 @@ function createTerminalExecuteHandler(
           appendNewline: true,
         });
         resolvedSessionId = recentSessionId;
+      }
+
+      if (!session && requestedSessionId && !recentSessionId) {
+        const workspaceId = await resolveWorkspaceId(workspaceQuery, input, context.session.metadata);
+        const createdSession = await terminalCommand.create({
+          ...(workspaceId ? { workspaceId } : {}),
+          ...(requestedSessionId ? { title: requestedSessionId } : {}),
+          ...(normalizeOptionalText(input.cwd) ? { cwd: normalizeOptionalText(input.cwd) } : {}),
+          ...(normalizeTerminalShellKind(input.shellKind) ? { shellKind: normalizeTerminalShellKind(input.shellKind) } : {}),
+        });
+
+        session = await terminalCommand.execute(createdSession.sessionId, {
+          text: command,
+          appendNewline: true,
+        });
+        resolvedSessionId = createdSession.sessionId;
       }
 
       if (!session) {
@@ -1299,7 +1316,7 @@ export function createDesktopConversationBuiltinToolBundle(
     createGitListChangesHandler(options.workspaceQuery, options.gitQuery),
     createGitReviewFileHandler(options.workspaceQuery, options.gitQuery),
     createTerminalCreateSessionHandler(options.workspaceQuery, options.terminalCommand),
-    createTerminalExecuteHandler(options.terminalCommand),
+    createTerminalExecuteHandler(options.workspaceQuery, options.terminalCommand),
     createTerminalReadOutputHandler(options.terminalQuery),
     createTerminalCloseSessionHandler(options.terminalCommand),
     createManagedTaskHandler(options.workspaceQuery, options.taskBridge),

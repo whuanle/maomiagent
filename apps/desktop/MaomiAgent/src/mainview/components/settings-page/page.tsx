@@ -5,14 +5,16 @@ import type { TitlebarMenuDropPosition } from "../../lib/titlebar-menu-settings"
 import type { AppThemeMode } from "../../theme/antd-theme";
 import type { RuntimeStatus } from "../../types/status";
 import { AppUpdatePanel } from "./components/app-update-panel";
+import { AvatarSettingsPanel } from "./components/avatar-settings-panel";
 import { DesktopPreferencesPanel } from "./components/desktop-preferences-panel";
 import { MenuSettingsPanel } from "./components/menu-settings-panel";
 import { RuntimeInfoPanel } from "./components/runtime-info-panel";
 import "./page.css";
 
-type SettingsPageSection = "preferences" | "menu" | "runtime";
+type SettingsPageSection = "preferences" | "avatar" | "menu" | "runtime";
 
 type Props = {
+  active: boolean;
   status: RuntimeStatus;
   language: LanguageCode;
   themeMode: AppThemeMode;
@@ -34,10 +36,12 @@ type Props = {
 export function SettingsPage(props: Props) {
   const [activeSection, setActiveSection] = useState<SettingsPageSection>("preferences");
   const pageTitle = activeSection === "menu"
-    ? props.t("设置页.标题.菜单设置")
+    ? props.t("设置页.标题.标题栏菜单")
     : activeSection === "runtime"
-      ? props.t("设置页.标题.运行时信息")
-      : props.t("设置页.标题.桌面偏好");
+      ? props.t("设置页.标题.运行时消息")
+      : activeSection === "avatar"
+        ? props.t("设置页.标题.对话头像设置")
+        : props.t("设置页.标题.桌面偏好");
 
   return (
     <section className="settings-page">
@@ -47,11 +51,14 @@ export function SettingsPage(props: Props) {
             <button type="button" className={`settings-page-category app-section-nav-button${activeSection === "preferences" ? " is-active" : ""}`} aria-current={activeSection === "preferences" ? "page" : undefined} onClick={() => setActiveSection("preferences")}>
               {props.t("设置页.标题.桌面偏好")}
             </button>
+            <button type="button" className={`settings-page-category app-section-nav-button${activeSection === "avatar" ? " is-active" : ""}`} aria-current={activeSection === "avatar" ? "page" : undefined} onClick={() => setActiveSection("avatar")}>
+              {props.t("设置页.标题.对话头像设置")}
+            </button>
             <button type="button" className={`settings-page-category app-section-nav-button${activeSection === "menu" ? " is-active" : ""}`} aria-current={activeSection === "menu" ? "page" : undefined} onClick={() => setActiveSection("menu")}>
-              {props.t("设置页.标题.菜单设置")}
+              {props.t("设置页.标题.标题栏菜单")}
             </button>
             <button type="button" className={`settings-page-category app-section-nav-button${activeSection === "runtime" ? " is-active" : ""}`} aria-current={activeSection === "runtime" ? "page" : undefined} onClick={() => setActiveSection("runtime")}>
-              {props.t("设置页.标题.运行时信息")}
+              {props.t("设置页.标题.运行时消息")}
             </button>
           </nav>
         </aside>
@@ -84,6 +91,12 @@ export function SettingsPage(props: Props) {
                   status={props.status}
                 />
               </div>
+            ) : activeSection === "avatar" ? (
+              <AvatarSettingsPanel
+                active={props.active}
+                language={props.language}
+                t={props.t}
+              />
             ) : (
               <DesktopPreferencesPanel
                 t={props.t}

@@ -20,12 +20,18 @@ import type { FrontEndProjectedConversationSessionPreviewWindow } from "./direct
 
 export type DirectSessionTone = "success" | "running" | "warning" | "error";
 
+export type ConversationAvatarSettings = {
+  assistantAvatarDataUrl?: string;
+  userAvatarDataUrl?: string;
+};
+
 export type DirectConversationSessionPaneProps = {
   bridgeAvailable: boolean;
   loadingSessions: boolean;
   loadingSessionDetail: boolean;
   modelsBridgeAvailable: boolean;
   selectedWorkspace?: DesktopWorkspaceItem;
+  workspaceAvatarSettings?: ConversationAvatarSettings;
   selectedSession?: ChatSelectedSessionView;
   creatingSession: boolean;
   renamingSessionId: string | null;
@@ -96,6 +102,7 @@ export type DirectSessionThreadViewModel = {
   latestMessageId?: string;
   sending: boolean;
   language: LanguageCode;
+  workspaceAvatarSettings?: ConversationAvatarSettings;
   detailLoading?: boolean;
   onOpenCodePreview: (input: ChatOpenCodePreviewInput) => void;
   onOpenWorkspaceFilePreview?: (input: ChatOpenWorkspaceFilePreviewInput) => void;

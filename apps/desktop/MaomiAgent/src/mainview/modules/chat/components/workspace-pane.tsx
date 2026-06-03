@@ -173,6 +173,7 @@ export const ConversationWorkspacePane = forwardRef<ConversationWorkspacePaneHan
           sessionSummaries={state.sessions}
           sessionDetailsById={state.sessionDetailsById}
           selectedWorkspace={props.selectedWorkspace}
+          workspaceAvatarSettings={state.workspaceSettings}
           creatingSession={state.creatingSession}
           renamingSessionId={state.renamingSessionId}
           draftMessage={state.draftMessage}

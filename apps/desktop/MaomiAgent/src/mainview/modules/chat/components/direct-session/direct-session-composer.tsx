@@ -132,7 +132,10 @@ export function DirectSessionComposer(props: Props) {
     const previousDraft = previousDraftRef.current;
     previousDraftRef.current = props.draft;
 
-    if (!shouldFocusPrefilledDraft(previousDraft, props.draft)) {
+    const textArea = textAreaRef.current?.resizableTextArea?.textArea;
+    const composerFocused = Boolean(textArea && textArea.ownerDocument.activeElement === textArea);
+
+    if (!shouldFocusPrefilledDraft(previousDraft, props.draft, { composerFocused })) {
       return;
     }
 
@@ -212,7 +215,7 @@ export function DirectSessionComposer(props: Props) {
               onChange={(event) => props.onDraftChange(event.target.value)}
               onPaste={handleInputPaste}
               onKeyDown={(event) => {
-                if (props.sending || props.stopping) {
+                if (props.stopping) {
                   return;
                 }
                 if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) {
@@ -265,7 +268,7 @@ export function DirectSessionComposer(props: Props) {
                     popupMatchSelectWidth={COMPOSER_SELECT_POPUP_WIDTH}
                     getPopupContainer={resolvePopupContainer}
                     optionFilterProp="searchText"
-                    disabled={props.disabled || props.modelSelectOptions.length === 0}
+                    disabled={props.modelSelectOptions.length === 0}
                     placeholder={props.modelPlaceholder}
                     notFoundContent={isEn ? "No models" : "暂无可用模型"}
                     options={props.modelSelectOptions}

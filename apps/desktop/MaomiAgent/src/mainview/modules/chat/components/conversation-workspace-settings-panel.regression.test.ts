@@ -29,4 +29,13 @@ describe("conversation workspace settings panel copy", () => {
     expect(panel).not.toContain("允许当前工作区的 AI 对话默认使用飞书智能助手能力。");
     expect(panel).not.toContain("允许当前工作区的 AI 对话默认使用桌面记忆检索能力。");
   });
+
+  test("no longer renders avatar settings inside the chat workspace settings panel", async () => {
+    const panel = await source("src/mainview/modules/chat/components/conversation-workspace-settings-panel.tsx");
+
+    expect(panel).not.toContain("avatarSectionTitle");
+    expect(panel).not.toContain("对话头像");
+    expect(panel).not.toContain("assistantAvatarDataUrl");
+    expect(panel).not.toContain("userAvatarDataUrl");
+  });
 });

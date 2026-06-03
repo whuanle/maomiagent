@@ -174,6 +174,83 @@ describe("OpenAIChatCompletionsAiTurnPortAdapter", () => {
     });
   });
 
+  test("uses compatible system and tool names for openai-compatible chat providers", async () => {
+    let capturedBody = "";
+
+    globalThis.fetch = (async (_input, init) => {
+      capturedBody = String(init?.body ?? "");
+
+      return new Response(JSON.stringify({
+        id: "chatcmpl_kimi_tool_1",
+        choices: [{
+          index: 0,
+          finish_reason: "tool_calls",
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [{
+              id: "tool_call_1",
+              type: "function",
+              function: {
+                name: "workspace_read_status",
+                arguments: "{\"path\":\".\"}",
+              },
+            }],
+          },
+        }],
+      }), {
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    }) as typeof fetch;
+
+    const adapter = new OpenAIChatCompletionsAiTurnPortAdapter({
+      resolveConfig: () => ({
+        apiKey: "kimi-test-key",
+        baseUrl: "https://api.kimi.com/coding/v1",
+      }),
+    });
+
+    const request = createTurnRequest();
+    request.prompt.systemBlocks = [{
+      id: "system_1",
+      kind: "instruction",
+      content: "Be concise.",
+    } as PromptEnvelope["systemBlocks"][number]];
+    request.prompt.tools = [{
+      name: "workspace.read_status",
+      description: "Read workspace status",
+      inputSchema: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+          },
+        },
+        required: ["path"],
+      },
+    } as PromptEnvelope["tools"][number]];
+    request.settings.toolChoice = "auto";
+
+    const events = await collectEvents(adapter.stream(request));
+    const body = JSON.parse(capturedBody);
+
+    expect(body.messages[0]).toMatchObject({
+      role: "system",
+      content: "[system:instruction:system_1]\nBe concise.",
+    });
+    expect(body.tools[0].function.name).toBe("workspace_read_status");
+    expect(events).toContainEqual({
+      type: "tool.call",
+      toolCallId: "tool_call_1",
+      toolName: "workspace.read_status",
+      input: {
+        path: ".",
+      },
+    });
+  });
+
   test("adds empty reasoning content to assistant tool call history when thinking is enabled", async () => {
     let capturedBody = "";
 
@@ -261,7 +338,7 @@ describe("OpenAIChatCompletionsAiTurnPortAdapter", () => {
           id: "tool_call_1",
           type: "function",
           function: {
-            name: "git.status",
+            name: "git_status",
             arguments: "{\"path\":\".\"}",
           },
         }],

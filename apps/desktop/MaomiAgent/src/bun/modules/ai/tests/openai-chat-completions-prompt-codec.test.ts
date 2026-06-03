@@ -154,10 +154,10 @@ describe("OpenAIChatCompletionsPromptCodec", () => {
 
     expect(payload).toEqual({
       messages: [{
-        role: "developer",
+        role: "system",
         content: "[system:instruction:system_1]\nFollow repository guardrails.",
       }, {
-        role: "developer",
+        role: "system",
         content: "[context:workspace:context_1]\nWorkspace: MaomiAgent",
       }, {
         role: "user",

@@ -1324,6 +1324,20 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
     await cache.writeBase(input.docId, input.markdown);
   }
 
+  private async ensureWorkspaceDraftExists(input: {
+    workspaceRoot: string;
+    docId: string;
+    markdown: string;
+  }): Promise<FeishuDocDraftWorkspaceEntry> {
+    const cache = new FeishuDocDraftWorkspaceCache(input.workspaceRoot);
+    const existing = await cache.readDocument(input.docId);
+    if (existing) {
+      return existing;
+    }
+
+    return cache.writeDocument(input.docId, input.markdown);
+  }
+
   private async hydrateWorkspaceDocumentAssets(input: {
     workspaceId: string;
     docId: string;
@@ -1639,6 +1653,11 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
     }
 
     await this.persistWorkspaceOriginalMarkdown({
+      workspaceRoot: input.remote.workspaceRoot,
+      docId: input.docId,
+      markdown: input.remote.markdown,
+    });
+    await this.ensureWorkspaceDraftExists({
       workspaceRoot: input.remote.workspaceRoot,
       docId: input.docId,
       markdown: input.remote.markdown,
@@ -2336,7 +2355,12 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
     const currentMarkdown = draftState?.document?.markdown
       ?? originalState?.document?.markdown
       ?? this.renderWorkspacePreviewMarkdown(irState?.document ?? null);
-    if (!currentMarkdown) {
+    const hasWorkspaceDocument = Boolean(
+      draftState?.document
+        ?? originalState?.document
+        ?? irState?.document,
+    );
+    if (!hasWorkspaceDocument && !currentMarkdown) {
       return null;
     }
 
@@ -2446,6 +2470,62 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       await this.persistDoc(item);
     }
     return item;
+  }
+
+  private async materializeMarkdownOnlyWorkspaceDoc(input: {
+    workspaceId: string;
+    docId: string;
+    remote: FeishuDocContentView;
+    lastPulledAt?: string;
+  }): Promise<FeishuDocContentView | null> {
+    const workspaceRoot = await this.resolveWorkspaceDirectoryPath(input.workspaceId);
+    if (!workspaceRoot) {
+      return null;
+    }
+
+    const resolvedDocId = input.remote.resolvedDocId ?? input.remote.docId;
+    await this.migrateLegacyWorkspaceCache({
+      workspaceRoot,
+      docId: input.docId,
+      legacyDocId: resolvedDocId,
+    });
+    await this.persistWorkspaceOriginalMarkdown({
+      workspaceRoot,
+      docId: input.docId,
+      markdown: input.remote.markdown,
+    });
+    await this.ensureWorkspaceDraftExists({
+      workspaceRoot,
+      docId: input.docId,
+      markdown: input.remote.markdown,
+    });
+
+    const seededItem = this.createDocContentView({
+      docId: input.docId,
+      resolvedDocId,
+      title: input.remote.title,
+      markdown: input.remote.markdown,
+      diagnostics: input.remote.diagnostics,
+      boardSnapshots: input.remote.boardSnapshots,
+    });
+    const cached = await this.readWorkspaceDocFromCache(input, seededItem) ?? seededItem;
+    if (!input.lastPulledAt || !cached.cache) {
+      return cached;
+    }
+
+    return this.createDocContentView({
+      docId: cached.docId,
+      resolvedDocId: cached.resolvedDocId,
+      title: cached.title,
+      markdown: cached.markdown,
+      existing: cached,
+      diagnostics: cached.diagnostics,
+      boardSnapshots: cached.boardSnapshots,
+      cache: {
+        ...cached.cache,
+        lastPulledAt: input.lastPulledAt,
+      },
+    });
   }
 
   private createStoreBackedLoader(store: DesktopFeishuStorePort): DesktopFeishuDocTreeLoaderPort {
@@ -2626,6 +2706,11 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
           docId: input.docId,
           markdown: remoteFromIR.markdown,
         });
+        await this.ensureWorkspaceDraftExists({
+          workspaceRoot: remoteFromIR.workspaceRoot,
+          docId: input.docId,
+          markdown: remoteFromIR.markdown,
+        });
 
         const seededItem = this.createDocContentView({
           docId: input.docId,
@@ -2657,6 +2742,15 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
     const remote = await this.readWorkspaceRemoteDoc(input);
     if (!remote) {
       throw new Error("文档内容加载失败");
+    }
+
+    const materialized = await this.materializeMarkdownOnlyWorkspaceDoc({
+      workspaceId: input.workspaceId,
+      docId: input.docId,
+      remote,
+    });
+    if (materialized) {
+      return materialized;
     }
 
     return this.createDocContentView({
@@ -2728,6 +2822,25 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
     const remote = await this.readWorkspaceRemoteDoc(input);
     if (!remote) {
       throw new Error("文档内容加载失败");
+    }
+
+    const lastPulledAt = new Date().toISOString();
+    const materialized = await this.materializeMarkdownOnlyWorkspaceDoc({
+      workspaceId: input.workspaceId,
+      docId: input.docId,
+      remote,
+      lastPulledAt,
+    });
+    if (materialized) {
+      return {
+        item: materialized,
+        pullStatus: !currentDraftState?.document && !currentSourceState?.document
+          ? "created"
+          : currentDraftState?.document?.markdown === remote.markdown
+            ? "noop"
+            : "updated",
+        ...(remote.diagnostics?.latestPull ? { diagnostics: remote.diagnostics.latestPull } : {}),
+      };
     }
 
     return {

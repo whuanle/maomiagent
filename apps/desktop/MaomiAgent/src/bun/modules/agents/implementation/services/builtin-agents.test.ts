@@ -71,4 +71,6 @@ test("builtin ui designer agent is visible as a primary design assistant", () =>
   expect(item?.prompt).toContain("主题设计");
   expect(item?.prompt).toContain("组件模式");
   expect(item?.prompt).toContain("附件");
+  expect(item?.prompt).toContain("真实工具");
+  expect(item?.prompt).toContain("不要输出 <tool_call>");
 });

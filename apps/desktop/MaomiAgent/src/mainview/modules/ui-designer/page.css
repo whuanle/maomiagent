@@ -309,9 +309,10 @@
 
 .ui-designer-stage-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
-  min-height: 38px;
+  min-height: 42px;
+  padding-block: 8px;
   border-bottom: 1px solid color-mix(in srgb, var(--app-border-soft) 74%, transparent);
   color: var(--app-text-primary);
 }
@@ -325,7 +326,20 @@
   flex: 1;
 }
 
+.ui-designer-stage-item-content {
+  min-width: 0;
+  flex: 1;
+}
+
+.ui-designer-stage-item-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 24px;
+}
+
 .ui-designer-stage-check {
+  margin-top: 4px;
   color: color-mix(in srgb, var(--app-text-secondary) 78%, transparent);
 }
 
@@ -337,7 +351,7 @@
   padding-inline: 0;
 }
 
-.ui-designer-summary-block-body {
+.ui-designer-stage-summary {
   padding-top: 4px;
   color: var(--app-text-primary);
   white-space: pre-wrap;

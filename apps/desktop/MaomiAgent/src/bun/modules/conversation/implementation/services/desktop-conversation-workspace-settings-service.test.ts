@@ -76,6 +76,8 @@ describe("DesktopConversationWorkspaceSettingsService", () => {
           selectedChannelId: "openai",
           selectedModelId: "gpt-5",
           defaultTerminalShellKind: "bash",
+          assistantAvatarDataUrl: "data:image/png;base64,AAAA",
+          userAvatarDataUrl: "data:image/png;base64,BBBB",
           capabilityPreferences: {
             "mcp.runtime": false,
           },
@@ -95,6 +97,8 @@ describe("DesktopConversationWorkspaceSettingsService", () => {
         selectedChannelId: "openai",
         selectedModelId: "gpt-5",
         defaultTerminalShellKind: "bash",
+        assistantAvatarDataUrl: "data:image/png;base64,AAAA",
+        userAvatarDataUrl: "data:image/png;base64,BBBB",
         thinkingEnabled: false,
         contextCompressionThresholdPercent: 85,
         capabilityPreferences: {

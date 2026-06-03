@@ -18,7 +18,12 @@ type ParserState = {
   textOpen: boolean;
   reasoningOpen: boolean;
   toolCalls: Map<number, ToolCallState>;
+  toolNameMap: ReadonlyMap<string, string>;
   sawTerminal: boolean;
+};
+
+export type OpenAIChatCompletionsEventParserOptions = {
+  toolNameMap?: ReadonlyMap<string, string>;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -47,6 +52,13 @@ function parseJsonMaybe(value: string): unknown {
   } catch {
     return value;
   }
+}
+
+function restoreToolName(input: {
+  toolName: string;
+  toolNameMap?: ReadonlyMap<string, string>;
+}): string {
+  return input.toolNameMap?.get(input.toolName) ?? input.toolName;
 }
 
 function appendTextFragments(bucket: string[], value: unknown): void {
@@ -200,7 +212,10 @@ function* emitPendingToolCalls(state: ParserState): Iterable<AiTurnEvent> {
     yield {
       type: "tool.call",
       toolCallId: asToolCallId(toolCallId),
-      toolName: toolCall.name,
+      toolName: restoreToolName({
+        toolName: toolCall.name,
+        toolNameMap: state.toolNameMap,
+      }),
       input: parseJsonMaybe(toolCall.argumentsText || "{}"),
     };
   }
@@ -395,11 +410,13 @@ async function* readSsePayloads(response: Response): AsyncIterable<Record<string
 
 export async function* streamOpenAIChatCompletionEvents(
   response: Response,
+  options: OpenAIChatCompletionsEventParserOptions = {},
 ): AsyncIterable<AiTurnEvent> {
   const state: ParserState = {
     textOpen: false,
     reasoningOpen: false,
     toolCalls: new Map(),
+    toolNameMap: options.toolNameMap ?? new Map(),
     sawTerminal: false,
   };
 
@@ -454,6 +471,7 @@ function* emitReasoningEvents(text: string): Iterable<AiTurnEvent> {
 function* emitToolCallEvents(input: {
   message?: Record<string, unknown>;
   responseId?: string;
+  toolNameMap?: ReadonlyMap<string, string>;
   onToolCall: () => void;
 }): Iterable<AiTurnEvent> {
   const message = input.message;
@@ -479,7 +497,10 @@ function* emitToolCallEvents(input: {
     yield {
       type: "tool.call",
       toolCallId: asToolCallId(toolCallId),
-      toolName,
+      toolName: restoreToolName({
+        toolName,
+        toolNameMap: input.toolNameMap,
+      }),
       input: parseJsonMaybe(readText(functionRecord?.arguments) ?? "{}"),
     };
   }
@@ -498,12 +519,18 @@ function* emitToolCallEvents(input: {
   yield {
     type: "tool.call",
     toolCallId: asToolCallId(`${input.responseId ?? "tool_call"}_0`),
-    toolName: legacyName,
+    toolName: restoreToolName({
+      toolName: legacyName,
+      toolNameMap: input.toolNameMap,
+    }),
     input: parseJsonMaybe(readText(legacyFunctionCall.arguments) ?? "{}"),
   };
 }
 
-export function readOpenAIChatCompletionJsonEvents(payload: unknown): readonly AiTurnEvent[] {
+export function readOpenAIChatCompletionJsonEvents(
+  payload: unknown,
+  options: OpenAIChatCompletionsEventParserOptions = {},
+): readonly AiTurnEvent[] {
   const root = readRecord(payload);
   const source = readRecord(root?.response) ?? root;
 
@@ -546,6 +573,7 @@ export function readOpenAIChatCompletionJsonEvents(payload: unknown): readonly A
   for (const event of emitToolCallEvents({
     message,
     responseId,
+    toolNameMap: options.toolNameMap,
     onToolCall: () => {
       hasToolCalls = true;
     },

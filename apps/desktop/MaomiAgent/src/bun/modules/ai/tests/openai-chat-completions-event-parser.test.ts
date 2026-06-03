@@ -113,6 +113,56 @@ describe("OpenAI chat completions event parser", () => {
     }]);
   });
 
+  test("emits streamed reasoning_content deltas before text deltas", async () => {
+    const response = new Response([
+      'data: {"id":"chatcmpl_stream_reasoning_1","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}\n\n',
+      'data: {"id":"chatcmpl_stream_reasoning_1","choices":[{"index":0,"delta":{"reasoning_content":"Need"},"finish_reason":null}]}\n\n',
+      'data: {"id":"chatcmpl_stream_reasoning_1","choices":[{"index":0,"delta":{"reasoning_content":" to inspect"},"finish_reason":null}]}\n\n',
+      'data: {"id":"chatcmpl_stream_reasoning_1","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}\n\n',
+      'data: {"id":"chatcmpl_stream_reasoning_1","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":11,"completion_tokens":5,"completion_tokens_details":{"reasoning_tokens":3}}}\n\n',
+      'data: [DONE]\n\n',
+    ].join(""), {
+      headers: {
+        "content-type": "text/event-stream",
+      },
+    });
+
+    const events = await collectEvents(streamOpenAIChatCompletionEvents(response));
+
+    expect(events).toEqual([{
+      type: "reasoning.start",
+    }, {
+      type: "reasoning.delta",
+      delta: "Need",
+    }, {
+      type: "reasoning.delta",
+      delta: " to inspect",
+    }, {
+      type: "text.start",
+    }, {
+      type: "text.delta",
+      delta: "ok",
+    }, {
+      type: "reasoning.end",
+    }, {
+      type: "text.end",
+    }, {
+      type: "usage",
+      usage: {
+        inputTokens: 11,
+        outputTokens: 5,
+        reasoningTokens: 3,
+      },
+    }, {
+      type: "finish",
+      reason: "stop",
+      metadata: {
+        providerResponseId: "chatcmpl_stream_reasoning_1",
+        providerReason: "stop",
+      },
+    }]);
+  });
+
   test("emits a retryable provider error when the SSE stream ends without a terminal event", async () => {
     const response = new Response([
       'data: {"id":"chatcmpl_stream_2","choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":null}]}\n\n',

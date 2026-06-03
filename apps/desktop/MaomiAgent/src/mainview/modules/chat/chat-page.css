@@ -3356,6 +3356,42 @@ button.chat-direct-tool-path:focus-visible {
   border-radius: 999px;
 }
 
+.chat-session-settings-avatar-input {
+  display: none;
+}
+
+.chat-session-settings-avatar-preview {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  overflow: hidden;
+  border-radius: 999px;
+  border: 1px solid var(--chat-border-soft);
+  background: var(--chat-surface-muted);
+  color: var(--chat-text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.chat-session-settings-avatar-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.chat-session-settings-avatar-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+
 .chat-session-settings-mode-pill {
   display: inline-flex;
   align-items: center;
@@ -5937,6 +5973,13 @@ button.chat-direct-tool-path:focus-visible {
   line-height: 1;
   user-select: none;
   isolation: isolate;
+}
+
+.chat-bubble-avatar-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .chat-bubble-assistant-avatar {

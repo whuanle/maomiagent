@@ -29,6 +29,15 @@ type ProcessorFailurePhase = "model_completion" | "model_stream" | "stream_proce
 type ProcessorFailureKind = "model" | "processor"
 
 const SUPPRESSED_TERMINAL_ERROR_CODES = new Set(["conversation_turn_aborted"])
+const PSEUDO_TOOL_CALL_OPEN_TAG = "<tool_call>"
+const PSEUDO_TOOL_CALL_CLOSE_TAG = "</tool_call>"
+const PSEUDO_TOOL_CALL_OPEN_TAG_LOWER = PSEUDO_TOOL_CALL_OPEN_TAG.toLowerCase()
+const PSEUDO_TOOL_CALL_CLOSE_TAG_LOWER = PSEUDO_TOOL_CALL_CLOSE_TAG.toLowerCase()
+
+type ParsedPseudoToolCall = {
+  toolName: string
+  input: Record<string, unknown>
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value)
@@ -106,6 +115,166 @@ function normalizeKernelError(error: unknown): KernelError {
   }
 }
 
+function shouldRecoverPseudoToolCalls(start: ProcessorStartInput): boolean {
+  const sessionMetadata = isRecord(start.session.metadata)
+    ? start.session.metadata
+    : undefined
+  const runMetadata = isRecord(start.run.metadata)
+    ? start.run.metadata
+    : undefined
+  return runMetadata?.pseudoToolCallRecovery !== false
+    && sessionMetadata?.pseudoToolCallRecovery !== false
+}
+
+function normalizePseudoToolName(input: string): string {
+  const normalized = input.trim()
+  if (!normalized) {
+    return ""
+  }
+
+  const canonical = normalized.replace(/[.\-]/g, "_")
+  const aliases: Record<string, string> = {
+    git_status: "git_list_changes",
+    workspace_read: "workspace_read_file",
+    workspace_readfile: "workspace_read_file",
+    workspace_write: "workspace_write_file",
+    workspace_writefile: "workspace_write_file",
+    terminal_run: "terminal_execute",
+  }
+
+  return aliases[canonical] ?? canonical
+}
+
+function findPseudoToolMarkupTailStart(input: string): number {
+  const lower = input.toLowerCase()
+  const lastTagStart = lower.lastIndexOf("<")
+  if (lastTagStart < 0) {
+    return input.length
+  }
+
+  const tail = lower.slice(lastTagStart)
+  return PSEUDO_TOOL_CALL_OPEN_TAG_LOWER.startsWith(tail)
+    ? lastTagStart
+    : input.length
+}
+
+function normalizePseudoToolParameterName(input: string): string {
+  const normalized = input.trim()
+  if (!normalized) {
+    return ""
+  }
+
+  const aliases: Record<string, string> = {
+    session_id: "sessionId",
+    workspace_id: "workspaceId",
+    shell_kind: "shellKind",
+  }
+
+  const lowered = normalized.toLowerCase()
+  if (aliases[lowered]) {
+    return aliases[lowered]
+  }
+
+  return normalized.replace(/[_-]([a-z])/gi, (_match, letter: string) => letter.toUpperCase())
+}
+
+function normalizePseudoToolParameterValue(input: string): unknown {
+  const value = input.replace(/\r\n/g, "\n").trim()
+  if (!value) {
+    return ""
+  }
+
+  if (/^(true|false)$/i.test(value)) {
+    return value.toLowerCase() === "true"
+  }
+
+  if (/^-?\d+(\.\d+)?$/.test(value)) {
+    return Number(value)
+  }
+
+  return value
+}
+
+function parsePseudoToolCallBlock(input: string): ParsedPseudoToolCall | undefined {
+  const normalized = input.replace(/\r\n/g, "\n")
+  const functionMatch = normalized.match(/<function=([^>\n]+)>/i)
+  if (!functionMatch) {
+    return undefined
+  }
+
+  const toolName = normalizePseudoToolName(functionMatch[1] ?? "")
+  if (!toolName) {
+    return undefined
+  }
+
+  const parameterPattern = /<parameter=([^>\n]+)>([\s\S]*?)<\/parameter>/gi
+  const parsedInput: Record<string, unknown> = {}
+
+  for (const match of normalized.matchAll(parameterPattern)) {
+    const rawName = match[1]?.trim() ?? ""
+    const name = normalizePseudoToolParameterName(rawName)
+    if (!name) {
+      continue
+    }
+
+    parsedInput[name] = normalizePseudoToolParameterValue(match[2] ?? "")
+  }
+
+  if (toolName === "terminal_create_session") {
+    const label = typeof parsedInput.label === "string" ? parsedInput.label : undefined
+    if (label && typeof parsedInput.title !== "string") {
+      parsedInput.title = label
+    }
+    delete parsedInput.label
+    return {
+      toolName,
+      input: sanitizePseudoToolInput(toolName, parsedInput),
+    }
+  }
+
+  if (toolName === "terminal_execute" && typeof parsedInput.command !== "string") {
+    const text = typeof parsedInput.text === "string" ? parsedInput.text : undefined
+    if (text) {
+      parsedInput.command = text
+    }
+  }
+
+  return {
+    toolName,
+    input: sanitizePseudoToolInput(toolName, parsedInput),
+  }
+}
+
+function sanitizePseudoToolInput(
+  toolName: string,
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  const allowedKeys = toolName === "terminal_create_session"
+    ? new Set(["workspaceId", "cwd", "title", "shellKind"])
+    : toolName === "terminal_execute"
+      ? new Set(["sessionId", "command"])
+      : toolName === "terminal_read_output"
+        ? new Set(["sessionId", "limit"])
+        : toolName === "terminal_close_session"
+          ? new Set(["sessionId"])
+          : undefined
+
+  if (!allowedKeys) {
+    return input
+  }
+
+  const sanitized: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(input)) {
+    if (!allowedKeys.has(key)) {
+      continue
+    }
+
+    sanitized[key] = value
+  }
+
+  return sanitized
+}
+
 class TextProcessorHandle implements ProcessorHandle {
   private textBuffer = ""
   private reasoningBuffer = ""
@@ -115,11 +284,14 @@ class TextProcessorHandle implements ProcessorHandle {
   private readonly toolCalls: ToolCallRecord[] = []
   private terminalErrorPersisted = false
   private assistantMessagePersisted = false
+  private readonly pseudoToolCallRecoveryEnabled: boolean
 
   constructor(
     private readonly options: TextStreamProcessorOptions,
     private readonly start: ProcessorStartInput,
-  ) {}
+  ) {
+    this.pseudoToolCallRecoveryEnabled = shouldRecoverPseudoToolCalls(start)
+  }
 
   async accept(event: AiTurnEvent): Promise<void> {
     switch (event.type) {
@@ -279,18 +451,54 @@ class TextProcessorHandle implements ProcessorHandle {
       return
     }
 
-    const part: MessagePart = {
-      id: asMessagePartId(this.options.idGenerator.next("part")),
-      type: "text",
-      text: this.textBuffer,
+    if (!this.pseudoToolCallRecoveryEnabled) {
+      await this.persistTextPart(this.textBuffer)
+      this.textBuffer = ""
+      return
     }
 
-    this.textBuffer = ""
-    await this.persistAssistantParts([part])
-    await this.publishEvent("message.parts.appended", {
-      message: this.start.assistantMessage,
-      parts: [part],
-    })
+    while (this.textBuffer.length > 0) {
+      const lower = this.textBuffer.toLowerCase()
+      const blockStart = lower.indexOf(PSEUDO_TOOL_CALL_OPEN_TAG_LOWER)
+      if (blockStart < 0) {
+        const safePlainTextEnd = findPseudoToolMarkupTailStart(this.textBuffer)
+        if (safePlainTextEnd > 0) {
+          const plainText = this.textBuffer.slice(0, safePlainTextEnd)
+          this.textBuffer = this.textBuffer.slice(safePlainTextEnd)
+          await this.persistTextPart(plainText)
+        }
+        return
+      }
+
+      if (blockStart > 0) {
+        const plainText = this.textBuffer.slice(0, blockStart)
+        this.textBuffer = this.textBuffer.slice(blockStart)
+        await this.persistTextPart(plainText)
+        continue
+      }
+
+      const blockEnd = lower.indexOf(PSEUDO_TOOL_CALL_CLOSE_TAG_LOWER)
+      if (blockEnd < 0) {
+        return
+      }
+
+      const completeBlockEnd = blockEnd + PSEUDO_TOOL_CALL_CLOSE_TAG.length
+      const block = this.textBuffer.slice(0, completeBlockEnd)
+      this.textBuffer = this.textBuffer.slice(completeBlockEnd)
+      const parsed = parsePseudoToolCallBlock(block)
+
+      if (!parsed) {
+        await this.persistTextPart(block)
+        continue
+      }
+
+      await this.recordToolCall({
+        type: "tool.call",
+        toolCallId: asToolCallId(this.options.idGenerator.next("tool_call")),
+        toolName: parsed.toolName,
+        input: parsed.input,
+      })
+    }
   }
 
   private async flushReasoningBuffer(): Promise<void> {
@@ -386,6 +594,24 @@ class TextProcessorHandle implements ProcessorHandle {
     }
 
     await this.options.messageStore.appendParts(this.start.assistantMessage.id, parts)
+  }
+
+  private async persistTextPart(text: string): Promise<void> {
+    if (!text) {
+      return
+    }
+
+    const part: MessagePart = {
+      id: asMessagePartId(this.options.idGenerator.next("part")),
+      type: "text",
+      text,
+    }
+
+    await this.persistAssistantParts([part])
+    await this.publishEvent("message.parts.appended", {
+      message: this.start.assistantMessage,
+      parts: [part],
+    })
   }
 }
 

@@ -80,6 +80,21 @@ function normalizeBooleanSetting(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
 }
 
+function normalizeDataUrl(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  return /^data:image\/(?:png|jpeg|jpg|webp|gif|svg\+xml);base64,/i.test(trimmed)
+    ? trimmed
+    : undefined;
+}
+
 function normalizeFilePreviewMode(
   value: unknown,
 ): ConversationWorkspaceSettings["defaultFilePreviewMode"] {
@@ -175,6 +190,8 @@ function normalizeConversationWorkspaceSettings(
   const defaults = createDefaultDesktopConversationWorkspaceSettings();
   const selectedChannelId = normalizeOptionalText(value?.selectedChannelId);
   const selectedModelId = normalizeOptionalText(value?.selectedModelId);
+  const assistantAvatarDataUrl = normalizeDataUrl(value?.assistantAvatarDataUrl);
+  const userAvatarDataUrl = normalizeDataUrl(value?.userAvatarDataUrl);
 
   return {
     approvalAutoEnabled: normalizeBooleanSetting(value?.approvalAutoEnabled) ?? defaults.approvalAutoEnabled,
@@ -191,6 +208,8 @@ function normalizeConversationWorkspaceSettings(
           selectedModelId,
         }
       : {}),
+    ...(assistantAvatarDataUrl ? { assistantAvatarDataUrl } : {}),
+    ...(userAvatarDataUrl ? { userAvatarDataUrl } : {}),
     thinkingEnabled: normalizeBooleanSetting(value?.thinkingEnabled) ?? defaults.thinkingEnabled,
     managedExecutionEnabled: normalizeBooleanSetting(value?.managedExecutionEnabled)
       ?? defaults.managedExecutionEnabled,

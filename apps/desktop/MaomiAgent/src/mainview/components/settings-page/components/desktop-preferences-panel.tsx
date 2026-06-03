@@ -33,7 +33,7 @@ function resolveThemeLabel(mode: AppThemeMode, t: Translate) {
 
 export function DesktopPreferencesPanel(props: Props) {
   return (
-    <div className="settings-page-card-stack">
+    <>
       <section className="settings-page-card">
         <header className="settings-page-card-header">
           <div className="settings-page-card-title-row">
@@ -88,6 +88,6 @@ export function DesktopPreferencesPanel(props: Props) {
           </Button>
         </div>
       </section>
-    </div>
+    </>
   );
 }

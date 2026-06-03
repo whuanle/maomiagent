@@ -75,6 +75,19 @@ export type AnthropicMessagesPromptPayload = {
   thinking?: AnthropicThinkingConfig;
 };
 
+function readExecutionProfileBooleanMetadata(
+  input: AiTurnRequest["executionProfile"],
+  key: string,
+): boolean | undefined {
+  const metadata = input.metadata;
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return undefined;
+  }
+
+  const value = (metadata as Record<string, unknown>)[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
 function normalizeText(value: string): string {
   return value.replace(/\r\n?/g, "\n").trim();
 }
@@ -298,12 +311,11 @@ function resolveRequestedMaxTokens(input: AiTurnRequest): number {
 }
 
 function buildThinkingConfig(input: AiTurnRequest): AnthropicThinkingConfig | undefined {
-  const modelId = input.executionProfile.modelId?.toLowerCase() ?? "";
-  if (
-    !modelId.includes("k2p5")
-    && !modelId.includes("kimi-k2.5")
-    && !modelId.includes("kimi-k2p5")
-  ) {
+  if (readExecutionProfileBooleanMetadata(input.executionProfile, "thinkingEnabled") === false) {
+    return undefined;
+  }
+
+  if (readExecutionProfileBooleanMetadata(input.executionProfile, "supportsReasoning") !== true) {
     return undefined;
   }
 

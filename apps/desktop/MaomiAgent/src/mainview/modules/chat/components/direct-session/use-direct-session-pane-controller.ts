@@ -111,6 +111,7 @@ export function useDirectSessionPaneController(
     const composerDisabled = !props.selectedWorkspace || !session || session.status === "archived";
     const hasAttachments = props.composerAttachments.length > 0;
     const sendDisabled = composerDisabled
+      || props.sendingMessage
       || (!props.draftMessage.trim() && !hasAttachments)
       || (props.modelsBridgeAvailable && props.composerModelOptions.length === 0);
     const sessionTitle = session?.title || session?.sessionId || props.copy.emptySessionTitle;
@@ -161,6 +162,7 @@ export function useDirectSessionPaneController(
         latestMessageId: detail?.messages[detail.messages.length - 1]?.messageId,
         sending: props.sendingMessage,
         language: props.language,
+        workspaceAvatarSettings: props.workspaceAvatarSettings,
         onOpenCodePreview: props.onOpenCodePreview,
         onOpenWorkspaceFilePreview: props.onOpenWorkspaceFilePreview,
         resolveMessageWorkspaceId: resolveThreadMessageWorkspaceId,

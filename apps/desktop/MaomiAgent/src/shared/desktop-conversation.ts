@@ -124,9 +124,11 @@ export type DesktopConversationWorkspaceSettings = {
   approvalAutoEnabled: boolean;
   contextCompressionThresholdPercent: number;
   defaultFilePreviewMode: DesktopConversationWorkspaceFilePreviewMode;
+  assistantAvatarDataUrl?: string;
   defaultTerminalShellKind?: DesktopTerminalShellKind;
   selectedChannelId?: string;
   selectedModelId?: string;
+  userAvatarDataUrl?: string;
   thinkingEnabled: boolean;
   managedExecutionEnabled: boolean;
   permissionRules?: DesktopConversationPermissionRule[];

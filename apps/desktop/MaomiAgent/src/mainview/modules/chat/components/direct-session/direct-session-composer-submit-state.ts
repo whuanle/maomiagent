@@ -23,5 +23,10 @@ export function resolveDirectSessionComposerSubmitState(input: {
       : input.sending
         ? input.disabled
         : input.sendDisabled,
+    action: input.stopping
+      ? "stop"
+      : input.sending
+        ? "stop"
+        : "send",
   };
 }

@@ -957,7 +957,7 @@ describe("DesktopFeishuDocRuntime", () => {
     expect(snapshot.docs.doc_1).toBe(remote);
   });
 
-  test("openWorkspaceDoc preserves pulled source and only creates a markdown draft after explicit save", async () => {
+  test("openWorkspaceDoc preserves pulled source and creates a local markdown draft on first open", async () => {
     const snapshot = createSnapshot();
     const nodeToken = "node_1";
     const resolvedDocId = "doc_1";
@@ -991,7 +991,7 @@ describe("DesktopFeishuDocRuntime", () => {
       expect(await readFile(sourceFile, "utf8")).toContain('"requestedDocId": "node_1"');
       expect(await readFile(sourceFile, "utf8")).toContain('"document_id": "doc_1"');
       expect(await readFile(baseSourceFile, "utf8")).toContain('"document_id": "doc_1"');
-      await expect(readFile(draftFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readFile(draftFile, "utf8")).toBe(remote.markdown);
       expect(opened.docId).toBe(nodeToken);
       expect(opened.resolvedDocId).toBe(resolvedDocId);
       expect(opened.markdown).toBe(remote.markdown);
@@ -1005,13 +1005,14 @@ describe("DesktopFeishuDocRuntime", () => {
         publishModeRecommendation: "update_existing",
         originalRelativePath: ".maomi/feishu-docs/node_1.md",
         originalBaseRelativePath: ".maomi/feishu-docs/baselines/node_1.base.md",
+        draftRelativePath: ".maomi/feishu-docs/drafts/node_1.draft.md",
         sourceRelativePath: ".maomi/feishu-docs/node_1/document.source.json",
         sourceBaseRelativePath: ".maomi/feishu-docs/node_1/base.source.json",
         hasBaseline: true,
         hasLocalChanges: false,
         status: "cached",
       });
-      expect(opened.cache?.cacheRelativePath).toBeUndefined();
+      expect(opened.cache?.cacheRelativePath).toBe(".maomi/feishu-docs/drafts/node_1.draft.md");
       expect(snapshot.docs[nodeToken]).toBeUndefined();
 
       await runtime.saveWorkspaceDocLocalDraft({
@@ -1033,6 +1034,48 @@ describe("DesktopFeishuDocRuntime", () => {
       expect(reopened.cache?.hasBaseline).toBe(true);
       expect(reopened.cache?.hasLocalChanges).toBe(true);
       expect(snapshot.docs[nodeToken]).toBeUndefined();
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("openWorkspaceDoc materializes an empty markdown-only document as a workspace original", async () => {
+    const snapshot = createSnapshot();
+    const nodeToken = "node_empty";
+    const resolvedDocId = "doc_empty";
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-empty-"));
+
+    try {
+      const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
+      const runtime = createRuntimeWithContentSource(snapshot, {
+        readDocumentContent: async (_accessToken, docId) => {
+          expect(docId).toBe(nodeToken);
+          return createContentView(resolvedDocId, "空文档", "");
+        },
+        readDocumentBundle: async () => {
+          throw new Error("structured reader unavailable");
+        },
+      }, workspaceQuery);
+
+      const opened = await runtime.openWorkspaceDoc({ workspaceId: "ws_1", docId: nodeToken });
+      const originalFile = join(workspaceRoot, ".maomi", "feishu-docs", `${nodeToken}.md`);
+      const baselineFile = join(workspaceRoot, ".maomi", "feishu-docs", "baselines", `${nodeToken}.base.md`);
+      const draftFile = join(workspaceRoot, ".maomi", "feishu-docs", "drafts", `${nodeToken}.draft.md`);
+
+      expect(opened.docId).toBe(nodeToken);
+      expect(opened.resolvedDocId).toBe(resolvedDocId);
+      expect(opened.markdown).toBe("");
+      expect(opened.cache).toMatchObject({
+        workspaceId: "ws_1",
+        originalRelativePath: ".maomi/feishu-docs/node_empty.md",
+        originalBaseRelativePath: ".maomi/feishu-docs/baselines/node_empty.base.md",
+        hasBaseline: true,
+        hasLocalChanges: false,
+        status: "cached",
+      });
+      expect(await readFile(originalFile, "utf8")).toBe("");
+      expect(await readFile(baselineFile, "utf8")).toBe("");
+      expect(await readFile(draftFile, "utf8")).toBe("");
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }
@@ -1095,7 +1138,7 @@ describe("DesktopFeishuDocRuntime", () => {
     }
   });
 
-  test("pullWorkspaceDoc refreshes source cache without auto-creating a markdown draft", async () => {
+  test("pullWorkspaceDoc refreshes source cache and creates a local markdown draft", async () => {
     const snapshot = createSnapshot();
     const nodeToken = "node_1";
     const resolvedDocId = "doc_1";
@@ -1133,8 +1176,8 @@ describe("DesktopFeishuDocRuntime", () => {
       expect(firstPull.item.resolvedDocId).toBe(resolvedDocId);
       expect(await readFile(join(workspaceRoot, ".maomi", "feishu-docs", `${nodeToken}.md`), "utf8"))
         .toBe(markdown);
-      await expect(readFile(join(workspaceRoot, ".maomi", "feishu-docs", "drafts", `${nodeToken}.draft.md`), "utf8"))
-        .rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readFile(join(workspaceRoot, ".maomi", "feishu-docs", "drafts", `${nodeToken}.draft.md`), "utf8"))
+        .toBe(markdown);
 
       markdown = "# Remote Doc\n\nVersion 2";
       const secondPull = await runtime.pullWorkspaceDoc({ workspaceId: "ws_1", docId: nodeToken });
@@ -1147,8 +1190,8 @@ describe("DesktopFeishuDocRuntime", () => {
         .toContain('"document_id": "doc_1"');
       expect(await readFile(join(workspaceRoot, ".maomi", "feishu-docs", `${nodeToken}.md`), "utf8"))
         .toBe(markdown);
-      await expect(readFile(join(workspaceRoot, ".maomi", "feishu-docs", "drafts", `${nodeToken}.draft.md`), "utf8"))
-        .rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readFile(join(workspaceRoot, ".maomi", "feishu-docs", "drafts", `${nodeToken}.draft.md`), "utf8"))
+        .toBe(markdown);
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }
@@ -2378,6 +2421,43 @@ describe("DesktopFeishuDocRuntime", () => {
       expect(reopened.markdown).toBe(boardMarkdown);
       expect(reopened.boardSnapshots?.wb_1?.token).toBe("wb_1");
       expect(snapshot.docs[nodeToken]?.boardSnapshots?.wb_1?.token).toBe("wb_1");
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("openWorkspaceDoc creates a local draft file for empty remote docs", async () => {
+    const snapshot = createSnapshot();
+    const nodeToken = "node_empty";
+    const resolvedDocId = "doc_empty";
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-open-empty-draft-"));
+
+    try {
+      const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
+      const runtime = createRuntimeWithContentSource(
+        snapshot,
+        {
+          readDocumentContent: async () => createContentView(resolvedDocId, "Empty Doc", ""),
+          readDocumentBundle: async () => ({
+            content: createContentView(resolvedDocId, "Empty Doc", ""),
+            ir: createDocumentIRWithText(resolvedDocId, "Empty Doc", ""),
+            source: createSourceSnapshot(nodeToken, "Empty Doc", resolvedDocId),
+          }),
+        },
+        workspaceQuery,
+      );
+
+      const opened = await runtime.openWorkspaceDoc({
+        workspaceId: "ws_1",
+        docId: nodeToken,
+      });
+
+      const draftPath = join(workspaceRoot, ".maomi", "feishu-docs", "drafts", `${nodeToken}.draft.md`);
+      const draftContent = await readFile(draftPath, "utf8");
+
+      expect(opened.markdown).toBe("");
+      expect(opened.cache?.draftAbsolutePath).toBe(draftPath);
+      expect(draftContent).toBe("");
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }

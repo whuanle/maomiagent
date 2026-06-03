@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -142,6 +142,33 @@ function createInitialSnapshot(): DesktopFeishuStoreSnapshot {
   };
 }
 
+type DesktopFeishuStoreFileSystem = {
+  mkdir: typeof mkdir;
+  readFile: typeof readFile;
+  writeFile: typeof writeFile;
+  rename: typeof rename;
+  copyFile: typeof copyFile;
+  unlink: typeof unlink;
+};
+
+const nodeFileSystem: DesktopFeishuStoreFileSystem = {
+  mkdir,
+  readFile,
+  writeFile,
+  rename,
+  copyFile,
+  unlink,
+};
+
+function shouldFallbackToCopyOnRenameFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "EPERM" || code === "EACCES";
+}
+
 export class DesktopFeishuStore implements DesktopFeishuStorePort {
   private readonly storeFilePath: string;
   private mutationQueue: Promise<unknown> = Promise.resolve();
@@ -149,6 +176,7 @@ export class DesktopFeishuStore implements DesktopFeishuStorePort {
   constructor(
     configuration: DesktopConfigurationPort,
     private readonly logger: RuntimeLogger,
+    private readonly fileSystem: DesktopFeishuStoreFileSystem = nodeFileSystem,
   ) {
     this.storeFilePath = configuration.getString("desktop.feishu.store.path")
       ?? join(homedir(), ".maomiagent", "desktop", "data", "feishu-store.json");
@@ -176,7 +204,7 @@ export class DesktopFeishuStore implements DesktopFeishuStorePort {
 
   private async readSnapshotFromDisk(): Promise<DesktopFeishuStoreSnapshot> {
     try {
-      const raw = await readFile(this.storeFilePath, "utf8");
+      const raw = await this.fileSystem.readFile(this.storeFilePath, "utf8");
       const parsed = JSON.parse(raw) as Partial<DesktopFeishuStoreSnapshot>;
       const initial = createInitialSnapshot();
       return {
@@ -225,10 +253,19 @@ export class DesktopFeishuStore implements DesktopFeishuStorePort {
 
   private async persistSnapshot(snapshot: DesktopFeishuStoreSnapshot): Promise<void> {
     try {
-      await mkdir(dirname(this.storeFilePath), { recursive: true });
+      await this.fileSystem.mkdir(dirname(this.storeFilePath), { recursive: true });
       const tempPath = `${this.storeFilePath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
-      await writeFile(tempPath, JSON.stringify(snapshot, null, 2), "utf8");
-      await rename(tempPath, this.storeFilePath);
+      await this.fileSystem.writeFile(tempPath, JSON.stringify(snapshot, null, 2), "utf8");
+      try {
+        await this.fileSystem.rename(tempPath, this.storeFilePath);
+      } catch (renameError) {
+        if (!shouldFallbackToCopyOnRenameFailure(renameError)) {
+          throw renameError;
+        }
+
+        await this.fileSystem.copyFile(tempPath, this.storeFilePath);
+        await this.fileSystem.unlink(tempPath).catch(() => undefined);
+      }
     } catch (error) {
       await this.logger.warn("failed to write desktop feishu store", {
         error: error instanceof Error ? error.message : String(error),

@@ -131,6 +131,10 @@ import {
   resolveActiveConversationCheckpoint,
 } from "../../../../../shared/desktop-conversation";
 import {
+  UI_DESIGNER_AGENT_ID,
+  UI_DESIGNER_CONTEXT_METADATA_KEY,
+} from "../../../../../shared/conversation/managed-execution";
+import {
   applyConversationFunctionCallPreferenceToTurnRequest,
   applyConversationHistoryPruningToTurnRequest,
   normalizeProviderFacingTurnRequest,
@@ -622,14 +626,19 @@ function isDedicatedWorkspaceFileEditTool(tool: ToolDescriptor): boolean {
 }
 
 function buildToolUsagePolicyLines(tools: readonly ToolDescriptor[]): string[] {
+  const basePolicyLines = [
+    "Tool usage policy:",
+    "- When a tool is needed, use the runtime's native tool-calling mechanism directly.",
+    "- Never emit fake tool syntax in assistant text, including <tool_call>, <function=...>, XML tags, JSON wrappers, or handwritten tool transcripts.",
+  ];
   const hasTerminalExecution = tools.some((tool) => isTerminalExecutionTool(tool));
   const preferredFileEditTools = tools.filter((tool) => isDedicatedWorkspaceFileEditTool(tool));
   if (!hasTerminalExecution || preferredFileEditTools.length === 0) {
-    return [];
+    return basePolicyLines;
   }
 
   return [
-    "Tool usage policy:",
+    ...basePolicyLines,
     "- Prefer dedicated file-edit tools for creating or updating workspace files in one operation.",
     "- If a file-edit tool can handle the target path, do not use terminal commands to assemble file contents line by line.",
     "- Avoid shell file-writing patterns like echo >>, printf >, cat <<EOF, tee, Set-Content, Add-Content, and Out-File when a dedicated file-edit tool is available.",
@@ -1691,6 +1700,35 @@ function buildManagedResumePacket(input: {
   return lines.join("\n");
 }
 
+function readUiDesignerContextMetadata(metadata: Record<string, unknown> | undefined) {
+  const value = metadata?.[UI_DESIGNER_CONTEXT_METADATA_KEY];
+  return isRecord(value) ? value : undefined;
+}
+
+function buildUiDesignerContextBlock(context: Record<string, unknown>) {
+  const lines = [
+    "UI designer workspace context",
+    "Use this as the active design package state. Stay focused on this package and do not switch into managed execution.",
+  ];
+
+  appendField(lines, "agentId", normalizeOptionalText(context.agentId));
+  appendField(lines, "surface", normalizeOptionalText(context.surface));
+  appendField(lines, "workspaceId", normalizeOptionalText(context.workspaceId));
+  appendField(lines, "workspaceName", normalizeOptionalText(context.workspaceName));
+  appendField(lines, "workspaceDirectoryPath", normalizeOptionalText(context.workspaceDirectoryPath));
+  appendField(lines, "designPackagePath", normalizeOptionalText(context.designPackagePath));
+  appendField(lines, "designRoot", normalizeOptionalText(context.designRoot));
+  appendField(lines, "hasDesignSpec", typeof context.hasDesignSpec === "boolean" ? context.hasDesignSpec : undefined);
+  appendField(lines, "shouldSendKickoff", typeof context.shouldSendKickoff === "boolean" ? context.shouldSendKickoff : undefined);
+  appendField(lines, "lockReason", normalizeOptionalText(context.lockReason));
+  appendField(lines, "focusBlock", normalizeOptionalText(context.focusBlock));
+  appendStructuredField(lines, "readiness", context.readiness);
+  appendStructuredField(lines, "preview", context.preview);
+  appendStructuredField(lines, "designFiles", context.files);
+
+  return lines.join("\n");
+}
+
 function readExecutionProfile(run: RunRecord, session: SessionRecord): AiExecutionProfileRef {
   const candidate = [run.metadata?.preferredExecutionProfile, session.metadata?.preferredExecutionProfile]
     .find(isExecutionProfileMetadataCandidate);
@@ -2657,6 +2695,33 @@ class DesktopConversationManagedTaskContextContributor implements ContextContrib
             source: "desktop.managed-resume",
             workspaceId,
             rootTaskId: rootTask.taskId,
+          },
+        },
+      ],
+    };
+  }
+}
+
+class DesktopConversationUiDesignerContextContributor implements ContextContributor {
+  async contribute(input: ContextContributorInput) {
+    const context = readUiDesignerContextMetadata(input.run.metadata)
+      ?? readUiDesignerContextMetadata(input.session.metadata);
+    if (!context || normalizeOptionalText(context.agentId) !== UI_DESIGNER_AGENT_ID) {
+      return {
+        contextBlocks: [],
+      };
+    }
+
+    return {
+      contextBlocks: [
+        {
+          id: `desktop-ui-designer:${input.session.id}:${input.run.id}`,
+          kind: "task" as const,
+          content: buildUiDesignerContextBlock(context),
+          priority: 94,
+          metadata: {
+            source: "desktop.ui-designer",
+            agentId: UI_DESIGNER_AGENT_ID,
           },
         },
       ],
@@ -3817,6 +3882,7 @@ export class DesktopAiConversationRuntime {
       contextContributorRegistry: new ContextContributorRegistry([
         new DesktopConversationRuntimeContextContributor(),
         new DesktopConversationAgentPromptContextContributor(agentPolicyDecisions),
+        new DesktopConversationUiDesignerContextContributor(),
         new DesktopConversationManagedTaskContextContributor(
           options.tasksQuery,
           this.checkpointStore,

@@ -28,7 +28,8 @@ import {
 } from "../shared/http-response-mode";
 
 const DEFAULT_ANTHROPIC_VERSION = "2023-06-01";
-const DEFAULT_ANTHROPIC_BETA = "interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14";
+const DEFAULT_INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14";
+const DEFAULT_FINE_GRAINED_TOOL_STREAMING_BETA = "fine-grained-tool-streaming-2025-05-14";
 const DEFAULT_ANTHROPIC_MAX_OUTPUT_TOKENS = 8192;
 const DEFAULT_STREAM_ACCEPT_HEADER = "text/event-stream";
 
@@ -50,6 +51,25 @@ type CreateAnthropicMessagesProtocolDriverOptions = {
   retryPolicy?: RetryBackoffPolicy;
   sleepFn?: (ms: number) => Promise<void>;
 };
+
+function normalizeAssistantReasoningContent(
+  messages: AnthropicMessagesPromptPayload["messages"],
+): AnthropicMessagesPromptPayload["messages"] {
+  return messages.map((message) => {
+    if (
+      message.role !== "assistant"
+      || !message.content.some((block) => block.type === "tool_use")
+      || Object.prototype.hasOwnProperty.call(message, "reasoning_content")
+    ) {
+      return message;
+    }
+
+    return {
+      ...message,
+      reasoning_content: "",
+    };
+  });
+}
 
 async function sleepMs(ms: number): Promise<void> {
   await new Promise<void>((resolve) => {
@@ -156,7 +176,7 @@ function buildRequestBody(
 ): AnthropicMessagesRequestBody {
   return {
     model: readAnthropicMessagesModelId(input.executionProfile),
-    messages: payload.messages,
+    messages: normalizeAssistantReasoningContent(payload.messages),
     max_tokens: resolveMaxTokens(input),
     stream: true,
     ...(payload.system ? { system: payload.system } : {}),
@@ -169,31 +189,52 @@ function buildRequestBody(
   };
 }
 
-function mergeAnthropicBetaHeader(configuredValue: string | undefined): string {
+function mergeAnthropicBetaHeader(input: {
+  configuredValue: string | undefined;
+  enableInterleavedThinking: boolean;
+}): string | undefined {
+  const configuredValues = input.configuredValue
+    ? input.configuredValue.split(",").map((item) => item.trim()).filter(Boolean)
+    : [];
+  const filteredConfiguredValues = input.enableInterleavedThinking
+    ? configuredValues
+    : configuredValues.filter((item) => item !== DEFAULT_INTERLEAVED_THINKING_BETA);
   const values = [
-    ...(configuredValue
-      ? configuredValue.split(",").map((item) => item.trim()).filter(Boolean)
-      : []),
-    ...DEFAULT_ANTHROPIC_BETA.split(",").map((item) => item.trim()).filter(Boolean),
+    ...filteredConfiguredValues,
+    ...(input.enableInterleavedThinking ? [DEFAULT_INTERLEAVED_THINKING_BETA] : []),
+    DEFAULT_FINE_GRAINED_TOOL_STREAMING_BETA,
   ];
+  const deduped = [...new Set(values)];
 
-  return [...new Set(values)].join(",");
+  return deduped.length > 0 ? deduped.join(",") : undefined;
 }
 
-function buildHeaders(config: AnthropicMessagesServiceConfig): Record<string, string> {
+function buildHeaders(input: {
+  config: AnthropicMessagesServiceConfig;
+  payload: AnthropicMessagesPromptPayload;
+}): Record<string, string> {
+  const configuredHeaders = input.config.headers;
+  const anthropicBeta = mergeAnthropicBetaHeader({
+    configuredValue: configuredHeaders?.["anthropic-beta"],
+    enableInterleavedThinking: Boolean(input.payload.thinking),
+  });
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    "x-api-key": config.apiKey,
+    "x-api-key": input.config.apiKey,
     "anthropic-version": DEFAULT_ANTHROPIC_VERSION,
-    "anthropic-beta": mergeAnthropicBetaHeader(config.headers?.["anthropic-beta"]),
-    ...(config.headers ? { ...config.headers } : {}),
+    ...(anthropicBeta ? { "anthropic-beta": anthropicBeta } : {}),
+    ...(configuredHeaders ? { ...configuredHeaders } : {}),
   };
 
-  headers["anthropic-version"] = config.headers?.["anthropic-version"] ?? DEFAULT_ANTHROPIC_VERSION;
-  headers["anthropic-beta"] = mergeAnthropicBetaHeader(config.headers?.["anthropic-beta"]);
+  headers["anthropic-version"] = configuredHeaders?.["anthropic-version"] ?? DEFAULT_ANTHROPIC_VERSION;
+  if (anthropicBeta) {
+    headers["anthropic-beta"] = anthropicBeta;
+  } else {
+    delete headers["anthropic-beta"];
+  }
   delete headers.accept;
-  headers.Accept = config.headers?.Accept
-    ?? config.headers?.accept
+  headers.Accept = configuredHeaders?.Accept
+    ?? configuredHeaders?.accept
     ?? DEFAULT_STREAM_ACCEPT_HEADER;
   return headers;
 }
@@ -299,7 +340,8 @@ export function createAnthropicMessagesProtocolDriver(
       supportsTemperature: true,
     },
     async *execute(input) {
-      const requestBody = buildRequestBody(input.request, codec.encode(input.request));
+      const payload = codec.encode(input.request);
+      const requestBody = buildRequestBody(input.request, payload);
       const endpoint = buildAnthropicMessagesEndpoint(input.config.baseUrl);
       let attempt = 1;
 
@@ -310,7 +352,10 @@ export function createAnthropicMessagesProtocolDriver(
         try {
           response = await options.fetchFn(endpoint, {
             method: "POST",
-            headers: buildHeaders(input.config),
+            headers: buildHeaders({
+              config: input.config,
+              payload,
+            }),
             body: JSON.stringify(requestBody),
             ...(requestSignal.signal ? { signal: requestSignal.signal } : {}),
           });

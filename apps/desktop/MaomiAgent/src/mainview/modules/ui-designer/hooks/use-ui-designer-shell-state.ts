@@ -1,26 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
+  DesktopConversationAttachmentInput,
   DesktopConversationAttachmentKind,
   DesktopConversationRuntimeEventsUpdateEvent,
   DesktopConversationSessionDetailUpdateEvent,
   DesktopConversationSessionDetail,
   DesktopConversationSessionItem,
 } from "../../../../shared/desktop-conversation";
-import { UI_DESIGNER_AGENT_ID } from "../../../../shared/conversation/managed-execution";
+import {
+  UI_DESIGNER_AGENT_ID,
+  UI_DESIGNER_CONTEXT_METADATA_KEY,
+} from "../../../../shared/conversation/managed-execution";
 import type { DesktopUiDesignerState } from "../../../../shared/desktop-ui-designer";
 import type { DesktopWorkspaceItem } from "../../../../shared/desktop-workspace";
 import {
-  createDesktopConversationSession,
+  createDesktopConversationClient,
   DESKTOP_CONVERSATION_BRIDGE_READY_EVENT,
   DESKTOP_CONVERSATION_DETAIL_UPDATED_EVENT,
   DESKTOP_CONVERSATION_INVALIDATED_EVENT,
   DESKTOP_CONVERSATION_RUNTIME_EVENTS_UPDATED_EVENT,
-  getDesktopConversationSessionDetail,
   hasDesktopConversationBridge,
-  hideDesktopConversationSession,
-  listDesktopConversationSessions,
-  sendDesktopConversationMessage,
 } from "../../../lib/desktop-conversation";
 import {
   DESKTOP_MODELS_BRIDGE_READY_EVENT,
@@ -65,6 +65,28 @@ type UiDesignerDesignFiles = {
   layoutsJson: string;
   pagesJson: string;
   sourcesMarkdown: string;
+};
+
+type UiDesignerContextFile = {
+  path: string;
+  content: string;
+};
+
+type UiDesignerContextPayload = {
+  agentId: typeof UI_DESIGNER_AGENT_ID;
+  surface: "ui-designer";
+  workspaceId?: string;
+  workspaceName?: string;
+  workspaceDirectoryPath?: string;
+  designPackagePath?: string;
+  designRoot?: string;
+  hasDesignSpec?: boolean;
+  shouldSendKickoff?: boolean;
+  lockReason?: string;
+  readiness?: DesktopUiDesignerState["readiness"];
+  preview?: DesktopUiDesignerState["preview"];
+  focusBlock?: string;
+  files: UiDesignerContextFile[];
 };
 
 type UseUiDesignerShellStateInput = {
@@ -206,22 +228,35 @@ const UI_DESIGNER_DESIGN_FILE_PATHS = {
   sourcesMarkdown: "design/sources.md",
 } as const;
 
+const UI_DESIGNER_CONTEXT_FILE_CHAR_LIMIT = 5000;
+
+const UI_DESIGNER_CONTEXT_FILE_LABELS: Record<keyof UiDesignerDesignFiles, string> = {
+  designSpecMarkdown: UI_DESIGNER_DESIGN_FILE_PATHS.designSpecMarkdown,
+  stackJson: UI_DESIGNER_DESIGN_FILE_PATHS.stackJson,
+  scopeJson: UI_DESIGNER_DESIGN_FILE_PATHS.scopeJson,
+  themeJson: UI_DESIGNER_DESIGN_FILE_PATHS.themeJson,
+  patternsJson: UI_DESIGNER_DESIGN_FILE_PATHS.patternsJson,
+  layoutsJson: UI_DESIGNER_DESIGN_FILE_PATHS.layoutsJson,
+  pagesJson: UI_DESIGNER_DESIGN_FILE_PATHS.pagesJson,
+  sourcesMarkdown: UI_DESIGNER_DESIGN_FILE_PATHS.sourcesMarkdown,
+};
+
 const REDESIGN_PROMPTS: Record<string, string> = {
-  stack: "请重新整理当前项目的技术栈方案，并明确前端框架、UI 组件库、构建工具和相关依赖。",
-  scope: "请重新确认本项目的生成范围清单，并只保留当前真正需要的部分。",
-  theme: "请重新设计主题方案，包括风格、色板、圆角、阴影、边框和图标方向。",
-  patterns: "请重新设计局部组件与组件模式，包括表单、筛选栏、表格、弹窗和抽屉。",
-  layouts: "请重新设计整体布局与局部布局，说明导航、侧边栏和页面容器策略。",
-  pages: "请重新设计页面模板，明确登录页、列表页、详情页、设置页等通用页面的结构。",
-  i18n: "请重新确认多语言方案，包括默认语言、资源组织和界面文案规范。",
-  spec: "请重新整理当前设计规格书，确保技术栈、主题、组件模式、布局和页面模板都准确反映最新结论。",
+  stack: "请基于当前设计包重新整理技术栈方案，只更新技术栈结论，保持生成范围、主题、组件模式、布局和页面模板稳定。请明确前端框架、UI 组件库、构建工具和相关依赖。",
+  scope: "请基于当前设计包重新确认生成范围清单，只更新范围结论，保持技术栈、主题、组件模式、布局和页面模板稳定。请只保留当前真正需要的部分。",
+  theme: "请基于当前设计包重新设计主题方案，只更新主题结论，保持技术栈、生成范围、组件模式、布局和页面模板稳定。请明确风格、色板、圆角、阴影、边框和图标方向。",
+  patterns: "请基于当前设计包重新设计局部组件与组件模式，只更新组件模式结论，保持技术栈、生成范围、主题、布局和页面模板稳定。请覆盖表单、筛选栏、表格、弹窗和抽屉。",
+  layouts: "请基于当前设计包重新设计整体布局与局部布局，只更新布局结论，保持技术栈、生成范围、主题、组件模式和页面模板稳定。请说明导航、侧边栏和页面容器策略。",
+  pages: "请基于当前设计包重新设计页面模板，只更新页面模板结论，保持技术栈、生成范围、主题、组件模式和布局稳定。请明确登录页、列表页、详情页、设置页等通用页面结构。",
+  sources: "请基于当前设计包补充资料来源，只更新资料与参考信息，保持技术栈、生成范围、主题、组件模式、布局和页面模板稳定。请列出需要保留的参考链接、组件库文档和 starter 仓库信息。",
+  i18n: "请基于当前设计包重新确认多语言方案，只更新多语言结论，保持其他设计结论稳定。请明确默认语言、资源组织和界面文案规范。",
+  spec: "请基于当前设计包重新整理设计规格书，只修正规格书表达，保持已经确认的技术栈、主题、组件模式、布局和页面模板结论稳定。",
 };
 
 function buildUiDesignerSessionMetadata() {
   return {
     surface: "ui-designer",
     moduleId: "ui-designer",
-    selectedAgentId: UI_DESIGNER_AGENT_ID,
     conversationSettings: {
       managedExecutionEnabled: false,
       thinkingEnabled: false,
@@ -229,12 +264,63 @@ function buildUiDesignerSessionMetadata() {
   } satisfies Record<string, unknown>;
 }
 
-function buildUiDesignerSendMetadata() {
+function buildUiDesignerSendMetadata(context?: UiDesignerContextPayload) {
   return {
     conversationSettings: {
       thinkingEnabled: false,
     },
+    ...(context ? { [UI_DESIGNER_CONTEXT_METADATA_KEY]: context } : {}),
   } satisfies Record<string, unknown>;
+}
+
+function buildComposerAttachmentInputs(attachments: ChatComposerAttachment[]): DesktopConversationAttachmentInput[] {
+  return attachments.map((attachment) => ({
+    attachmentId: attachment.id,
+    kind: attachment.kind,
+    fileName: attachment.name,
+    dataBase64: attachment.dataBase64,
+    ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
+    ...(typeof attachment.sizeBytes === "number" ? { sizeBytes: attachment.sizeBytes } : {}),
+  }));
+}
+
+function truncateUiDesignerContextText(value: string) {
+  const normalized = value.trim();
+  if (normalized.length <= UI_DESIGNER_CONTEXT_FILE_CHAR_LIMIT) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, UI_DESIGNER_CONTEXT_FILE_CHAR_LIMIT)}\n...[truncated]`;
+}
+
+function buildUiDesignerContext(input: {
+  workspaceId?: string;
+  selectedWorkspace?: DesktopWorkspaceItem;
+  designerState: DesktopUiDesignerState | null;
+  designFiles: UiDesignerDesignFiles;
+  focusBlock?: string;
+}): UiDesignerContextPayload {
+  const files = Object.entries(UI_DESIGNER_CONTEXT_FILE_LABELS).flatMap(([key, path]) => {
+    const content = truncateUiDesignerContextText(input.designFiles[key as keyof UiDesignerDesignFiles] ?? "");
+    return content ? [{ path, content }] : [];
+  });
+
+  return {
+    agentId: UI_DESIGNER_AGENT_ID,
+    surface: "ui-designer",
+    ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+    ...(input.selectedWorkspace?.name ? { workspaceName: input.selectedWorkspace.name } : {}),
+    ...(input.selectedWorkspace?.directoryPath ? { workspaceDirectoryPath: input.selectedWorkspace.directoryPath } : {}),
+    ...(input.designerState?.designPackagePath ? { designPackagePath: input.designerState.designPackagePath } : {}),
+    ...(input.designerState?.designRoot ? { designRoot: input.designerState.designRoot } : {}),
+    ...(input.designerState ? { hasDesignSpec: input.designerState.hasDesignSpec } : {}),
+    ...(input.designerState ? { shouldSendKickoff: input.designerState.shouldSendKickoff } : {}),
+    ...(input.designerState?.lockReason ? { lockReason: input.designerState.lockReason } : {}),
+    ...(input.designerState?.readiness ? { readiness: input.designerState.readiness } : {}),
+    ...(input.designerState?.preview ? { preview: input.designerState.preview } : {}),
+    ...(input.focusBlock ? { focusBlock: input.focusBlock } : {}),
+    files,
+  };
 }
 
 function resolveResetKickoffPrompt(state: DesktopUiDesignerState | null) {
@@ -380,6 +466,16 @@ async function normalizeComposerAttachment(file: File): Promise<ChatComposerAtta
 
 export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
   const { active } = input;
+  const conversationClient = useMemo(() => createDesktopConversationClient({
+    createSession: {
+      selectedAgentId: UI_DESIGNER_AGENT_ID,
+      metadata: buildUiDesignerSessionMetadata(),
+    },
+    sendMessage: {
+      selectedAgentId: UI_DESIGNER_AGENT_ID,
+      metadata: buildUiDesignerSendMetadata(),
+    },
+  }), []);
   const [bridgeAvailable, setBridgeAvailable] = useState(
     () => hasDesktopWorkspaceBridge()
       && hasDesktopConversationBridge()
@@ -395,6 +491,7 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
   const [creatingSession, setCreatingSession] = useState(false);
   const [resettingConversation, setResettingConversation] = useState(false);
   const [sendingMessage, setSendingMessage] = useState(false);
+  const [stoppingSessionId, setStoppingSessionId] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<DesktopWorkspaceItem[]>([]);
   const [workspaceId, setWorkspaceId] = useState<string | undefined>(undefined);
   const [designerState, setDesignerState] = useState<DesktopUiDesignerState | null>(null);
@@ -407,6 +504,7 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
   const [composerAttachments, setComposerAttachments] = useState<ChatComposerAttachment[]>([]);
   const composerAttachmentsRef = useRef<ChatComposerAttachment[]>([]);
   const runtimeEventActivityBySessionIdRef = useRef<Record<string, number>>({});
+  const stoppingSessionIdRef = useRef<string | null>(null);
   const selectedSessionIdRef = useRef<string | undefined>(undefined);
   const selectedSessionDetailRef = useRef<DesktopConversationSessionDetail | null>(null);
   const [composerModelOptions, setComposerModelOptions] = useState<ChatComposerModelOption[]>([]);
@@ -467,6 +565,10 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
   useEffect(() => {
     composerAttachmentsRef.current = composerAttachments;
   }, [composerAttachments]);
+
+  useEffect(() => {
+    stoppingSessionIdRef.current = stoppingSessionId;
+  }, [stoppingSessionId]);
 
   useEffect(() => {
     selectedSessionIdRef.current = selectedSessionId;
@@ -577,7 +679,7 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     setLoadingSessions(true);
     setErrorMessage(null);
     try {
-      const response = await listDesktopConversationSessions({
+      const response = await conversationClient.listSessions({
         workspaceId: nextWorkspaceId,
         status: "all",
         limit: 200,
@@ -606,7 +708,7 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     setLoadingSessionDetail(true);
     setErrorMessage(null);
     try {
-      setSelectedSessionDetail(await getDesktopConversationSessionDetail(nextSessionId));
+      setSelectedSessionDetail(await conversationClient.getSessionDetail(nextSessionId));
     } catch (error) {
       setSelectedSessionDetail(null);
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -634,13 +736,14 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
         const withinGracePeriod = now - startedAt < SESSION_DETAIL_FALLBACK_GRACE_MS;
         const recentRuntimeActivity = lastRuntimeEventAt > 0
           && now - lastRuntimeEventAt < SESSION_DETAIL_FALLBACK_SILENCE_WINDOW_MS;
-        if (withinGracePeriod || recentRuntimeActivity) {
+        const stopRequested = stoppingSessionIdRef.current === sessionId;
+        if (withinGracePeriod || recentRuntimeActivity || stopRequested) {
           await delay(SESSION_DETAIL_SEND_POLL_INTERVAL_MS);
           continue;
         }
 
         try {
-          const detail = await getDesktopConversationSessionDetail(sessionId);
+          const detail = await conversationClient.getSessionDetail(sessionId);
           if (detail) {
             onDetail(detail);
             if (detail.status !== "active") {
@@ -662,7 +765,7 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     return () => {
       stopped = true;
     };
-  }, []);
+  }, [conversationClient]);
 
   useEffect(() => {
     const syncBridgeState = () => {
@@ -729,11 +832,18 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     setErrorMessage(null);
     try {
       await waitForConversationWorkspaceSettingsSaves(workspaceId);
-      const response = await createDesktopConversationSession({
+      const context = buildUiDesignerContext({
+        workspaceId,
+        selectedWorkspace,
+        designerState,
+        designFiles,
+      });
+      const response = await conversationClient.createSession({
         workspaceId,
         title: "UI 设计方案",
-        selectedAgentId: UI_DESIGNER_AGENT_ID,
-        metadata: buildUiDesignerSessionMetadata(),
+        metadata: {
+          [UI_DESIGNER_CONTEXT_METADATA_KEY]: context,
+        },
       });
       await reloadSessions(workspaceId, response.item.sessionId);
       setSelectedSessionId(response.item.sessionId);
@@ -742,12 +852,11 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
 
       const kickoffMessage = input?.kickoffMessage?.trim();
       if (kickoffMessage) {
-        await sendDesktopConversationMessage({
+        await conversationClient.sendMessage({
           workspaceId,
           sessionId: response.item.sessionId,
           text: kickoffMessage,
-          selectedAgentId: UI_DESIGNER_AGENT_ID,
-          metadata: buildUiDesignerSendMetadata(),
+          metadata: buildUiDesignerSendMetadata(context),
         });
         await reloadSelectedSessionDetail(response.item.sessionId);
         await reloadSessions(workspaceId, response.item.sessionId);
@@ -762,7 +871,16 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     } finally {
       setCreatingSession(false);
     }
-  }, [clearComposerAttachments, reloadSelectedSessionDetail, reloadSessions, workspaceId]);
+  }, [
+    clearComposerAttachments,
+    conversationClient,
+    designFiles,
+    designerState,
+    reloadSelectedSessionDetail,
+    reloadSessions,
+    selectedWorkspace,
+    workspaceId,
+  ]);
 
   const reloadComposerModels = useCallback(async (detail?: DesktopConversationSessionDetail | null) => {
     if (!modelsBridgeAvailable || !workspaceId) {
@@ -793,11 +911,22 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
         ?? selectedSessionDetailModelId
         ?? selectedSessionSummaryModelId
         ?? (storedSelectedChannelId && storedSelectedModelId ? storedSelectedModelId : undefined);
-      const response = await getDesktopModelRuntimeSelectionSnapshot({
-        workspaceId,
-        selectedChannelId,
-        selectedModelId,
-      });
+      let response;
+      try {
+        response = await getDesktopModelRuntimeSelectionSnapshot({
+          workspaceId,
+          selectedChannelId,
+          selectedModelId,
+        });
+      } catch (error) {
+        if (!selectedChannelId && !selectedModelId) {
+          throw error;
+        }
+
+        response = await getDesktopModelRuntimeSelectionSnapshot({
+          workspaceId,
+        });
+      }
       const runtimeOptions = buildDesktopRuntimeModelOptions({
         snapshot: response.item,
         selectedChannelId,
@@ -913,7 +1042,11 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
       applySessionDetail(detailUpdate.detail);
       setLoadingSessionDetail(false);
       if (detailUpdate.detail.sessionId === selectedSessionIdRef.current) {
-        setSendingMessage(detailUpdate.detail.status === "active");
+        setSendingMessage(detailUpdate.detail.status === "active" && stoppingSessionIdRef.current !== detailUpdate.detail.sessionId);
+        if (detailUpdate.detail.status !== "active") {
+          setStoppingSessionId((current) => current === detailUpdate.detail.sessionId ? null : current);
+          void reloadDesignerState(detailUpdate.detail.workspaceId);
+        }
       }
     };
 
@@ -921,7 +1054,7 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     return () => {
       window.removeEventListener(DESKTOP_CONVERSATION_DETAIL_UPDATED_EVENT, handleConversationDetailUpdated);
     };
-  }, [active, applySessionDetail, bridgeAvailable, workspaceId]);
+  }, [active, applySessionDetail, bridgeAvailable, reloadDesignerState, workspaceId]);
 
   useEffect(() => {
     if (!active || !bridgeAvailable) {
@@ -949,12 +1082,18 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
           if (!merged.requiresReload) {
             applySessionDetail(merged.detail);
             setLoadingSessionDetail(false);
-            setSendingMessage(merged.detail.status === "active");
+            setSendingMessage(merged.detail.status === "active" && stoppingSessionIdRef.current !== runtimeUpdate.sessionId);
+            if (merged.detail.status !== "active") {
+              setStoppingSessionId((current) => current === runtimeUpdate.sessionId ? null : current);
+              void reloadDesignerState(merged.detail.workspaceId);
+            }
             return;
           }
         }
 
-        setSendingMessage(true);
+        if (stoppingSessionIdRef.current !== runtimeUpdate.sessionId) {
+          setSendingMessage(true);
+        }
         void reloadSelectedSessionDetail(runtimeUpdate.sessionId);
         return;
       }
@@ -972,7 +1111,7 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
         handleConversationRuntimeEventsUpdated,
       );
     };
-  }, [active, applySessionDetail, bridgeAvailable, reloadSelectedSessionDetail, reloadSessions, workspaceId]);
+  }, [active, applySessionDetail, bridgeAvailable, reloadDesignerState, reloadSelectedSessionDetail, reloadSessions, workspaceId]);
 
   useEffect(() => {
     if (!active || !workspaceId || !designerState || loadingSessions || creatingSession || selectedSessionId) {
@@ -1022,23 +1161,33 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
       return;
     }
 
+    const sessionToHide = selectedSessionId;
     setResettingConversation(true);
     setErrorMessage(null);
+    setSelectedSessionDetail(null);
+    setSelectedSessionId(undefined);
+    clearComposerAttachments();
     try {
-      await hideDesktopConversationSession(selectedSessionId);
-      setSelectedSessionDetail(null);
-      setSelectedSessionId(undefined);
-      clearComposerAttachments();
-      await reloadSessions(workspaceId);
-      await createSession({
+      const created = await createSession({
         prefillDraft: resolveResetKickoffPrompt(designerState),
       });
+      if (created) {
+        void conversationClient.hideSession(sessionToHide)
+          .then(() => reloadSessions(workspaceId, created.sessionId))
+          .catch((error) => {
+            setErrorMessage(error instanceof Error ? error.message : String(error));
+          });
+      } else {
+        setSelectedSessionId(sessionToHide);
+        await reloadSessions(workspaceId, sessionToHide);
+      }
     } catch (error) {
+      setSelectedSessionId(sessionToHide);
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setResettingConversation(false);
     }
-  }, [clearComposerAttachments, createSession, designerState, reloadSessions, resettingConversation, selectedSessionId, workspaceId]);
+  }, [clearComposerAttachments, conversationClient, createSession, designerState, reloadSessions, resettingConversation, selectedSessionId, workspaceId]);
 
   const attachComposerFiles = useCallback((files: File[]) => {
     if (files.length === 0) {
@@ -1107,39 +1256,41 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     }
 
     const text = draftMessage.trim();
-    const attachments = composerAttachments.map((attachment) => ({
-      attachmentId: attachment.id,
-      kind: attachment.kind,
-      fileName: attachment.name,
-      dataBase64: attachment.dataBase64,
-      ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
-      ...(typeof attachment.sizeBytes === "number" ? { sizeBytes: attachment.sizeBytes } : {}),
-    }));
+    const attachments = buildComposerAttachmentInputs(composerAttachments);
 
     if (!text && attachments.length === 0) {
       return;
     }
 
+    const selectedModel = composerModelOptions.find((item) => item.value === selectedComposerModelValue);
+    const context = buildUiDesignerContext({
+      workspaceId,
+      selectedWorkspace,
+      designerState,
+      designFiles,
+    });
+
     setSendingMessage(true);
     setErrorMessage(null);
     try {
       await waitForConversationWorkspaceSettingsSaves(workspaceId);
-      const selectedModel = composerModelOptions.find((item) => item.value === selectedComposerModelValue);
       setDraftMessage("");
       clearComposerAttachments();
       const targetSessionId = selectedSessionId;
       const stopPolling = startSessionDetailFallbackPolling(targetSessionId, (detail) => {
         applySessionDetail(detail);
         setSendingMessage(detail.status === "active");
+        if (detail.status !== "active") {
+          void reloadDesignerState(workspaceId);
+        }
       });
 
-      const messagePromise = sendDesktopConversationMessage({
+      const messagePromise = conversationClient.sendMessage({
         workspaceId,
         sessionId: selectedSessionId,
         ...(text ? { text } : {}),
         ...(attachments.length > 0 ? { attachments } : {}),
-        selectedAgentId: UI_DESIGNER_AGENT_ID,
-        metadata: buildUiDesignerSendMetadata(),
+        metadata: buildUiDesignerSendMetadata(context),
         ...(selectedModel
           ? {
               selectedChannelId: selectedModel.channelId,
@@ -1152,6 +1303,7 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
         stopPolling();
         applySessionDetail(response.detail);
         void reloadSessions(workspaceId, response.detail.sessionId);
+        void reloadDesignerState(workspaceId);
       }).catch((error) => {
         stopPolling();
         setSendingMessage(false);
@@ -1169,11 +1321,47 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     clearComposerAttachments,
     composerAttachments,
     composerModelOptions,
+    conversationClient,
+    designFiles,
+    designerState,
     draftMessage,
+    reloadDesignerState,
     selectedComposerModelValue,
+    selectedWorkspace,
     selectedSessionId,
+    sendingMessage,
     startSessionDetailFallbackPolling,
     workspaceId,
+  ]);
+
+  const stopMessage = useCallback(async () => {
+    if (!selectedSessionId || !sendingMessage || stoppingSessionId === selectedSessionId) {
+      return;
+    }
+
+    setStoppingSessionId(selectedSessionId);
+    setErrorMessage(null);
+    try {
+      const response = await conversationClient.stopMessage({
+        sessionId: selectedSessionId,
+      });
+      applySessionDetail(response.detail);
+      await reloadSessions(response.detail.workspaceId, response.detail.sessionId);
+      await reloadDesignerState(response.detail.workspaceId);
+      setSendingMessage(response.detail.status === "active");
+      setStoppingSessionId(null);
+    } catch (error) {
+      setStoppingSessionId(null);
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }, [
+    applySessionDetail,
+    conversationClient,
+    reloadDesignerState,
+    reloadSessions,
+    selectedSessionId,
+    sendingMessage,
+    stoppingSessionId,
   ]);
 
   const setSelectedComposerModelValue = useCallback((value: string | undefined) => {
@@ -1264,6 +1452,7 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     selectedSessionDetail,
     selectedWorkspace,
     sendingMessage,
+    stoppingMessage: Boolean(selectedSessionId && stoppingSessionId === selectedSessionId),
     sourcesMarkdown,
     stack,
     theme,
@@ -1279,6 +1468,7 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     removeComposerAttachment,
     resetConversation,
     sendMessage,
+    stopMessage,
     setDraftMessage,
     setPreviewMode,
     setSelectedComposerModelValue,

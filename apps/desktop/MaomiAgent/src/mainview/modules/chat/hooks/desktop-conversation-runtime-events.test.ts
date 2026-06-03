@@ -179,6 +179,77 @@ describe("mergeDesktopConversationRuntimeEvents", () => {
     expect(result.detail.pendingInteractions[0]?.interactionId).toBe("interaction-1");
   });
 
+  test("clears pending interactions after an interaction response update", () => {
+    const detail = createDetail();
+
+    const withPendingInteraction = mergeDesktopConversationRuntimeEvents(detail, [{
+      type: "interaction.updated",
+      eventId: "event-pending",
+      occurredAt: BASE_TIME + 30,
+      sessionId: "session-1",
+      runId: "run-1",
+      interaction: {
+        interactionId: "interaction-1",
+        sessionId: "session-1",
+        runId: "run-1",
+        kind: "form",
+        status: "pending",
+        request: {
+          kind: "form",
+          title: "Confirm action",
+          fields: [{
+            key: "strategy",
+            label: "Strategy",
+            kind: "text",
+            required: true,
+          }],
+        },
+        createdAt: BASE_TIME + 30,
+        updatedAt: BASE_TIME + 30,
+      },
+    }]).detail;
+
+    const result = mergeDesktopConversationRuntimeEvents(withPendingInteraction, [{
+      type: "interaction.updated",
+      eventId: "event-answered",
+      occurredAt: BASE_TIME + 40,
+      sessionId: "session-1",
+      runId: "run-1",
+      interaction: {
+        interactionId: "interaction-1",
+        sessionId: "session-1",
+        runId: "run-1",
+        kind: "form",
+        status: "answered",
+        request: {
+          kind: "form",
+          title: "Confirm action",
+          fields: [{
+            key: "strategy",
+            label: "Strategy",
+            kind: "text",
+            required: true,
+          }],
+        },
+        response: {
+          kind: "form",
+          values: {
+            strategy: "tests",
+          },
+        },
+        createdAt: BASE_TIME + 30,
+        updatedAt: BASE_TIME + 40,
+      },
+    }]);
+
+    expect(result.requiresReload).toBe(false);
+    expect(result.detail.interactions).toHaveLength(1);
+    expect(result.detail.interactions[0]?.status).toBe("answered");
+    expect(result.detail.pendingInteractions).toHaveLength(0);
+    expect(result.detail.timeline.filter((entry) => entry.type === "interaction")).toHaveLength(1);
+    expect(result.detail.updatedAt).toBe("2026-05-04T00:00:00.040Z");
+  });
+
   test("enriches message and timeline tool parts after tool-call updates arrive", () => {
     const detail = createDetail();
     const withToolPart = mergeDesktopConversationRuntimeEvents(detail, [{

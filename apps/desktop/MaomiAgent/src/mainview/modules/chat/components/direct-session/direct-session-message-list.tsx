@@ -115,6 +115,7 @@ function DirectSessionMessageListInner(props: Props) {
                 paneWorkspaceId={props.paneWorkspaceId}
                 previewWorkspaceId={props.resolveMessageWorkspaceId?.(item.group.previewSourceMessage)}
                 language={props.language}
+                workspaceAvatarSettings={props.workspaceAvatarSettings}
                 isStreaming={props.sending && (optimisticAssistantKey
                   ? item.group.key === optimisticAssistantKey
                   : item.group.containsLatestMessage && item.group.message.role === "assistant")}

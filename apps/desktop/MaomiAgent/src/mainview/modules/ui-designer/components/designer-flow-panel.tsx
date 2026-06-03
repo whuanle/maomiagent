@@ -77,23 +77,14 @@ export function DesignerFlowPanel(props: DesignerFlowPanelProps) {
   const patternsDesigned = themeDesigned && hasConfirmedPatterns(props.patterns);
   const layoutsDesigned = patternsDesigned && hasConfirmedLayouts(props.layouts);
   const pagesDesigned = layoutsDesigned && hasConfirmedPages(props.pages);
-  const sourcesDesigned = stackDesigned && hasConfirmedSources(props.sourcesMarkdown);
+  const sourcesDesigned = pagesDesigned && hasConfirmedSources(props.sourcesMarkdown);
   const specDesigned = Boolean(props.designerState?.hasDesignSpec);
   const i18nDesigned = typeof props.stack.i18n === "boolean" || props.sourcesMarkdown.includes("i18n");
   const stageItems = [
-    { key: "stack", title: "技术栈确认", completed: stackDesigned, canStart: !stackDesigned },
-    { key: "scope", title: "范围确认", completed: scopeDesigned, canStart: false },
-    { key: "theme", title: "主题与设计系统", completed: themeDesigned, canStart: false },
-    { key: "patterns", title: "组件模式", completed: patternsDesigned, canStart: false },
-    { key: "layouts", title: "布局设计", completed: layoutsDesigned, canStart: false },
-    { key: "pages", title: "页面模板", completed: pagesDesigned, canStart: false },
-    { key: "sources", title: "资料补充", completed: sourcesDesigned && !missingItems.includes("sources.documentation"), canStart: false },
-  ] as const;
-  const summaryBlocks = [
     {
       key: "stack",
-      title: "技术栈",
-      designed: stackDesigned,
+      title: "技术栈确认",
+      completed: stackDesigned,
       summary: joinSummary([
         typeof props.stack.framework === "string" && props.stack.framework.trim() ? props.stack.framework : "未确认框架",
         typeof props.stack.uiLibrary === "string" && props.stack.uiLibrary.trim() ? props.stack.uiLibrary : "未确认 UI 库",
@@ -101,47 +92,54 @@ export function DesignerFlowPanel(props: DesignerFlowPanelProps) {
     },
     {
       key: "scope",
-      title: "范围清单",
-      designed: scopeDesigned,
+      title: "范围确认",
+      completed: scopeDesigned,
       summary: summarizeSelectedSections(props.scope.selectedSections),
     },
     {
       key: "theme",
-      title: "主题",
-      designed: themeDesigned,
+      title: "主题与设计系统",
+      completed: themeDesigned,
       summary: typeof props.theme.style === "string" && props.theme.style.trim() ? props.theme.style : "未确认",
     },
     {
       key: "patterns",
       title: "组件模式",
-      designed: patternsDesigned,
+      completed: patternsDesigned,
       summary: patternGroups.length > 0 ? patternGroups.join("、") : "未确认",
     },
     {
       key: "layouts",
-      title: "布局",
-      designed: layoutsDesigned,
+      title: "布局设计",
+      completed: layoutsDesigned,
       summary: layoutItems.length > 0 ? layoutItems.join("、") : "未确认",
     },
     {
       key: "pages",
       title: "页面模板",
-      designed: pagesDesigned,
+      completed: pagesDesigned,
       summary: pageTemplates.length > 0 ? pageTemplates.join("、") : "未确认",
+    },
+    {
+      key: "sources",
+      title: "资料补充",
+      completed: sourcesDesigned && !missingItems.includes("sources.documentation"),
+      summary: sourcesDesigned && !missingItems.includes("sources.documentation") ? "已补充资料来源" : "未确认",
     },
     {
       key: "i18n",
       title: "多语言",
-      designed: i18nDesigned,
+      completed: i18nDesigned,
       summary: i18nDesigned ? "已确认" : "未确认",
     },
     {
       key: "spec",
       title: "设计规格书",
-      designed: specDesigned,
+      completed: specDesigned,
       summary: specDesigned ? "已生成规格书" : "未生成规格书",
     },
-  ];
+  ] as const;
+  const nextStageKey = stageItems.find((item) => !item.completed)?.key;
 
   return (
     <section className="ui-designer-pane ui-designer-pane-center" data-testid="ui-designer-center-pane">
@@ -172,46 +170,52 @@ export function DesignerFlowPanel(props: DesignerFlowPanelProps) {
           <div className="ui-designer-section-title">内置阶段</div>
           <div className="ui-designer-stage-list">
             {stageItems.map((item) => {
+              const canStart = !item.completed && item.key === nextStageKey;
               return (
                 <div key={item.key} className="ui-designer-stage-item">
                   <CheckCircleOutlined className={`ui-designer-stage-check${item.completed ? " is-complete" : ""}`} />
-                  <span className="ui-designer-stage-item-title">{item.title}</span>
-                  {item.canStart
-                    ? (
-                        <Button
-                          type="link"
-                          className="ui-designer-stage-start-action"
-                          onClick={() => props.queueRedesignPrompt("stack")}
-                        >
-                          开始设计
-                        </Button>
-                      )
-                    : null}
+                  <div className="ui-designer-stage-item-content">
+                    <div className="ui-designer-stage-item-main">
+                      <span className="ui-designer-stage-item-title">{item.title}</span>
+                      {item.completed
+                        ? (
+                            <Button
+                              type="link"
+                              className="ui-designer-stage-start-action"
+                              onClick={() => props.queueRedesignPrompt(item.key)}
+                            >
+                              重新设计
+                            </Button>
+                          )
+                        : null}
+                      {canStart
+                        ? (
+                            <Button
+                              type="link"
+                              className="ui-designer-stage-start-action"
+                              onClick={() => props.queueRedesignPrompt(item.key)}
+                            >
+                              开始设计
+                            </Button>
+                          )
+                        : null}
+                    </div>
+                    {item.completed
+                      ? (
+                          <div className="ui-designer-stage-summary">
+                            {item.summary === "未确认"
+                              ? <Tag>未确认</Tag>
+                              : item.summary}
+                          </div>
+                        )
+                      : null}
+                  </div>
                 </div>
               );
             })}
           </div>
         </div>
 
-        {summaryBlocks.map((block) => (
-          <div key={block.key} className="ui-designer-section ui-designer-summary-block">
-            <div className="ui-designer-section-header">
-              <div className="ui-designer-section-title">{block.title}</div>
-              <Button
-                type="link"
-                disabled={!block.designed}
-                onClick={() => props.queueRedesignPrompt(block.key)}
-              >
-                重新设计
-              </Button>
-            </div>
-            <div className="ui-designer-summary-block-body">
-              {block.summary === "未确认"
-                ? <Tag>未确认</Tag>
-                : block.summary}
-            </div>
-          </div>
-        ))}
       </div>
     </section>
   );

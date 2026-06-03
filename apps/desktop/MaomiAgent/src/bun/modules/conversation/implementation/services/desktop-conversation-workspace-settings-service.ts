@@ -68,6 +68,21 @@ function normalizeBoolean(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
 }
 
+function normalizeDataUrl(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  return /^data:image\/(?:png|jpeg|jpg|webp|gif|svg\+xml);base64,/i.test(trimmed)
+    ? trimmed
+    : undefined;
+}
+
 function normalizeContextCompressionThresholdPercent(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return undefined;
@@ -251,6 +266,16 @@ function normalizeWorkspaceSettings(
     warnings.push(`${warningPrefix} capabilityPreferences is invalid. Using defaults.`);
   }
 
+  const assistantAvatarDataUrl = normalizeDataUrl(record.assistantAvatarDataUrl);
+  if (record.assistantAvatarDataUrl !== undefined && assistantAvatarDataUrl === undefined) {
+    warnings.push(`${warningPrefix} assistantAvatarDataUrl is invalid. Ignoring value.`);
+  }
+
+  const userAvatarDataUrl = normalizeDataUrl(record.userAvatarDataUrl);
+  if (record.userAvatarDataUrl !== undefined && userAvatarDataUrl === undefined) {
+    warnings.push(`${warningPrefix} userAvatarDataUrl is invalid. Ignoring value.`);
+  }
+
   return {
     settings: {
       approvalAutoEnabled: approvalAutoEnabled ?? defaults.approvalAutoEnabled,
@@ -264,6 +289,8 @@ function normalizeWorkspaceSettings(
             selectedModelId,
           }
         : {}),
+      ...(assistantAvatarDataUrl ? { assistantAvatarDataUrl } : {}),
+      ...(userAvatarDataUrl ? { userAvatarDataUrl } : {}),
       thinkingEnabled: thinkingEnabled ?? defaults.thinkingEnabled,
       managedExecutionEnabled: managedExecutionEnabled ?? defaults.managedExecutionEnabled,
       ...(permissionRules !== undefined ? { permissionRules } : {}),
@@ -339,6 +366,22 @@ function mergeWorkspaceSettingsPatch(
   assign("memoryEnabled", current.memoryEnabled);
   assign("sandboxEnabled", current.sandboxEnabled);
   assign("feishuSmartAssistantEnabled", current.feishuSmartAssistantEnabled);
+
+  if (Object.prototype.hasOwnProperty.call(patch, "assistantAvatarDataUrl")) {
+    if (patch.assistantAvatarDataUrl === undefined) {
+      delete next.assistantAvatarDataUrl;
+    } else {
+      next.assistantAvatarDataUrl = patch.assistantAvatarDataUrl;
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(patch, "userAvatarDataUrl")) {
+    if (patch.userAvatarDataUrl === undefined) {
+      delete next.userAvatarDataUrl;
+    } else {
+      next.userAvatarDataUrl = patch.userAvatarDataUrl;
+    }
+  }
 
   if (Object.prototype.hasOwnProperty.call(patch, "defaultTerminalShellKind")) {
     if (patch.defaultTerminalShellKind === undefined) {

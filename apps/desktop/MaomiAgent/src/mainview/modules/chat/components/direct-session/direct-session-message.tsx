@@ -65,6 +65,7 @@ import {
   readProjectedConversationToolOutputPreview,
   readProjectedConversationToolOutputSummary,
 } from "./direct-session-session-detail-projection";
+import type { ConversationAvatarSettings } from "./types";
 
 type ChatMessageDisplayRole = "assistant" | "user" | "system";
 type MessageTone = "success" | "running" | "warning" | "error";
@@ -76,6 +77,7 @@ type Props = {
   paneWorkspaceId?: string;
   previewWorkspaceId?: string;
   language: LanguageCode;
+  workspaceAvatarSettings?: ConversationAvatarSettings;
   isStreaming: boolean;
   streamingPartIds?: readonly string[];
   detailLoading?: boolean;
@@ -305,6 +307,18 @@ function resolveMessageAvatarFallback(role: ChatMessageDisplayRole, isEn: boolea
   }
 
   return "AI";
+}
+
+function resolveMessageAvatarDataUrl(role: ChatMessageDisplayRole, workspaceAvatarSettings?: ConversationAvatarSettings) {
+  if (role === "assistant") {
+    return workspaceAvatarSettings?.assistantAvatarDataUrl;
+  }
+
+  if (role === "user") {
+    return workspaceAvatarSettings?.userAvatarDataUrl;
+  }
+
+  return undefined;
 }
 
 function formatMessageRole(role: ConversationMessageEntry["role"], isEn: boolean) {
@@ -1418,6 +1432,7 @@ function DirectSessionMessageInner(props: Props) {
   const [discardedPaths, setDiscardedPaths] = useState<string[]>([]);
   const isEn = props.language === "en-US";
   const displayRole = resolveMessageDisplayRole(props.message.role);
+  const avatarDataUrl = resolveMessageAvatarDataUrl(displayRole, props.workspaceAvatarSettings);
   const workspaceId = trimText(props.previewWorkspaceId) || resolveMessageWorkspaceId(props.message);
   const openWorkspaceFilePreview = createWorkspaceFilePreviewHandler({
     paneWorkspaceId: props.paneWorkspaceId,
@@ -1642,7 +1657,11 @@ function DirectSessionMessageInner(props: Props) {
               aria-label={formatMessageRole(props.message.role, isEn)}
               title={formatMessageRole(props.message.role, isEn)}
             >
-              {resolveMessageAvatarFallback(displayRole, isEn)}
+              {avatarDataUrl ? (
+                <img className="chat-bubble-avatar-image" src={avatarDataUrl} alt="" />
+              ) : (
+                resolveMessageAvatarFallback(displayRole, isEn)
+              )}
             </span>
           </div>
 
