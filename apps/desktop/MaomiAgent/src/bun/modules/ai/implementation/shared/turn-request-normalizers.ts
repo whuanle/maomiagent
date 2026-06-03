@@ -95,6 +95,142 @@ function messageNeedsSyntheticReasoning(
   return !message.parts.some((part) => part.type === "reasoning");
 }
 
+function hasMeaningfulAssistantContent(
+  message: AiTurnRequest["prompt"]["messages"][number],
+): boolean {
+  return message.parts.some((part) => {
+    switch (part.type) {
+      case "text":
+        return part.text.trim().length > 0;
+      case "reasoning":
+        return part.text.trim().length > 0;
+      case "tool_call_ref":
+      case "attachment":
+        return true;
+      default:
+        return false;
+    }
+  });
+}
+
+function filterToolMessagePartsByToolCallIds(
+  message: AiTurnRequest["prompt"]["messages"][number],
+  matchedToolCallIds: ReadonlySet<string>,
+): AiTurnRequest["prompt"]["messages"][number]["parts"] {
+  const retainedToolResultRefs = message.parts.filter((part) =>
+    part.type === "tool_result_ref" && matchedToolCallIds.has(part.toolCallId)
+  );
+  if (retainedToolResultRefs.length === 0) {
+    return [];
+  }
+
+  return message.parts.filter((part) =>
+    part.type !== "tool_result_ref" || matchedToolCallIds.has(part.toolCallId)
+  );
+}
+
+export function applyConversationToolHistoryConsistencyRepairToTurnRequest(input: {
+  request: AiTurnRequest;
+}): AiTurnRequest {
+  const sourceMessages = input.request.prompt.messages;
+  const repairedMessages: typeof sourceMessages = [];
+  let changed = false;
+
+  for (let index = 0; index < sourceMessages.length; index += 1) {
+    const message = sourceMessages[index]!;
+    if (message.message.role === "tool") {
+      changed = true;
+      continue;
+    }
+
+    if (message.message.role !== "assistant") {
+      repairedMessages.push(message);
+      continue;
+    }
+
+    const toolCallRefs = message.parts.filter((part) => part.type === "tool_call_ref");
+    if (toolCallRefs.length === 0) {
+      repairedMessages.push(message);
+      continue;
+    }
+
+    const contiguousToolMessages: typeof sourceMessages = [];
+    let lookaheadIndex = index + 1;
+    while (lookaheadIndex < sourceMessages.length) {
+      const candidate = sourceMessages[lookaheadIndex]!;
+      if (candidate.message.role !== "tool") {
+        break;
+      }
+      contiguousToolMessages.push(candidate);
+      lookaheadIndex += 1;
+    }
+
+    const matchedToolCallIds = new Set(
+      contiguousToolMessages.flatMap((toolMessage) =>
+        toolMessage.parts.flatMap((part) =>
+          part.type === "tool_result_ref" ? [part.toolCallId] : []
+        )
+      ),
+    );
+    const retainedToolCallIds = new Set(
+      toolCallRefs
+        .map((part) => part.toolCallId)
+        .filter((toolCallId) => matchedToolCallIds.has(toolCallId)),
+    );
+
+    const nextAssistantParts = message.parts.filter((part) =>
+      part.type !== "tool_call_ref" || retainedToolCallIds.has(part.toolCallId)
+    );
+    if (nextAssistantParts.length !== message.parts.length) {
+      changed = true;
+    }
+
+    const repairedAssistantMessage = nextAssistantParts === message.parts
+      ? message
+      : {
+          ...message,
+          parts: nextAssistantParts,
+        };
+    if (hasMeaningfulAssistantContent(repairedAssistantMessage)) {
+      repairedMessages.push(repairedAssistantMessage);
+    } else {
+      changed = true;
+    }
+
+    for (const toolMessage of contiguousToolMessages) {
+      const nextToolParts = filterToolMessagePartsByToolCallIds(toolMessage, retainedToolCallIds);
+      if (nextToolParts.length === 0) {
+        changed = true;
+        continue;
+      }
+
+      repairedMessages.push(nextToolParts === toolMessage.parts
+        ? toolMessage
+        : {
+            ...toolMessage,
+            parts: nextToolParts,
+          });
+      if (nextToolParts.length !== toolMessage.parts.length) {
+        changed = true;
+      }
+    }
+
+    index = lookaheadIndex - 1;
+  }
+
+  if (!changed) {
+    return input.request;
+  }
+
+  return {
+    ...input.request,
+    prompt: {
+      ...input.request.prompt,
+      messages: repairedMessages,
+    },
+  };
+}
+
 export function applyConversationReasoningHistoryNormalization(input: {
   executionProfile: AiExecutionProfileRef;
   request: AiTurnRequest;
@@ -247,10 +383,12 @@ export function normalizeProviderFacingTurnRequest(input: {
   return applyConversationHistoryPruningToTurnRequest({
     request: applyConversationReasoningHistoryNormalization({
       executionProfile: input.executionProfile,
-      request: applyConversationFunctionCallPreferenceToTurnRequest({
-        executionProfile: input.executionProfile,
-        request: applySessionHistoryCompactionToTurnRequest({
-          request: input.request,
+      request: applyConversationToolHistoryConsistencyRepairToTurnRequest({
+        request: applyConversationFunctionCallPreferenceToTurnRequest({
+          executionProfile: input.executionProfile,
+          request: applySessionHistoryCompactionToTurnRequest({
+            request: input.request,
+          }),
         }),
       }),
     }),

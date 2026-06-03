@@ -4,6 +4,7 @@ import {
   applyConversationFunctionCallPreferenceToTurnRequest,
   applyConversationHistoryPruningToTurnRequest,
   applyConversationReasoningHistoryNormalization,
+  applyConversationToolHistoryConsistencyRepairToTurnRequest,
   applySessionHistoryCompactionToTurnRequest,
   normalizeProviderFacingTurnRequest,
 } from "../implementation/shared/turn-request-normalizers";
@@ -320,6 +321,62 @@ function createTurnRequestWithSessionCompactionHistory(): AiTurnRequest {
   return request;
 }
 
+function createTurnRequestWithDanglingToolHistory(): AiTurnRequest {
+  const request = createTurnRequestWithTools();
+  request.executionProfile.metadata = {
+    supportsFunctionCall: true,
+    interleaved: {
+      field: "reasoning_content",
+    },
+  };
+  request.prompt.messages = [{
+    message: {
+      id: "message-user-dangling" as AiTurnRequest["prompt"]["messages"][number]["message"]["id"],
+      sessionId: "session-1" as AiTurnRequest["prompt"]["sessionId"],
+      role: "user",
+      createdAt: 1,
+    },
+    parts: [{
+      id: "message-user-dangling-text" as AiTurnRequest["prompt"]["messages"][number]["parts"][number]["id"],
+      type: "text",
+      text: "继续写好",
+    }],
+  }, {
+    message: {
+      id: "message-assistant-dangling" as AiTurnRequest["prompt"]["messages"][number]["message"]["id"],
+      sessionId: "session-1" as AiTurnRequest["prompt"]["sessionId"],
+      role: "assistant",
+      createdAt: 2,
+    },
+    parts: [{
+      id: "message-assistant-dangling-reasoning" as AiTurnRequest["prompt"]["messages"][number]["parts"][number]["id"],
+      type: "reasoning",
+      text: "",
+    }, {
+      id: "message-assistant-dangling-tool-call" as AiTurnRequest["prompt"]["messages"][number]["parts"][number]["id"],
+      type: "tool_call_ref",
+      toolCallId: "workspace_write_file:11" as never,
+      toolName: "workspace_write_file",
+      input: {
+        path: "drafts/bad.md",
+      },
+    }],
+  }, {
+    message: {
+      id: "message-user-latest-dangling" as AiTurnRequest["prompt"]["messages"][number]["message"]["id"],
+      sessionId: "session-1" as AiTurnRequest["prompt"]["sessionId"],
+      role: "user",
+      createdAt: 3,
+    },
+    parts: [{
+      id: "message-user-latest-dangling-text" as AiTurnRequest["prompt"]["messages"][number]["parts"][number]["id"],
+      type: "text",
+      text: "把结论直接给我",
+    }],
+  }];
+  return request;
+}
+
 describe("applyConversationFunctionCallPreferenceToTurnRequest", () => {
   test("drops tools and disables tool choice when function call is unsupported", () => {
     const request = createTurnRequestWithTools();
@@ -601,6 +658,32 @@ describe("normalizeProviderFacingTurnRequest", () => {
 
     expect(normalized.prompt.contextBlocks).toEqual(request.prompt.contextBlocks);
     expect(normalized.prompt.messages).toEqual(request.prompt.messages);
+  });
+
+  test("drops dangling assistant tool history without matching tool result messages", () => {
+    const request = createTurnRequestWithDanglingToolHistory();
+
+    const repaired = applyConversationToolHistoryConsistencyRepairToTurnRequest({
+      request,
+    });
+
+    expect(repaired.prompt.messages.map((message) => message.message.id)).toEqual([
+      "message-user-dangling",
+      "message-user-latest-dangling",
+    ]);
+  });
+
+  test("normalization removes dangling tool history before provider-facing encoding", () => {
+    const request = createTurnRequestWithDanglingToolHistory();
+
+    const normalized = normalizeProviderFacingTurnRequest({
+      executionProfile: request.executionProfile,
+      request,
+    });
+
+    expect(normalized.prompt.messages.some((message) =>
+      message.parts.some((part) => part.type === "tool_call_ref" && part.toolCallId === "workspace_write_file:11")
+    )).toBe(false);
   });
 });
 
