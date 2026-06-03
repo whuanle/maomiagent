@@ -961,6 +961,7 @@ export const enUSMessages: Record<I18nKey, string> = {
   "飞书页.文档.提示.推送说明.原生块": "This document contains native blocks that may be rewritten when pushed: {原因}.",
   "飞书页.文档.反馈.已取消编辑": "Reverted to the last saved draft.",
   "飞书页.文档.反馈.草稿已保存": "Draft saved.",
+  "飞书页.文档.反馈.无需推送": "No new local changes were found, so nothing was pushed.",
   "飞书页.文档.反馈.推送已完成": "Pushed to Feishu.",
   "飞书页.文档.反馈.拉取降级.权限.标题": "Some whiteboards fell back to preview images",
   "飞书页.文档.反馈.拉取降级.权限.描述": "{数量} whiteboards could only be shown as preview images because the current Feishu account cannot read their source.",

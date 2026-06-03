@@ -1488,6 +1488,7 @@ describe("DesktopFeishuDocRuntime", () => {
     let convertCalls = 0;
     let deleteCalls = 0;
     let createCalls = 0;
+    let titlePatchCalls = 0;
     let bundleReads = 0;
 
     try {
@@ -1618,6 +1619,25 @@ describe("DesktopFeishuDocRuntime", () => {
             }), { status: 200, headers: { "content-type": "application/json" } });
           }
 
+          if (target.pathname === `/open-apis/docx/v1/documents/${resolvedDocId}/blocks/${resolvedDocId}`) {
+            titlePatchCalls += 1;
+            expect(init?.method).toBe("PATCH");
+            expect(JSON.parse(String(init?.body))).toEqual({
+              update_text_elements: {
+                elements: [{
+                  text_run: {
+                    content: "Remote Doc",
+                  },
+                }],
+              },
+            });
+
+            return new Response(JSON.stringify({
+              code: 0,
+              data: {},
+            }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+
           throw new Error(`unexpected fetch url: ${String(url)}`);
         },
       );
@@ -1635,6 +1655,7 @@ describe("DesktopFeishuDocRuntime", () => {
       expect(convertCalls).toBe(1);
       expect(deleteCalls).toBe(1);
       expect(createCalls).toBe(1);
+      expect(titlePatchCalls).toBe(1);
       expect(bundleReads).toBe(1);
       expect(pushed.pushStatus).toBe("succeeded");
       expect(pushed.item.markdown).toBe("# Edited Remote Doc\n\n- item");
@@ -1702,6 +1723,7 @@ describe("DesktopFeishuDocRuntime", () => {
     let remoteMarkdown = "# Remote Doc";
     let remoteRevisionId = "1";
     let patchCalls = 0;
+    let titlePatchCalls = 0;
     let bundleReads = 0;
 
     try {
@@ -1745,6 +1767,25 @@ describe("DesktopFeishuDocRuntime", () => {
             }), { status: 200, headers: { "content-type": "application/json" } });
           }
 
+          if (target.pathname === `/open-apis/docx/v1/documents/${resolvedDocId}/blocks/${resolvedDocId}`) {
+            titlePatchCalls += 1;
+            expect(init?.method).toBe("PATCH");
+            expect(JSON.parse(String(init?.body))).toEqual({
+              update_text_elements: {
+                elements: [{
+                  text_run: {
+                    content: "Remote Doc",
+                  },
+                }],
+              },
+            });
+
+            return new Response(JSON.stringify({
+              code: 0,
+              data: {},
+            }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+
           throw new Error(`unexpected fetch url: ${String(url)}`);
         },
       );
@@ -1759,6 +1800,7 @@ describe("DesktopFeishuDocRuntime", () => {
       });
 
       expect(patchCalls).toBe(1);
+      expect(titlePatchCalls).toBe(1);
       expect(bundleReads).toBe(1);
       expect(pushed.pushStatus).toBe("succeeded");
       expect(pushed.item.markdown).toBe("<!--feishu:block:text_1-->\n# Edited Remote Doc\n<!--/feishu:block:text_1-->\n");
@@ -2049,6 +2091,7 @@ describe("DesktopFeishuDocRuntime", () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-push-mermaid-"));
     let bundleReads = 0;
     const docsAiBodies: Array<Record<string, unknown>> = [];
+    let titlePatchCalls = 0;
 
     try {
       const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
@@ -2096,6 +2139,25 @@ describe("DesktopFeishuDocRuntime", () => {
             }), { status: 200, headers: { "content-type": "application/json" } });
           }
 
+          if (target.pathname === `/open-apis/docx/v1/documents/${resolvedDocId}/blocks/${resolvedDocId}`) {
+            titlePatchCalls += 1;
+            expect(init?.method).toBe("PATCH");
+            expect(JSON.parse(String(init?.body))).toEqual({
+              update_text_elements: {
+                elements: [{
+                  text_run: {
+                    content: "Remote Doc",
+                  },
+                }],
+              },
+            });
+
+            return new Response(JSON.stringify({
+              code: 0,
+              data: {},
+            }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+
           throw new Error(`unexpected fetch url: ${String(url)}`);
         },
       );
@@ -2121,6 +2183,7 @@ describe("DesktopFeishuDocRuntime", () => {
       expect(first.pushStatus).toBe("succeeded");
       expect(second.pushStatus).toBe("succeeded");
       expect(bundleReads).toBe(1);
+      expect(titlePatchCalls).toBe(2);
       expect(docsAiBodies).toEqual([
         {
           command: "overwrite",

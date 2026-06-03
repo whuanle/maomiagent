@@ -1808,6 +1808,50 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
     });
   }
 
+  private async preserveWorkspaceRemoteTitle(input: {
+    docId: string;
+    title?: string;
+    revisionId?: string;
+    fallbackItem?: FeishuDocContentView | null;
+    sourceState?: {
+      document: FeishuDocSourceWorkspaceEntry | null;
+      base: FeishuDocSourceWorkspaceEntry | null;
+    } | null;
+    baseIr?: FeishuDocIR | null;
+  }): Promise<void> {
+    const preservedTitle = trimText(input.title);
+    if (!this.accessToken || !preservedTitle) {
+      return;
+    }
+
+    const documentId = trimText(input.sourceState?.document?.snapshot.resolvedDocId)
+      ?? trimText(input.sourceState?.base?.snapshot.resolvedDocId)
+      ?? trimText(input.sourceState?.document?.snapshot.document.document_id)
+      ?? trimText(input.sourceState?.base?.snapshot.document.document_id)
+      ?? trimText(input.fallbackItem?.resolvedDocId)
+      ?? trimText(input.baseIr?.document.id);
+    if (!documentId) {
+      return;
+    }
+
+    const patchApi = new FeishuDocRemotePatchApi({
+      client: new DesktopFeishuOpenApiClient({ fetch: this.fetchImpl }),
+      baseUrl: FEISHU_OPEN_API_BASE_URL,
+      accessToken: this.accessToken,
+    });
+
+    try {
+      await patchApi.updateText({
+        documentId,
+        blockId: documentId,
+        revisionId: input.revisionId?.trim() ?? "",
+        text: preservedTitle,
+      });
+    } catch {
+      // Preserve the successful content push even if title restoration fails.
+    }
+  }
+
   private async tryPushWorkspaceDocAsMarkdown(input: {
     workspaceId: string;
     docId: string;
@@ -1935,6 +1979,15 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
         revisionId = created.revisionId?.trim() || revisionId;
       }
 
+      await this.preserveWorkspaceRemoteTitle({
+        docId: input.docId,
+        title: input.fallbackItem.title,
+        revisionId,
+        fallbackItem: input.fallbackItem,
+        sourceState: input.sourceState,
+        baseIr: input.baseIr,
+      });
+
       const settled = await this.settleWorkspaceDocAfterSuccessfulPush({
         workspaceId: input.workspaceId,
         docId: input.docId,
@@ -2041,6 +2094,15 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
         };
       }
 
+      await this.preserveWorkspaceRemoteTitle({
+        docId: input.docId,
+        title: input.fallbackItem.title,
+        revisionId: overwritten.revisionId,
+        fallbackItem: input.fallbackItem,
+        sourceState: input.sourceState,
+        baseIr: input.baseIr ?? null,
+      });
+
       const placeholderIr = createDocsAiMarkdownOverwritePlaceholderIr({
         documentId: resolvedDocumentId,
         title: input.pushTitle,
@@ -2126,6 +2188,15 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
           message: overwritten.warnings[0] ?? "当前内容回写失败，已保留本地草稿。",
         };
       }
+
+      await this.preserveWorkspaceRemoteTitle({
+        docId: input.docId,
+        title: input.fallbackItem.title,
+        revisionId: overwritten.revisionId,
+        fallbackItem: input.fallbackItem,
+        sourceState: input.sourceState,
+        baseIr: input.baseIr,
+      });
 
       for (const update of input.plan.changedWhiteboards) {
         await this.whiteboardApi.updateWhiteboard({
@@ -3075,6 +3146,19 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
         warnings: assessment.blockedChanges.map((entry) => entry.reason),
       };
     }
+
+    await this.preserveWorkspaceRemoteTitle({
+      docId: input.docId,
+      title: current.title,
+      fallbackItem: decorated,
+      sourceState: sourceState
+        ? {
+            document: sourceState.document,
+            base: sourceState.base,
+          }
+        : null,
+      baseIr: irState?.base ?? null,
+    });
 
     const settled = await this.settleWorkspaceDocAfterSuccessfulPush({
       workspaceId: input.workspaceId,
