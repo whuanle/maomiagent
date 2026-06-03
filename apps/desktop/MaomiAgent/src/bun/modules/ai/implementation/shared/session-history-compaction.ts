@@ -7,10 +7,7 @@ export type SessionHistoryCompactionMode =
   | "raw"
   | "summary_with_recent_tail";
 
-export type SessionHistoryCompactionDiagnostics = {
-  historySelectionMs: number;
-  turnDigestBuildMs: number;
-  sessionSummaryMergeMs: number;
+export type SessionHistoryCompactionStats = {
   recentTailUserTurns: number;
   droppedMessageCount: number;
 };
@@ -19,7 +16,7 @@ export type SessionHistoryCompactionResult = {
   mode: SessionHistoryCompactionMode;
   summaryText?: string;
   messages: PromptMessage[];
-  diagnostics: SessionHistoryCompactionDiagnostics;
+  stats: SessionHistoryCompactionStats;
 };
 
 type TurnDigest = {
@@ -311,7 +308,6 @@ export function buildSessionHistoryCompaction(input: {
   maxRecentUserTurns?: number;
   summaryTriggerChars?: number;
 }): SessionHistoryCompactionResult {
-  const startedAt = performance.now();
   const maxRecentUserTurns = input.maxRecentUserTurns ?? DEFAULT_RECENT_USER_TURNS;
   const summaryTriggerChars = input.summaryTriggerChars ?? DEFAULT_SUMMARY_TRIGGER_CHARS;
   const userTurnCount = input.messages.filter((message) => message.message.role === "user").length;
@@ -320,10 +316,7 @@ export function buildSessionHistoryCompaction(input: {
     return {
       mode: "raw",
       messages: [...input.messages],
-      diagnostics: {
-        historySelectionMs: performance.now() - startedAt,
-        turnDigestBuildMs: 0,
-        sessionSummaryMergeMs: 0,
+      stats: {
         recentTailUserTurns: maxRecentUserTurns,
         droppedMessageCount: 0,
       },
@@ -335,10 +328,7 @@ export function buildSessionHistoryCompaction(input: {
     return {
       mode: "raw",
       messages: [...input.messages],
-      diagnostics: {
-        historySelectionMs: performance.now() - startedAt,
-        turnDigestBuildMs: 0,
-        sessionSummaryMergeMs: 0,
+      stats: {
         recentTailUserTurns: maxRecentUserTurns,
         droppedMessageCount: 0,
       },
@@ -350,10 +340,7 @@ export function buildSessionHistoryCompaction(input: {
     return {
       mode: "raw",
       messages: [...input.messages],
-      diagnostics: {
-        historySelectionMs: performance.now() - startedAt,
-        turnDigestBuildMs: 0,
-        sessionSummaryMergeMs: 0,
+      stats: {
         recentTailUserTurns: maxRecentUserTurns,
         droppedMessageCount: 0,
       },
@@ -362,26 +349,18 @@ export function buildSessionHistoryCompaction(input: {
 
   const tailMessageIds = new Set(tailMessages.map((message) => message.message.id));
   const olderMessages = input.messages.filter((message) => !tailMessageIds.has(message.message.id));
-  const digestStartedAt = performance.now();
   const digests = splitIntoTurns(olderMessages)
     .map((turnMessages) => buildTurnDigest(turnMessages))
     .filter((digest): digest is TurnDigest => Boolean(digest));
-  const turnDigestBuildMs = performance.now() - digestStartedAt;
-
-  const summaryStartedAt = performance.now();
   const summaryText = mergeDigestsIntoSummary({
     digests,
   });
-  const sessionSummaryMergeMs = performance.now() - summaryStartedAt;
 
   if (!summaryText) {
     return {
       mode: "raw",
       messages: [...input.messages],
-      diagnostics: {
-        historySelectionMs: performance.now() - startedAt,
-        turnDigestBuildMs,
-        sessionSummaryMergeMs,
+      stats: {
         recentTailUserTurns: maxRecentUserTurns,
         droppedMessageCount: 0,
       },
@@ -392,10 +371,7 @@ export function buildSessionHistoryCompaction(input: {
     mode: "summary_with_recent_tail",
     summaryText,
     messages: tailMessages,
-    diagnostics: {
-      historySelectionMs: performance.now() - startedAt,
-      turnDigestBuildMs,
-      sessionSummaryMergeMs,
+    stats: {
       recentTailUserTurns: maxRecentUserTurns,
       droppedMessageCount: Math.max(0, input.messages.length - tailMessages.length),
     },

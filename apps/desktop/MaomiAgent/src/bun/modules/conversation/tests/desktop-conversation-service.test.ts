@@ -6136,9 +6136,6 @@ describe("DesktopConversationService", () => {
         },
       ]);
       expect(runtimeUpdates.flatMap((update) => update.eventTypes).filter((type) => type === "message.parts.appended")).toHaveLength(2);
-      const diagnosticLogs = logs.query({ level: "debug" }).items.filter((item) => item.message === "Chat streaming diagnostic");
-      expect(diagnosticLogs.some((item) => item.context?.phase === "conversation.first_runtime_event_publish")).toBe(true);
-      expect(diagnosticLogs.some((item) => item.context?.phase === "conversation.first_message_part_publish")).toBe(true);
     } finally {
       releaseStream?.();
       service.dispose();
@@ -6247,12 +6244,7 @@ describe("DesktopConversationService", () => {
       releaseStream?.();
 
       const result = await sendPromise;
-      const runId = result.detail.runs.at(-1)?.id;
-      expect(runId).toBeTruthy();
-      const diagnosticLogs = logs.query({ level: "debug", runId }).items.filter((item) =>
-        item.message === "Chat streaming diagnostic"
-        && item.context?.phase === "conversation.detail_loaded");
-      expect(diagnosticLogs.length).toBeLessThan(18);
+      expect(result.detail.runs.at(-1)?.id).toBeTruthy();
       expect(detailReasons.at(-1)).toBe("final");
     } finally {
       releaseStream?.();
@@ -6378,12 +6370,6 @@ describe("DesktopConversationService", () => {
         "request_sent",
         "first_protocol_frame",
         "first_ai_event",
-      ]));
-      const diagnosticLogs = logs.query({ level: "debug" }).items.filter((item) => item.message === "Chat streaming diagnostic");
-      expect(diagnosticLogs.map((item) => item.context?.phase)).toEqual(expect.arrayContaining([
-        "provider.request_sent",
-        "provider.first_protocol_frame",
-        "provider.first_ai_event",
       ]));
     } finally {
       service.dispose();

@@ -634,14 +634,8 @@ describe("normalizeProviderFacingTurnRequest", () => {
     const summaryBlock = normalized.prompt.contextBlocks.find((block) => block.id === "session-history-summary");
 
     expect(summaryBlock?.content).toContain("Session Summary");
-    expect(summaryBlock?.metadata).toEqual(expect.objectContaining({
-      providerFacingHistoryMode: "summary_with_recent_tail",
-      droppedMessageCount: 3,
-      recentTailUserTurns: 2,
-      historySelectionMs: expect.any(Number),
-      turnDigestBuildMs: expect.any(Number),
-      sessionSummaryMergeMs: expect.any(Number),
-    }));
+    expect(summaryBlock?.content).toContain("Tail preserved: last 2 user turns.");
+    expect(summaryBlock?.content).toContain("Older raw messages omitted from the provider-facing prompt: 3.");
     expect(normalized.prompt.messages.map((message) => message.message.id)).toEqual([
       "message-user-recent",
       "message-assistant-recent",

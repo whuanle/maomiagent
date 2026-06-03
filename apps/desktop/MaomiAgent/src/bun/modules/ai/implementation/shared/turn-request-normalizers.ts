@@ -12,7 +12,7 @@ const SESSION_HISTORY_SUMMARY_BLOCK_ID = "session-history-summary";
 
 function buildSessionHistorySummaryContent(input: {
   summaryText: string;
-  diagnostics: {
+  stats: {
     recentTailUserTurns: number;
     droppedMessageCount: number;
   };
@@ -20,8 +20,8 @@ function buildSessionHistorySummaryContent(input: {
   return [
     input.summaryText,
     "",
-    `Tail preserved: last ${input.diagnostics.recentTailUserTurns} user turns.`,
-    `Older raw messages omitted from the provider-facing prompt: ${input.diagnostics.droppedMessageCount}.`,
+    `Tail preserved: last ${input.stats.recentTailUserTurns} user turns.`,
+    `Older raw messages omitted from the provider-facing prompt: ${input.stats.droppedMessageCount}.`,
   ].join("\n");
 }
 
@@ -351,16 +351,8 @@ export function applySessionHistoryCompactionToTurnRequest(input: {
     priority: 40,
     content: buildSessionHistorySummaryContent({
       summaryText: compaction.summaryText,
-      diagnostics: compaction.diagnostics,
+      stats: compaction.stats,
     }),
-    metadata: {
-      providerFacingHistoryMode: compaction.mode,
-      historySelectionMs: compaction.diagnostics.historySelectionMs,
-      turnDigestBuildMs: compaction.diagnostics.turnDigestBuildMs,
-      sessionSummaryMergeMs: compaction.diagnostics.sessionSummaryMergeMs,
-      droppedMessageCount: compaction.diagnostics.droppedMessageCount,
-      recentTailUserTurns: compaction.diagnostics.recentTailUserTurns,
-    },
   } satisfies AiTurnRequest["prompt"]["contextBlocks"][number];
 
   return {
