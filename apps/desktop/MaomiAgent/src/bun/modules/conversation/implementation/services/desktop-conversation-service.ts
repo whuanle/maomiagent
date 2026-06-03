@@ -66,6 +66,7 @@ import type {
   DesktopTaskRunMode,
 } from "../../../../../shared/desktop-tasks";
 import { ConversationSessionMutationQueues } from "./conversation-session-mutation-queues";
+import { ChatSessionDetailPublisher } from "./chat-session-detail-publisher";
 import {
   CHAT_STREAMING_DIAGNOSTIC_MESSAGE,
   ChatStreamingDiagnosticsTracker,
@@ -84,6 +85,14 @@ const MANAGED_EXECUTION_STAGE_READY = "ready";
 const MANAGED_EXECUTION_STAGE_RUNNING = "running";
 const AUTO_TITLE_ATTEMPTED_AT_KEY = "autoTitleAttemptedAt";
 const AUTO_TITLE_GENERATED_AT_KEY = "autoTitleGeneratedAt";
+const STRUCTURAL_DETAIL_REFRESH_EVENT_TYPES = new Set<DesktopConversationRuntimeEventsUpdateEvent["events"][number]["type"]>([
+  "run.started",
+  "message.appended",
+  "message.parts.appended",
+  "tool-call.updated",
+  "interaction.updated",
+  "context.checkpoint.created",
+]);
 const MANAGED_AUTORETRY_TRANSPORT_ERROR_CODES = new Set([
   "provider_first_byte_timeout",
   "provider_first_event_timeout",
@@ -157,6 +166,12 @@ type PendingConversationTaskSeed = {
   selectedModelId?: string;
   sessionTitle?: string;
   taskMetadata?: Record<string, unknown>;
+};
+
+type ActiveSessionDetailUpdates = {
+  requestProgress: (options?: { structuralChange?: boolean }) => Promise<void>;
+  flush: (detail: DesktopConversationSessionDetail) => Promise<void>;
+  stop: () => Promise<void>;
 };
 
 function nowIso(): string {
@@ -999,6 +1014,8 @@ export class DesktopConversationService implements DesktopConversationPort {
   private globalMutationQueue: Promise<void> = Promise.resolve();
   private readonly sessionMutationQueues = new ConversationSessionMutationQueues();
   private readonly streamingDiagnostics = new ChatStreamingDiagnosticsTracker();
+  private readonly sessionDetailThrottle = new ChatSessionDetailPublisher();
+  private readonly activeSessionDetailUpdates = new Map<string, ActiveSessionDetailUpdates>();
   private conversationRuntime: DesktopAiConversationRuntimePort | null = null;
   private readonly pendingConversationTaskSeeds = new Map<string, PendingConversationTaskSeed>();
   private readonly sessionMetadataOverlays = new Map<string, Record<string, unknown>>();
@@ -1045,6 +1062,13 @@ export class DesktopConversationService implements DesktopConversationPort {
       await this.runtimeEventsPublisher(update);
     } catch {
       // Ignore bridge publish failures so conversation mutations remain authoritative.
+    }
+
+    if (update.events.some((event) => STRUCTURAL_DETAIL_REFRESH_EVENT_TYPES.has(event.type))) {
+      const activeDetailUpdates = this.activeSessionDetailUpdates.get(update.sessionId);
+      if (activeDetailUpdates) {
+        void activeDetailUpdates.requestProgress({ structuralChange: true });
+      }
     }
   }
 
@@ -1725,6 +1749,10 @@ export class DesktopConversationService implements DesktopConversationPort {
   }
 
   dispose() {
+    for (const activeDetailUpdates of this.activeSessionDetailUpdates.values()) {
+      void activeDetailUpdates.stop();
+    }
+    this.activeSessionDetailUpdates.clear();
     this.conversationRuntime?.dispose();
     this.conversationRuntime = null;
   }
@@ -2086,6 +2114,25 @@ export class DesktopConversationService implements DesktopConversationPort {
 
     let stopped = false;
     let lastSignature: string | undefined;
+    let deferredProgressTimer: ReturnType<typeof setTimeout> | undefined;
+    let deferredProgressDueAt: number | undefined;
+    let progressPublishQueue: Promise<void> = Promise.resolve();
+    let task: Promise<void> = Promise.resolve();
+    const turnStartedAt = Date.now();
+
+    const enqueueProgressPublish = (work: () => Promise<void>) => {
+      const next = progressPublishQueue.then(work, work);
+      progressPublishQueue = next.then(() => undefined, () => undefined);
+      return next;
+    };
+
+    const clearDeferredProgressTimer = () => {
+      if (deferredProgressTimer) {
+        clearTimeout(deferredProgressTimer);
+        deferredProgressTimer = undefined;
+      }
+      deferredProgressDueAt = undefined;
+    };
 
     const publishCurrent = async (reason: DesktopConversationSessionDetailUpdateEvent["reason"]) => {
       const current = this.store.getSession(sessionId) ?? fallback;
@@ -2114,6 +2161,55 @@ export class DesktopConversationService implements DesktopConversationPort {
       await this.publishSessionDetailUpdate({ detail, reason });
     };
 
+    const scheduleDeferredProgressPublish = (delayMs: number, dueAt: number) => {
+      if (stopped) {
+        return;
+      }
+
+      if (deferredProgressDueAt !== undefined && deferredProgressDueAt <= dueAt) {
+        return;
+      }
+
+      clearDeferredProgressTimer();
+      deferredProgressDueAt = dueAt;
+      deferredProgressTimer = setTimeout(() => {
+        deferredProgressTimer = undefined;
+        deferredProgressDueAt = undefined;
+        if (stopped) {
+          return;
+        }
+
+        this.sessionDetailThrottle.consumeScheduledPublish(sessionId);
+        void enqueueProgressPublish(async () => {
+          try {
+            await publishCurrent("progress");
+          } catch {
+            // Ignore auxiliary progress publish failures so the mutation path stays authoritative.
+          }
+        });
+      }, delayMs);
+    };
+
+    const requestProgress = async (options?: { structuralChange?: boolean }) => {
+      if (stopped) {
+        return;
+      }
+
+      const decision = this.sessionDetailThrottle.request({
+        kind: "progress",
+        sessionId,
+        turnStartedAt,
+        structuralChange: options?.structuralChange === true,
+      });
+      if (decision.kind === "publish_now") {
+        clearDeferredProgressTimer();
+        await enqueueProgressPublish(() => publishCurrent("progress"));
+        return;
+      }
+
+      scheduleDeferredProgressPublish(decision.delayMs, decision.dueAt);
+    };
+
     const seed = this.store.getSession(sessionId) ?? fallback;
     if (seed) {
       try {
@@ -2123,10 +2219,36 @@ export class DesktopConversationService implements DesktopConversationPort {
       }
     }
 
-    const task = (async () => {
+    const detailUpdates: ActiveSessionDetailUpdates = {
+      requestProgress,
+      flush: async (detail: DesktopConversationSessionDetail) => {
+        clearDeferredProgressTimer();
+        await progressPublishQueue;
+        const signature = JSON.stringify(detail);
+        if (signature === lastSignature) {
+          return;
+        }
+
+        lastSignature = signature;
+        await this.publishSessionDetailUpdate({ detail, reason: "final" });
+      },
+      stop: async () => {
+        stopped = true;
+        clearDeferredProgressTimer();
+        this.sessionDetailThrottle.clearSession(sessionId);
+        if (this.activeSessionDetailUpdates.get(sessionId) === detailUpdates) {
+          this.activeSessionDetailUpdates.delete(sessionId);
+        }
+        await task;
+        await progressPublishQueue;
+      },
+    };
+    this.activeSessionDetailUpdates.set(sessionId, detailUpdates);
+
+    task = (async () => {
       while (!stopped) {
         try {
-          await publishCurrent("progress");
+          await requestProgress();
         } catch {
           // Ignore auxiliary publish failures so the mutation path stays authoritative.
         }
@@ -2139,21 +2261,7 @@ export class DesktopConversationService implements DesktopConversationPort {
       }
     })();
 
-    return {
-      flush: async (detail: DesktopConversationSessionDetail) => {
-        const signature = JSON.stringify(detail);
-        if (signature === lastSignature) {
-          return;
-        }
-
-        lastSignature = signature;
-        await this.publishSessionDetailUpdate({ detail, reason: "final" });
-      },
-      stop: async () => {
-        stopped = true;
-        await task;
-      },
-    };
+    return detailUpdates;
   }
 
   private async publishSessionDetailUpdate(update: DesktopConversationSessionDetailUpdateEvent) {

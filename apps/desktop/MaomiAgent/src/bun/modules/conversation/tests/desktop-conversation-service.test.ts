@@ -6147,6 +6147,121 @@ describe("DesktopConversationService", () => {
     }
   });
 
+  test("throttles active detail loads during long-running streamed replies", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "maomi-desktop-conversation-detail-throttle-"));
+    const configuration = new DesktopConfigurationService(createRuntimeContext(tempRoot));
+    const database = new DesktopDatabaseService(configuration);
+    const logs = new RuntimeLogsService(
+      new RuntimeLogsStore(database.getConnection("runtimeLogs")),
+    );
+    const logger = logs.createLogger({
+      source: "desktop",
+      module: "desktop.conversation.detail-throttle-test",
+    });
+    let releaseStream: (() => void) | undefined;
+    const streamGate = new Promise<void>((resolve) => {
+      releaseStream = resolve;
+    });
+    const turnPort = new ScriptedStreamingTextTurnPort(streamGate);
+    const detailReasons: string[] = [];
+    const service = new DesktopConversationService(
+      new DesktopConversationStore(database.getConnection("conversation")),
+      logger,
+      {
+        conversationDbPath: database.getConnection("conversation").path,
+        sessionDetailPublisher: async (update) => {
+          detailReasons.push(update.reason);
+        },
+        agents: {
+          async list() {
+            return {
+              items: [],
+              meta: {
+                total: 0,
+                limit: 0,
+                offset: 0,
+                hasMore: false,
+              },
+            };
+          },
+        },
+        materializer: {
+          async materialize(input) {
+            return {
+              executionProfile: {
+                id: "desktop.openai.kimi.moonshot-v1-8k" as never,
+                modelId: input.selectedModelId ?? "moonshot-v1-8k",
+                metadata: {
+                  providerType: "openai",
+                  channelId: input.selectedChannelId ?? "kimi",
+                  modelId: input.selectedModelId ?? "moonshot-v1-8k",
+                  protocolFamily: "openai",
+                  apiStyle: "responses",
+                  ...(input.scope ? { scope: input.scope } : {}),
+                  ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+                },
+              },
+              runtimeSelector: {
+                protocolFamily: "openai",
+                apiStyle: "responses",
+              },
+              resolveServiceConfig: async () => ({
+                apiKey: "sk-test",
+                baseUrl: "https://moonshot.example/v1",
+              }),
+              target: {
+                providerType: "openai",
+                channelId: input.selectedChannelId ?? "kimi",
+                modelId: input.selectedModelId ?? "moonshot-v1-8k",
+                protocolFamily: "openai",
+                apiStyle: "responses",
+              },
+            };
+          },
+        },
+        aiRuntime: {
+          createTurnPort() {
+            return turnPort;
+          },
+        },
+      },
+    );
+
+    try {
+      const created = await service.createSession({
+        workspaceId: "workspace-1",
+        title: "Detail throttle session",
+      });
+
+      const sendPromise = service.sendMessage({
+        sessionId: created.item.sessionId,
+        text: "Keep the reply open for a while",
+        scope: "workspace",
+        selectedChannelId: "kimi",
+        selectedModelId: "moonshot-v1-8k",
+      });
+
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 3_300);
+      });
+      releaseStream?.();
+
+      const result = await sendPromise;
+      const runId = result.detail.runs.at(-1)?.id;
+      expect(runId).toBeTruthy();
+      const diagnosticLogs = logs.query({ level: "debug", runId }).items.filter((item) =>
+        item.message === "Chat streaming diagnostic"
+        && item.context?.phase === "conversation.detail_loaded");
+      expect(diagnosticLogs.length).toBeLessThan(18);
+      expect(detailReasons.at(-1)).toBe("final");
+    } finally {
+      releaseStream?.();
+      service.dispose();
+      database.dispose();
+      cleanupTempRoot(tempRoot);
+    }
+  });
+
   test("publishes provider telemetry stages into the runtime logger", async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "maomi-desktop-conversation-provider-telemetry-"));
     const configuration = new DesktopConfigurationService(createRuntimeContext(tempRoot));
