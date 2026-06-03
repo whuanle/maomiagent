@@ -945,9 +945,7 @@ export function FeishuDocsWorkbench(props: Props) {
       lastSavedDraftRef.current = result.item.markdown
       setSaveError(result.pushStatus === "blocked" ? (result.message ?? "文档未推送") : "")
       setSaveState(result.pushStatus === "blocked" ? "error" : "saved")
-      if (result.pushStatus === "noop") {
-        notifier.info(props.t("飞书页.文档.反馈.无需推送"))
-      } else if (result.pushStatus !== "blocked") {
+      if (result.pushStatus !== "blocked") {
         notifier.success(props.t("飞书页.文档.反馈.推送已完成"))
       }
     } catch (error) {

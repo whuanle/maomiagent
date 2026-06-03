@@ -487,6 +487,239 @@ function createDocumentIRWithBoardToken(input: {
   };
 }
 
+function createDocumentIRWithHeadingAndTable(
+  docId: string,
+  title: string,
+  headingText: string,
+  revisionId = "1",
+): FeishuDocIR {
+  return {
+    schemaVersion: 1,
+    document: {
+      id: docId,
+      title,
+      revisionId,
+      rootBlockId: docId,
+      pulledAt: "2026-06-03T00:00:00.000Z",
+      source: { documentIdType: "document_id" },
+    },
+    blocks: {
+      [docId]: {
+        id: docId,
+        type: "page",
+        parentId: null,
+        children: ["heading_1", "table_1"],
+        editable: false,
+        text: [],
+        resource: null,
+        attrs: {},
+        raw: {},
+      },
+      heading_1: {
+        id: "heading_1",
+        type: "heading1",
+        parentId: docId,
+        children: [],
+        editable: true,
+        text: [{ kind: "text", text: headingText, attrs: {}, raw: {} }],
+        resource: null,
+        attrs: {},
+        raw: {},
+      },
+      table_1: {
+        id: "table_1",
+        type: "table",
+        parentId: docId,
+        children: [],
+        editable: false,
+        text: [],
+        resource: null,
+        attrs: { blockId: "table_1" },
+        raw: {},
+      },
+    },
+    assets: {},
+    integrity: {
+      contentHash: "sha256:content",
+      rawHash: "sha256:raw",
+    },
+  };
+}
+
+function createHeadingAndTableSourceSnapshot(requestedDocId: string, title: string, resolvedDocId = requestedDocId): FeishuDocSourceSnapshot {
+  return {
+    requestedDocId,
+    resolvedDocId,
+    documentIdType: requestedDocId === resolvedDocId ? "document_id" : "wiki_node_token",
+    fetchedAt: "2026-06-03T00:00:00.000Z",
+    sourceKind: "docx_remote_raw",
+    document: {
+      document_id: resolvedDocId,
+      title,
+      revision_id: "7",
+    },
+    blocks: [
+      { block_id: resolvedDocId, block_type: 1, children: ["heading_1", "table_1"] },
+      {
+        block_id: "heading_1",
+        parent_id: resolvedDocId,
+        block_type: 3,
+        heading1: {
+          elements: [{
+            text_run: {
+              content: title,
+            },
+          }],
+        },
+      },
+      {
+        block_id: "table_1",
+        parent_id: resolvedDocId,
+        block_type: 31,
+        table: {
+          property: {
+            column_size: 3,
+          },
+        },
+      },
+    ],
+  };
+}
+
+function createDocumentIRWithHeadingBoardAndTable(input: {
+  resolvedDocId: string;
+  title: string;
+  headingText: string;
+  whiteboardToken: string;
+  revisionId?: string;
+}): FeishuDocIR {
+  return {
+    schemaVersion: 1,
+    document: {
+      id: input.resolvedDocId,
+      title: input.title,
+      revisionId: input.revisionId ?? "1",
+      rootBlockId: input.resolvedDocId,
+      pulledAt: "2026-06-03T00:00:00.000Z",
+      source: { documentIdType: "document_id" },
+    },
+    blocks: {
+      [input.resolvedDocId]: {
+        id: input.resolvedDocId,
+        type: "page",
+        parentId: null,
+        children: ["heading_1", "board_1", "table_1"],
+        editable: false,
+        text: [],
+        resource: null,
+        attrs: {},
+        raw: {},
+      },
+      heading_1: {
+        id: "heading_1",
+        type: "heading1",
+        parentId: input.resolvedDocId,
+        children: [],
+        editable: true,
+        text: [{ kind: "text", text: input.headingText, attrs: {}, raw: {} }],
+        resource: null,
+        attrs: {},
+        raw: {},
+      },
+      board_1: {
+        id: "board_1",
+        type: "board",
+        parentId: input.resolvedDocId,
+        children: [],
+        editable: false,
+        text: [],
+        resource: { token: input.whiteboardToken, kind: "whiteboard" },
+        attrs: { blockId: "board_1", token: input.whiteboardToken },
+        raw: {},
+      },
+      table_1: {
+        id: "table_1",
+        type: "table",
+        parentId: input.resolvedDocId,
+        children: [],
+        editable: false,
+        text: [],
+        resource: null,
+        attrs: { blockId: "table_1" },
+        raw: {},
+      },
+    },
+    assets: {
+      [input.whiteboardToken]: {
+        token: input.whiteboardToken,
+        kind: "whiteboard",
+        mime: "",
+        cacheKey: "",
+        status: "missing",
+        localPath: "",
+        checksum: "",
+      },
+    },
+    integrity: {
+      contentHash: "sha256:content",
+      rawHash: "sha256:raw",
+    },
+  };
+}
+
+function createHeadingBoardAndTableSourceSnapshot(
+  requestedDocId: string,
+  title: string,
+  whiteboardToken: string,
+  resolvedDocId = requestedDocId,
+): FeishuDocSourceSnapshot {
+  return {
+    requestedDocId,
+    resolvedDocId,
+    documentIdType: requestedDocId === resolvedDocId ? "document_id" : "wiki_node_token",
+    fetchedAt: "2026-06-03T00:00:00.000Z",
+    sourceKind: "docx_remote_raw",
+    document: {
+      document_id: resolvedDocId,
+      title,
+      revision_id: "7",
+    },
+    blocks: [
+      { block_id: resolvedDocId, block_type: 1, children: ["heading_1", "board_1", "table_1"] },
+      {
+        block_id: "heading_1",
+        parent_id: resolvedDocId,
+        block_type: 3,
+        heading1: {
+          elements: [{
+            text_run: {
+              content: title,
+            },
+          }],
+        },
+      },
+      {
+        block_id: "board_1",
+        parent_id: resolvedDocId,
+        block_type: 43,
+        board: {
+          token: whiteboardToken,
+        },
+      },
+      {
+        block_id: "table_1",
+        parent_id: resolvedDocId,
+        block_type: 31,
+        table: {
+          property: {
+            column_size: 3,
+          },
+        },
+      },
+    ],
+  };
+}
+
 function createDocumentIRWithTwoReversibleMermaidBoards(): FeishuDocIR {
   const first = createDocumentIRWithReversibleMermaid({
     resolvedDocId: "doc_1",
@@ -1938,6 +2171,107 @@ describe("DesktopFeishuDocRuntime", () => {
     }
   });
 
+  test("pushWorkspaceDoc still rewrites an unchanged plain markdown doc when the user pushes again", async () => {
+    const snapshot = createSnapshot();
+    const nodeToken = "node_1";
+    const resolvedDocId = "doc_1";
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-push-repeat-unchanged-"));
+    let remoteMarkdown = "# Remote Doc";
+    let remoteRevisionId = "1";
+    let convertCalls = 0;
+    let deleteCalls = 0;
+    let createCalls = 0;
+
+    try {
+      const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
+      const runtime = createRuntimeWithContentSource(
+        snapshot,
+        {
+          readDocumentContent: async () => createContentView(resolvedDocId, "Remote Doc", remoteMarkdown),
+          readDocumentBundle: async (_accessToken, docId) => ({
+            content: createContentView(resolvedDocId, "Remote Doc", remoteMarkdown),
+            ir: createDocumentIRWithText(resolvedDocId, "Remote Doc", remoteMarkdown, remoteRevisionId),
+            source: {
+              ...createSourceSnapshot(docId, "Remote Doc", resolvedDocId),
+              document: {
+                document_id: resolvedDocId,
+                title: "Remote Doc",
+                revision_id: remoteRevisionId,
+              },
+            },
+          }),
+        },
+        workspaceQuery,
+        async (url, init) => {
+          const target = new URL(String(url));
+          if (target.pathname === "/open-apis/docx/v1/documents/blocks/convert") {
+            convertCalls += 1;
+            expect(JSON.parse(String(init?.body)).content).toBe("# Remote Doc");
+            return new Response(JSON.stringify({
+              code: 0,
+              data: {
+                first_level_block_ids: ["tmp_h1"],
+                blocks: [{
+                  block_id: "tmp_h1",
+                  block_type: 3,
+                  heading1: {
+                    elements: [{
+                      text_run: {
+                        content: "Remote Doc",
+                      },
+                    }],
+                  },
+                }],
+              },
+            }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+
+          if (target.pathname === `/open-apis/docx/v1/documents/${resolvedDocId}/blocks/${resolvedDocId}/children/batch_delete`) {
+            deleteCalls += 1;
+            remoteRevisionId = String(Number(remoteRevisionId) + 1);
+            return new Response(JSON.stringify({
+              code: 0,
+              data: {
+                document_revision_id: Number(remoteRevisionId),
+              },
+            }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+
+          if (target.pathname === `/open-apis/docx/v1/documents/${resolvedDocId}/blocks/${resolvedDocId}/descendant`) {
+            createCalls += 1;
+            remoteRevisionId = String(Number(remoteRevisionId) + 1);
+            return new Response(JSON.stringify({
+              code: 0,
+              data: {
+                document_revision_id: Number(remoteRevisionId),
+              },
+            }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+
+          throw new Error(`unexpected fetch url: ${String(url)}`);
+        },
+      );
+
+      await runtime.openWorkspaceDoc({ workspaceId: "ws_1", docId: nodeToken });
+
+      const pushed = await runtime.pushWorkspaceDoc({
+        workspaceId: "ws_1",
+        docId: nodeToken,
+        title: "Remote Doc",
+        markdown: "# Remote Doc",
+        force: true,
+      });
+
+      expect(pushed.pushStatus).toBe("succeeded");
+      expect(convertCalls).toBe(1);
+      expect(deleteCalls).toBe(1);
+      expect(createCalls).toBe(1);
+      expect(pushed.item.cache?.hasLocalChanges).toBe(false);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
   test("pushWorkspaceDoc updates a pulled reversible Mermaid whiteboard through its original token", async () => {
     const snapshot = createSnapshot();
     const nodeToken = "wiki_node_1";
@@ -2727,12 +3061,11 @@ describe("DesktopFeishuDocRuntime", () => {
     }
   });
 
-  test("pushWorkspaceDoc keeps pulled native board source docs as noop when content is unchanged", async () => {
+  test("pushWorkspaceDoc re-pushes unchanged native table docs through the lossless native-block path", async () => {
     const snapshot = createSnapshot();
-    const nodeToken = "node_1";
     const resolvedDocId = "doc_1";
-    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-push-native-noop-"));
-    let remoteWrites = 0;
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-push-native-lossless-"));
+    const docsAiBodies: Array<Record<string, unknown>> = [];
 
     try {
       const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
@@ -2742,38 +3075,177 @@ describe("DesktopFeishuDocRuntime", () => {
           readDocumentContent: async () => createContentView(
             resolvedDocId,
             "Remote Doc",
-            '# Remote Doc\n\n<board blockId="board_1" token="wb_1" />\n\n<table blockId="table_1"></table>',
+            '# Remote Doc\n\n<table blockId="table_1"></table>',
           ),
           readDocumentBundle: async () => ({
             content: createContentView(
               resolvedDocId,
               "Remote Doc",
-              '# Remote Doc\n\n<board blockId="board_1" token="wb_1" />\n\n<table blockId="table_1"></table>',
+              '# Remote Doc\n\n<table blockId="table_1"></table>',
             ),
-            ir: createDocumentIRWithText(resolvedDocId, "Remote Doc", "# Remote Doc"),
-            source: createSourceSnapshot(nodeToken, "Remote Doc", resolvedDocId),
+            ir: createDocumentIRWithHeadingAndTable(resolvedDocId, "Remote Doc", "Remote Doc", "7"),
+            source: createHeadingAndTableSourceSnapshot(resolvedDocId, "Remote Doc", resolvedDocId),
+          }),
+        },
+        workspaceQuery,
+        async (url, init) => {
+          const target = new URL(String(url));
+          if (target.pathname === `/open-apis/docs_ai/v1/documents/${resolvedDocId}`) {
+            docsAiBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+            return new Response(JSON.stringify({
+              code: 0,
+              data: {
+                document: {
+                  revision_id: 8,
+                  new_blocks: [],
+                },
+                result: "success",
+                warnings: [],
+              },
+            }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+
+          throw new Error(`unexpected fetch url: ${String(url)}`);
+        },
+      );
+
+      await runtime.openWorkspaceDoc({ workspaceId: "ws_1", docId: resolvedDocId });
+
+      const pushed = await runtime.pushWorkspaceDoc({
+        workspaceId: "ws_1",
+        docId: resolvedDocId,
+        title: "Remote Doc",
+        markdown: '# Remote Doc\n\n<table blockId="table_1"></table>',
+        force: true,
+      });
+
+      expect(pushed.pushStatus).toBe("succeeded");
+      expect(docsAiBodies).toHaveLength(1);
+      expect(String(docsAiBodies[0]?.content)).toContain('<table blockId="table_1"');
+      expect(pushed.item.markdown).toBe('# Remote Doc\n\n<table blockId="table_1"></table>');
+      expect(pushed.item.cache?.hasLocalChanges).toBe(false);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("pushWorkspaceDoc preserves native table payload while updating editable heading text", async () => {
+    const snapshot = createSnapshot();
+    const resolvedDocId = "doc_1";
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-push-native-text-edit-"));
+    const docsAiBodies: Array<Record<string, unknown>> = [];
+
+    try {
+      const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
+      const runtime = createRuntimeWithContentSource(
+        snapshot,
+        {
+          readDocumentContent: async () => createContentView(
+            resolvedDocId,
+            "Remote Doc",
+            '# Remote Doc\n\n<table blockId="table_1"></table>',
+          ),
+          readDocumentBundle: async () => ({
+            content: createContentView(
+              resolvedDocId,
+              "Remote Doc",
+              '# Remote Doc\n\n<table blockId="table_1"></table>',
+            ),
+            ir: createDocumentIRWithHeadingAndTable(resolvedDocId, "Remote Doc", "Remote Doc", "7"),
+            source: createHeadingAndTableSourceSnapshot(resolvedDocId, "Remote Doc", resolvedDocId),
+          }),
+        },
+        workspaceQuery,
+        async (url, init) => {
+          const target = new URL(String(url));
+          if (target.pathname === `/open-apis/docs_ai/v1/documents/${resolvedDocId}`) {
+            docsAiBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+            return new Response(JSON.stringify({
+              code: 0,
+              data: {
+                document: {
+                  revision_id: 8,
+                  new_blocks: [],
+                },
+                result: "success",
+                warnings: [],
+              },
+            }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+
+          throw new Error(`unexpected fetch url: ${String(url)}`);
+        },
+      );
+
+      await runtime.openWorkspaceDoc({ workspaceId: "ws_1", docId: resolvedDocId });
+
+      const pushed = await runtime.pushWorkspaceDoc({
+        workspaceId: "ws_1",
+        docId: resolvedDocId,
+        title: "Edited Remote Doc",
+        markdown: '# Edited Remote Doc\n\n<table blockId="table_1"></table>\n',
+        force: true,
+      });
+
+      expect(pushed.pushStatus).toBe("succeeded");
+      expect(docsAiBodies).toHaveLength(1);
+      expect(String(docsAiBodies[0]?.content)).toContain("Edited Remote Doc");
+      expect(String(docsAiBodies[0]?.content)).toContain('<table blockId="table_1"');
+      expect(pushed.item.cache?.hasLocalChanges).toBe(false);
+      expect(pushed.item.markdown).toContain("Edited Remote Doc");
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("pushWorkspaceDoc blocks native-block repush when the raw source snapshot is missing", async () => {
+    const snapshot = createSnapshot();
+    const resolvedDocId = "doc_1";
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "maomi-feishu-doc-push-native-missing-source-"));
+
+    try {
+      const workspaceQuery = createWorkspaceQuery("ws_1", workspaceRoot);
+      const runtime = createRuntimeWithContentSource(
+        snapshot,
+        {
+          readDocumentContent: async () => createContentView(
+            resolvedDocId,
+            "Remote Doc",
+            '# Remote Doc\n\n<table blockId="table_1"></table>',
+          ),
+          readDocumentBundle: async () => ({
+            content: createContentView(
+              resolvedDocId,
+              "Remote Doc",
+              '# Remote Doc\n\n<table blockId="table_1"></table>',
+            ),
+            ir: createDocumentIRWithHeadingAndTable(resolvedDocId, "Remote Doc", "Remote Doc", "7"),
+            source: createHeadingAndTableSourceSnapshot(resolvedDocId, "Remote Doc", resolvedDocId),
           }),
         },
         workspaceQuery,
         async () => {
-          remoteWrites += 1;
-          throw new Error("remote write should not happen for unchanged native source docs");
+          throw new Error("remote write should not happen when source baseline is missing");
         },
       );
 
-      await runtime.openWorkspaceDoc({ workspaceId: "ws_1", docId: nodeToken });
+      await runtime.openWorkspaceDoc({ workspaceId: "ws_1", docId: resolvedDocId });
+
+      const sourcePath = join(workspaceRoot, ".maomi", "feishu-docs", resolvedDocId, "document.source.json");
+      const baseSourcePath = join(workspaceRoot, ".maomi", "feishu-docs", resolvedDocId, "base.source.json");
+      await rm(sourcePath, { force: true });
+      await rm(baseSourcePath, { force: true });
 
       const pushed = await runtime.pushWorkspaceDoc({
         workspaceId: "ws_1",
-        docId: nodeToken,
+        docId: resolvedDocId,
         title: "Remote Doc",
-        markdown: '# Remote Doc\n\n<board blockId="board_1" token="wb_1" />\n\n<table blockId="table_1"></table>',
+        markdown: '# Remote Doc\n\n<table blockId="table_1"></table>',
         force: true,
       });
 
-      expect(remoteWrites).toBe(0);
-      expect(pushed.pushStatus).toBe("noop");
-      expect(pushed.item.markdown).toBe('# Remote Doc\n\n<board blockId="board_1" token="wb_1" />\n\n<table blockId="table_1"></table>');
+      expect(pushed.pushStatus).toBe("blocked");
+      expect(pushed.message).toContain("重新拉取远端文档基线");
       expect(pushed.item.cache?.hasLocalChanges).toBe(false);
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
@@ -2815,11 +3287,14 @@ describe("DesktopFeishuDocRuntime", () => {
                   wb_1: createBoardSnapshot("wb_1"),
                 },
               },
-              ir: createDocumentIRWithBoardToken({
+              ir: createDocumentIRWithHeadingBoardAndTable({
                 resolvedDocId,
+                title: "Remote Doc",
+                headingText: "Remote Doc",
                 whiteboardToken: "wb_1",
+                revisionId: "7",
               }),
-              source: createSourceSnapshot(nodeToken, "Remote Doc", resolvedDocId),
+              source: createHeadingBoardAndTableSourceSnapshot(nodeToken, "Remote Doc", "wb_1", resolvedDocId),
             };
           },
         },
@@ -2856,19 +3331,21 @@ describe("DesktopFeishuDocRuntime", () => {
         workspaceId: "ws_1",
         docId: nodeToken,
         title: "Remote Doc",
-        markdown: '# Remote Doc\n1\n\n<board blockId="board_1" token="wb_1" />\n\n<table blockId="table_1"></table>',
+        markdown: '# Remote Doc\n\n<board blockId="board_1" token="wb_1" />\n\n<table blockId="table_1"></table>',
         force: true,
       });
 
       expect(pushed.pushStatus).toBe("succeeded");
       expect(bundleReads).toBe(1);
-      expect(docsAiBodies).toEqual([{
+      expect(docsAiBodies).toHaveLength(1);
+      expect(docsAiBodies[0]).toEqual(expect.objectContaining({
         command: "overwrite",
-        content: '# Remote Doc\n1\n\n<whiteboard token="wb_1" />\n\n<table blockId="table_1"></table>',
         format: "markdown",
         revision_id: -1,
-      }]);
-      expect(pushed.item.markdown).toBe('# Remote Doc\n1\n\n<board blockId="board_1" token="wb_1" />\n\n<table blockId="table_1"></table>');
+      }));
+      expect(String(docsAiBodies[0]?.content)).toContain('<whiteboard token="wb_1" />');
+      expect(String(docsAiBodies[0]?.content)).toContain('<table blockId="table_1"');
+      expect(pushed.item.markdown).toBe('# Remote Doc\n\n<board blockId="board_1" token="wb_1" />\n\n<table blockId="table_1"></table>');
       expect(pushed.item.cache?.hasLocalChanges).toBe(false);
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });

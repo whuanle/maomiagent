@@ -56,6 +56,10 @@ import { FeishuDocPatchExecutor } from "./feishu-doc-patch-executor";
 import { planFeishuDocPatch } from "./feishu-doc-patch-planner";
 import { assessFeishuDocPush } from "./feishu-doc-push-assessor";
 import { normalizeFeishuDocPermissionError } from "./feishu-doc-openapi-permissions";
+import {
+  buildLosslessNativeBlockRepushPlan,
+  shouldUseLosslessNativeBlockRepush,
+} from "./feishu-doc-lossless-native-block-repush";
 import { FeishuDocRemoteMarkdownApi } from "./feishu-doc-remote-markdown-api";
 import { FeishuDocRemotePatchApi } from "./feishu-doc-remote-patch-api";
 import { summarizeWhiteboardRecoveryDiagnostics } from "./feishu-doc-permission-diagnostics";
@@ -2134,6 +2138,103 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
     }
   }
 
+  private async tryPushWorkspaceDocAsLosslessNativeBlocks(input: {
+    workspaceId: string;
+    docId: string;
+    pushTitle: string;
+    draftMarkdown: string;
+    fallbackItem: FeishuDocContentView;
+    baseIr: FeishuDocIR | null;
+    sourceState: {
+      document: FeishuDocSourceWorkspaceEntry | null;
+      base: FeishuDocSourceWorkspaceEntry | null;
+    } | null;
+  }): Promise<{ item: FeishuDocContentView; pushStatus: "succeeded" | "blocked"; message?: string } | null> {
+    if (!this.accessToken) {
+      return null;
+    }
+
+    const sourceSnapshot = input.sourceState?.document?.snapshot ?? input.sourceState?.base?.snapshot ?? null;
+    if (!shouldUseLosslessNativeBlockRepush({
+      draftMarkdown: input.draftMarkdown,
+      baseIr: input.baseIr,
+    })) {
+      return null;
+    }
+
+    const plan = buildLosslessNativeBlockRepushPlan({
+      docId: input.docId,
+      title: input.pushTitle,
+      draftMarkdown: input.draftMarkdown,
+      baseIr: input.baseIr,
+      source: sourceSnapshot,
+    });
+    if (plan.status !== "ready") {
+      return {
+        item: input.fallbackItem,
+        pushStatus: "blocked",
+        message: plan.message,
+      };
+    }
+
+    const transformedDraft = normalizeDocsAiOverwriteMarkdown(plan.markdown).markdown;
+    const documentToken = plan.source.documentIdType === "wiki_node_token"
+      ? input.docId
+      : (trimText(plan.source.resolvedDocId) ?? input.docId);
+
+    const api = new FeishuDocRemoteMarkdownApi({
+      client: new DesktopFeishuOpenApiClient({ fetch: this.fetchImpl }),
+      baseUrl: FEISHU_OPEN_API_BASE_URL,
+      accessToken: this.accessToken,
+    });
+
+    try {
+      const overwritten = await api.overwriteDocumentV2({
+        documentToken,
+        content: transformedDraft,
+        format: "markdown",
+        revisionId: -1,
+      });
+      if (overwritten.result?.trim().toLowerCase() === "failed") {
+        return {
+          item: input.fallbackItem,
+          pushStatus: "blocked",
+          message: overwritten.warnings[0] ?? "当前内容回写失败，已保留本地草稿。",
+        };
+      }
+
+      await this.preserveWorkspaceRemoteTitle({
+        docId: input.docId,
+        title: input.fallbackItem.title,
+        revisionId: overwritten.revisionId,
+        fallbackItem: input.fallbackItem,
+        sourceState: input.sourceState,
+        baseIr: input.baseIr,
+      });
+
+      const settled = await this.settleWorkspaceDocAfterSuccessfulPush({
+        workspaceId: input.workspaceId,
+        docId: input.docId,
+        title: input.pushTitle,
+        markdown: input.draftMarkdown,
+        existing: input.fallbackItem,
+        ir: plan.ir,
+        source: plan.source,
+      });
+      return {
+        item: settled,
+        pushStatus: "succeeded",
+      };
+    } catch (error) {
+      const normalizedError = normalizeFeishuDocPermissionError(error);
+      return {
+        item: input.fallbackItem,
+        pushStatus: "blocked",
+        message: normalizedError.message,
+      };
+    }
+  }
+
   private async pushWorkspaceDocWithReversibleMermaid(input: {
     workspaceId: string;
     docId: string;
@@ -2958,19 +3059,15 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       markdown: input.markdown,
       force: input.force,
     });
-    if (item.cache?.hasBaseline && !item.cache.hasLocalChanges) {
-      return {
-        item,
-        pushStatus: "noop",
-        warnings: item.analysis.riskyBlocks,
-      };
-    }
-
     const [originalState, sourceState, irState] = await Promise.all([
       this.readWorkspaceOriginalMarkdownState(input.workspaceId, input.docId),
       this.readWorkspaceSourceState(input.workspaceId, input.docId),
       this.readWorkspaceIRState(input.workspaceId, input.docId),
     ]);
+    const baselineMarkdown = originalState?.base?.markdown
+      ?? originalState?.document?.markdown
+      ?? "";
+
     const compile = irState?.base
       ? buildFeishuDocCurrentIR({
           base: irState.base,
@@ -3056,6 +3153,29 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       };
     }
 
+    const losslessNativeBlockPushed = await this.tryPushWorkspaceDocAsLosslessNativeBlocks({
+      workspaceId: input.workspaceId,
+      docId: input.docId,
+      pushTitle,
+      draftMarkdown: item.markdown,
+      fallbackItem: decorated,
+      baseIr: irState?.base ?? null,
+      sourceState: sourceState
+        ? {
+            document: sourceState.document,
+            base: sourceState.base,
+          }
+        : null,
+    });
+    if (losslessNativeBlockPushed) {
+      return {
+        item: losslessNativeBlockPushed.item,
+        pushStatus: losslessNativeBlockPushed.pushStatus,
+        ...(losslessNativeBlockPushed.message ? { message: losslessNativeBlockPushed.message } : {}),
+        warnings: assessment.blockedChanges.map((entry) => entry.reason),
+      };
+    }
+
     const docsAiMarkdownPushed = await this.tryPushWorkspaceDocAsDocsAiMarkdown({
       workspaceId: input.workspaceId,
       docId: input.docId,
@@ -3098,7 +3218,7 @@ export class DesktopFeishuDocRuntime implements DesktopFeishuDocRuntimePort {
       };
     }
 
-    if ((item.cache?.hasLocalChanges ?? true) && (assessment.plan?.operations.length ?? 0) === 0) {
+    if ((assessment.plan?.operations.length ?? 0) === 0) {
       const markdownPushed = await this.tryPushWorkspaceDocAsMarkdown({
         workspaceId: input.workspaceId,
         docId: input.docId,
