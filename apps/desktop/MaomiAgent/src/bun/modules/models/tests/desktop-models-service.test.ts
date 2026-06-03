@@ -649,6 +649,7 @@ describe("DesktopModelsService", () => {
           apiKey: "test-kimi-key",
           baseUrl: "https://api.moonshot.example/v1",
           organization: "moonshot-team",
+          timeoutMs: 180_000,
         },
       });
     } finally {
@@ -723,6 +724,7 @@ describe("DesktopModelsService", () => {
           apiKey: "compat-key",
           baseUrl: "https://api.compat.example/v1",
           organization: "compat-org",
+          timeoutMs: 180_000,
         },
       });
     } finally {
@@ -850,6 +852,7 @@ describe("DesktopModelsService", () => {
         serviceConfig: {
           apiKey: "azure-test-key",
           baseUrl: "https://maomi-azure-resource.openai.azure.com/openai/v1",
+          timeoutMs: 180_000,
         },
       });
     } finally {
@@ -925,6 +928,7 @@ describe("DesktopModelsService", () => {
         serviceConfig: {
           apiKey: "kimi-test-key",
           baseUrl: "https://api.kimi.com/coding/v1",
+          timeoutMs: 180_000,
         },
       });
     } finally {
@@ -995,6 +999,7 @@ describe("DesktopModelsService", () => {
         serviceConfig: {
           apiKey: "compat-kimi-key",
           baseUrl: "https://api.kimi.com/coding/v1",
+          timeoutMs: 180_000,
         },
       });
     } finally {
@@ -1142,6 +1147,7 @@ describe("DesktopModelsService", () => {
             "x-goog-api-key": "gemini-key",
             "X-Maomi-Proxy": "edge",
           },
+          timeoutMs: 180_000,
         },
       });
     } finally {
@@ -1213,6 +1219,7 @@ describe("DesktopModelsService", () => {
         serviceConfig: {
           apiKey: "",
           baseUrl: "http://localhost:11434/api",
+          timeoutMs: 180_000,
         },
       });
     } finally {

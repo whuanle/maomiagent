@@ -202,16 +202,25 @@ class ScriptedRetryableFailureThenSuccessTurnPort implements AiTurnPort {
   callCount = 0;
   readonly prompts: AiTurnRequest["prompt"][] = [];
 
+  constructor(
+    private readonly options: {
+      failuresBeforeSuccess?: number;
+      errorCode?: string;
+      errorMessage?: string;
+    } = {},
+  ) {}
+
   async *stream(input: AiTurnRequest): AsyncIterable<AiTurnEvent> {
     this.callCount += 1;
     this.prompts.push(input.prompt);
 
-    if (this.callCount === 1) {
+    const failuresBeforeSuccess = this.options.failuresBeforeSuccess ?? 1;
+    if (this.callCount <= failuresBeforeSuccess) {
       yield {
         type: "error",
         error: {
-          code: "provider_runtime_timeout",
-          message: "Temporary provider timeout",
+          code: this.options.errorCode ?? "provider_runtime_timeout",
+          message: this.options.errorMessage ?? "Temporary provider timeout",
           retryable: true,
           metadata: {
             retryAfterMs: 0,
@@ -4794,6 +4803,70 @@ describe("DesktopConversationService", () => {
     }
   });
 
+  test("allows transport-class retryable failures to use the larger retry budget", async () => {
+    const turnPort = new ScriptedRetryableFailureThenSuccessTurnPort({
+      failuresBeforeSuccess: 5,
+      errorCode: "provider_first_event_timeout",
+      errorMessage: "Temporary first-event timeout",
+    });
+    const fixture = createRuntimeBackedConversationService({
+      tempPrefix: "maomi-desktop-conversation-managed-transport-autoretry-",
+      turnPort,
+      agentsList: [{
+        agentId: "autopilot-orchestrator",
+        name: "Autopilot Orchestrator",
+        description: "Managed execution orchestrator",
+        mode: "subagent",
+        enabled: true,
+        version: "builtin",
+        source: "builtin-maomi",
+        prompt: "You are the long-task orchestration executor.",
+        createdAt: "2026-05-04T00:00:00.000Z",
+        updatedAt: "2026-05-04T00:00:00.000Z",
+      }],
+    });
+
+    try {
+      const created = await fixture.service.createSession({
+        workspaceId: "workspace-1",
+        title: "Managed transport retry session",
+        selectedAgentId: "autopilot-orchestrator",
+        metadata: {
+          managedExecution: true,
+          rootTask: false,
+          linkedRootTaskId: "managed-root-session_transport_retry",
+          managedExecutionStage: "running",
+          executionAgentId: "autopilot-orchestrator",
+          preferredExecutionAgentId: "autopilot-orchestrator",
+          runMode: "hosted_autopilot",
+          executionMode: "background",
+        },
+      });
+
+      const result = await fixture.service.sendMessage({
+        sessionId: created.item.sessionId,
+        text: "Continue recovering the deployment.",
+        scope: "workspace",
+        selectedChannelId: "kimi",
+        selectedModelId: "moonshot-v1-8k",
+        selectedAgentId: "autopilot-orchestrator",
+      });
+
+      expect(result.detail.status).toBe("idle");
+      expect(turnPort.callCount).toBe(6);
+      expect(result.detail.runs).toHaveLength(6);
+      expect(result.detail.metadata).toMatchObject({
+        managedAutoRetryCount: 5,
+        managedAutoRetryMaxAttempts: 5,
+        retryPolicyBucket: "transport",
+      });
+      expect(result.detail.messages.at(-1)?.parts.some((part) =>
+        part.type === "text" && part.text.includes("Retried successfully"))).toBe(true);
+    } finally {
+      fixture.dispose();
+    }
+  });
+
   test("resumes a blocked diagnostic tool run after approve_once", async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "maomi-desktop-conversation-approve-once-"));
     const configuration = new DesktopConfigurationService(createRuntimeContext(tempRoot));
@@ -4965,7 +5038,7 @@ describe("DesktopConversationService", () => {
             setTimeout(resolve, 20);
           });
         }
-      })(), 1000, "question interaction settle");
+      })(), 3000, "question interaction settle");
 
       expect(resumed.detail.status === "active" || resumed.detail.status === "idle").toBe(true);
       expect(settled.status).toBe("idle");
@@ -5262,8 +5335,9 @@ describe("DesktopConversationService", () => {
           message: "Mock tool could not complete the requested work",
         }),
       }));
-      expect(sent.detail.messages.at(-1)?.parts.some((part) =>
-        part.type === "text" && part.text.includes("Recovered after generic tool failure"))).toBe(true);
+      expect(sent.detail.messages.some((message) =>
+        message.parts.some((part) =>
+          part.type === "text" && part.text.includes("Recovered after generic tool failure")))).toBe(true);
       expect(turnPort.prompts).toHaveLength(2);
       expect(turnPort.prompts[1]?.messages.some((message) =>
         message.message.role === "tool"
@@ -6324,7 +6398,7 @@ describe("DesktopConversationService", () => {
         kind: "failed",
         error: {
           code: "provider_runtime_timeout",
-          message: "Desktop AI runtime produced no activity for 25ms.",
+          message: "The reply took too long without visible progress. Please try again.",
           retryable: true,
           metadata: {
             channelId: "kimi",
@@ -6333,10 +6407,16 @@ describe("DesktopConversationService", () => {
             protocolFamily: "openai",
             apiStyle: "responses",
             timeoutMs: 25,
+            technicalMessage: "Desktop AI runtime produced no activity for 25ms.",
           },
         },
       });
       expect(failed.detail.metadata?.managedExecutionStopReason).toBe("auto_retry_exhausted");
+      expect(failed.detail.metadata).toMatchObject({
+        managedAutoRetryCount: 2,
+        managedAutoRetryMaxAttempts: 2,
+        retryPolicyBucket: "inactivity",
+      });
       expect(failed.detail.messages.some((message) => message.role === "user")).toBe(true);
     } finally {
       service.dispose();

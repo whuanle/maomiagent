@@ -7,7 +7,9 @@ import {
   normalizeProviderFacingTurnRequest,
 } from "../implementation/shared/turn-request-normalizers";
 import {
+  applyConversationTimeoutToServiceConfig,
   applyConversationThinkingPreferenceToServiceConfig,
+  buildConversationProviderRetryPolicy,
   mergeConversationExecutionProfile,
   resolveConversationTurnNoActivityTimeoutMs,
   shouldRestrictDesktopConversationBuiltinToolsForLatestUserTurn,
@@ -516,37 +518,88 @@ describe("mergeConversationExecutionProfile", () => {
 describe("resolveConversationTurnNoActivityTimeoutMs", () => {
   test("keeps the base timeout for small prompts", () => {
     expect(resolveConversationTurnNoActivityTimeoutMs({
-      baseTimeoutMs: 90_000,
+      baseTimeoutMs: 180_000,
       estimatedPromptTokens: 1_000,
-    })).toBe(90_000);
+    })).toBe(180_000);
   });
 
   test("raises the timeout for medium prompts", () => {
     expect(resolveConversationTurnNoActivityTimeoutMs({
-      baseTimeoutMs: 90_000,
+      baseTimeoutMs: 180_000,
       estimatedPromptTokens: 7_000,
-    })).toBe(120_000);
+    })).toBe(180_000);
   });
 
   test("raises the timeout for large prompts", () => {
     expect(resolveConversationTurnNoActivityTimeoutMs({
-      baseTimeoutMs: 90_000,
+      baseTimeoutMs: 180_000,
       estimatedPromptTokens: 15_000,
-    })).toBe(150_000);
+    })).toBe(240_000);
   });
 
   test("raises the timeout for extra large prompts", () => {
     expect(resolveConversationTurnNoActivityTimeoutMs({
-      baseTimeoutMs: 90_000,
+      baseTimeoutMs: 180_000,
       estimatedPromptTokens: 25_000,
-    })).toBe(180_000);
+    })).toBe(300_000);
   });
 
-  test("preserves a larger custom base timeout", () => {
+  test("preserves a custom base timeout when it already exceeds the selected bucket", () => {
     expect(resolveConversationTurnNoActivityTimeoutMs({
-      baseTimeoutMs: 200_000,
+      baseTimeoutMs: 360_000,
       estimatedPromptTokens: 25_000,
-    })).toBe(200_000);
+    })).toBe(360_000);
+  });
+});
+
+describe("buildConversationProviderRetryPolicy", () => {
+  test("returns the transport retry policy used for provider adapters", () => {
+    expect(buildConversationProviderRetryPolicy()).toEqual({
+      maxAttempts: 5,
+      baseDelayMs: 1_000,
+      maxDelayMs: 15_000,
+      jitterRatio: 0.2,
+    });
+  });
+});
+
+describe("applyConversationTimeoutToServiceConfig", () => {
+  test("injects the selected turn timeout when the provider config has none", () => {
+    expect(applyConversationTimeoutToServiceConfig({
+      serviceConfig: {
+        apiKey: "test-key",
+      },
+      timeoutMs: 240_000,
+    })).toEqual({
+      apiKey: "test-key",
+      timeoutMs: 240_000,
+    });
+  });
+
+  test("keeps the larger provider timeout override", () => {
+    expect(applyConversationTimeoutToServiceConfig({
+      serviceConfig: {
+        apiKey: "test-key",
+        timeoutMs: 300_000,
+      },
+      timeoutMs: 240_000,
+    })).toEqual({
+      apiKey: "test-key",
+      timeoutMs: 300_000,
+    });
+  });
+
+  test("raises a smaller provider timeout to match the turn timeout", () => {
+    expect(applyConversationTimeoutToServiceConfig({
+      serviceConfig: {
+        apiKey: "test-key",
+        timeoutMs: 45_000,
+      },
+      timeoutMs: 240_000,
+    })).toEqual({
+      apiKey: "test-key",
+      timeoutMs: 240_000,
+    });
   });
 });
 

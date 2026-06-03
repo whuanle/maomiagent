@@ -97,6 +97,8 @@ type RawProviderType = {
   models?: Record<string, RawProviderModel>;
 };
 
+const DEFAULT_DESKTOP_MODEL_RUNTIME_TIMEOUT_MS = 180_000;
+
 type RawProviderConfigField = {
   key?: string;
   name?: string;
@@ -2337,6 +2339,7 @@ export class DesktopModelsService implements DesktopModelsPort {
         ...(headers ? { headers } : {}),
         ...(organization ? { organization } : {}),
         ...(project ? { project } : {}),
+        timeoutMs: DEFAULT_DESKTOP_MODEL_RUNTIME_TIMEOUT_MS,
       },
     };
   }

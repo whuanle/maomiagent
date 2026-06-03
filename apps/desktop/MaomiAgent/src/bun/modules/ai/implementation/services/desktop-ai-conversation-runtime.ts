@@ -82,6 +82,7 @@ import {
   type PermissionInteractionRequest,
   type QuestionInteractionRequest,
   type RegisteredToolHandler,
+  type RetryBackoffPolicy,
   type RunBoundary,
   type RunRecord,
   type SessionRecord,
@@ -178,12 +179,18 @@ const CONTEXT_TOKEN_ESTIMATOR = new RoughTokenEstimator();
 const DEFAULT_CONTEXT_COMPRESSION_THRESHOLD_PERCENT = 80;
 const CONTEXT_COMPRESSION_THRESHOLD_PERCENT_MIN = 50;
 const CONTEXT_COMPRESSION_THRESHOLD_PERCENT_MAX = 90;
-const MEDIUM_PROMPT_TURN_NO_ACTIVITY_TIMEOUT_MS = 120_000;
-const LARGE_PROMPT_TURN_NO_ACTIVITY_TIMEOUT_MS = 150_000;
-const EXTRA_LARGE_PROMPT_TURN_NO_ACTIVITY_TIMEOUT_MS = 180_000;
+const MEDIUM_PROMPT_TURN_NO_ACTIVITY_TIMEOUT_MS = 180_000;
+const LARGE_PROMPT_TURN_NO_ACTIVITY_TIMEOUT_MS = 240_000;
+const EXTRA_LARGE_PROMPT_TURN_NO_ACTIVITY_TIMEOUT_MS = 300_000;
 const MEDIUM_PROMPT_TOKEN_THRESHOLD = 6_000;
 const LARGE_PROMPT_TOKEN_THRESHOLD = 12_000;
 const EXTRA_LARGE_PROMPT_TOKEN_THRESHOLD = 20_000;
+const CONVERSATION_PROVIDER_RETRY_POLICY = {
+  maxAttempts: 5,
+  baseDelayMs: 1_000,
+  maxDelayMs: 15_000,
+  jitterRatio: 0.2,
+} as const satisfies RetryBackoffPolicy;
 
 function normalizeOptionalPositiveFiniteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
@@ -304,6 +311,25 @@ export function resolveConversationTurnNoActivityTimeoutMs(input: {
   }
 
   return baseTimeoutMs;
+}
+
+export function buildConversationProviderRetryPolicy(): RetryBackoffPolicy {
+  return {
+    ...CONVERSATION_PROVIDER_RETRY_POLICY,
+  };
+}
+
+export function applyConversationTimeoutToServiceConfig(input: {
+  serviceConfig: DesktopAiProviderServiceConfig;
+  timeoutMs: number;
+}): DesktopAiProviderServiceConfig {
+  return {
+    ...input.serviceConfig,
+    timeoutMs: Math.max(
+      normalizeOptionalPositiveFiniteNumber(input.serviceConfig.timeoutMs) ?? 0,
+      input.timeoutMs,
+    ),
+  };
 }
 
 export function mergeConversationExecutionProfile(input: {
@@ -469,7 +495,7 @@ const PERMISSION_RULES_KEY = "permissionRules";
 const APPROVAL_MODE_KEY = "approvalMode";
 const CONVERSATION_SETTINGS_KEY = "conversationSettings";
 const DEFAULT_AGENT_ID = "desktop.primary";
-const DEFAULT_TURN_NO_ACTIVITY_TIMEOUT_MS = 90_000;
+const DEFAULT_TURN_NO_ACTIVITY_TIMEOUT_MS = 180_000;
 const DESKTOP_CONVERSATION_BUILTIN_TOOL_SOURCE_ID = "builtin.desktop.conversation";
 const DESKTOP_CONVERSATION_ASSET_PATH_RE = /^\/workspace\/([^/]+)\/conversations\/assets\/([^/]+)\/([^/]+)$/;
 const WORKSPACE_REFERENCE_RE = /(workspace|repo|repository|codebase|project|git|branch|commit|diff|local|locally|current workspace|current project|current repo|package\.json|go\.mod|cargo\.toml|requirements\.txt|工作区|仓库|代码库|项目|工程|本地|分支|提交|差异)/iu;
@@ -2925,11 +2951,15 @@ class DesktopConversationTurnPort implements AiTurnPort {
         {
           resolveServiceConfig: async (executionProfile) => {
             const base = await materialized.resolveServiceConfig(executionProfile);
-            return applyConversationThinkingPreferenceToServiceConfig({
-              executionProfile,
-              serviceConfig: base,
+            return applyConversationTimeoutToServiceConfig({
+              serviceConfig: applyConversationThinkingPreferenceToServiceConfig({
+                executionProfile,
+                serviceConfig: base,
+              }),
+              timeoutMs: turnNoActivityTimeoutMs,
             });
           },
+          retryPolicy: buildConversationProviderRetryPolicy(),
           telemetrySink: this.providerTelemetryPublisher,
         },
       );
@@ -2962,7 +2992,7 @@ class DesktopConversationTurnPort implements AiTurnPort {
             turnNoActivityTimeoutMs,
             () => ({
               code: "provider_runtime_timeout",
-              message: `Desktop AI runtime produced no activity for ${turnNoActivityTimeoutMs}ms.`,
+              message: "The reply took too long without visible progress. Please try again.",
               retryable: true,
               metadata: {
                 channelId: materialized.target.channelId,
@@ -2971,6 +3001,7 @@ class DesktopConversationTurnPort implements AiTurnPort {
                 protocolFamily: materialized.target.protocolFamily,
                 apiStyle: materialized.target.apiStyle,
                 timeoutMs: turnNoActivityTimeoutMs,
+                technicalMessage: `Desktop AI runtime produced no activity for ${turnNoActivityTimeoutMs}ms.`,
               },
             }),
           );

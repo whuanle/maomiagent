@@ -79,12 +79,24 @@ const MANAGED_EXECUTION_STAGE_READY = "ready";
 const MANAGED_EXECUTION_STAGE_RUNNING = "running";
 const AUTO_TITLE_ATTEMPTED_AT_KEY = "autoTitleAttemptedAt";
 const AUTO_TITLE_GENERATED_AT_KEY = "autoTitleGeneratedAt";
-const MANAGED_AUTORETRY_POLICY = {
-  maxAttempts: 2,
-  baseDelayMs: 50,
-  maxDelayMs: 200,
+const MANAGED_AUTORETRY_TRANSPORT_ERROR_CODES = new Set([
+  "provider_first_byte_timeout",
+  "provider_first_event_timeout",
+  "provider_stream_idle_timeout",
+]);
+const MANAGED_AUTORETRY_TRANSPORT_POLICY = {
+  maxAttempts: 5,
+  baseDelayMs: 100,
+  maxDelayMs: 1_000,
   jitterRatio: 0,
 } as const;
+const MANAGED_AUTORETRY_INACTIVITY_POLICY = {
+  maxAttempts: 2,
+  baseDelayMs: 100,
+  maxDelayMs: 1_000,
+  jitterRatio: 0,
+} as const;
+type ManagedAutoRetryPolicyBucket = "transport" | "inactivity";
 
 type DesktopConversationSessionDetailPublisher = (
   update: DesktopConversationSessionDetailUpdateEvent,
@@ -524,6 +536,31 @@ function readRetryAfterMs(metadata: Record<string, unknown> | undefined) {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? Math.round(value)
     : undefined;
+}
+
+function resolveManagedAutoRetryPolicy(error: {
+  code: string;
+  retryable?: boolean;
+}) {
+  if (error.retryable !== true) {
+    return undefined;
+  }
+
+  if (error.code === "provider_runtime_timeout") {
+    return {
+      bucket: "inactivity" as const satisfies ManagedAutoRetryPolicyBucket,
+      policy: MANAGED_AUTORETRY_INACTIVITY_POLICY,
+    };
+  }
+
+  if (MANAGED_AUTORETRY_TRANSPORT_ERROR_CODES.has(error.code) || error.code.startsWith("provider_")) {
+    return {
+      bucket: "transport" as const satisfies ManagedAutoRetryPolicyBucket,
+      policy: MANAGED_AUTORETRY_TRANSPORT_POLICY,
+    };
+  }
+
+  return undefined;
 }
 
 function readCompletedPlanExitComposerMode(
@@ -1444,8 +1481,12 @@ export class DesktopConversationService implements DesktopConversationPort {
     let attempt = 0;
 
     while (true) {
+      const retryPolicySelection = resolveManagedAutoRetryPolicy(currentOutput.boundary.kind === "failed"
+        ? currentOutput.boundary.error
+        : { code: "", retryable: false });
+
       if (currentOutput.boundary.kind !== "failed"
-        || !currentOutput.boundary.error.retryable
+        || !retryPolicySelection
         || !isManagedConversationRun(input.seed)) {
         return {
           item: currentItem,
@@ -1453,10 +1494,12 @@ export class DesktopConversationService implements DesktopConversationPort {
         };
       }
 
-      if (attempt >= MANAGED_AUTORETRY_POLICY.maxAttempts) {
+      if (attempt >= retryPolicySelection.policy.maxAttempts) {
         this.updateSessionMetadata(currentItem.sessionId, {
           managedExecutionStopReason: "auto_retry_exhausted",
           managedAutoRetryCount: attempt,
+          managedAutoRetryMaxAttempts: retryPolicySelection.policy.maxAttempts,
+          retryPolicyBucket: retryPolicySelection.bucket,
         });
         return {
           item: currentItem,
@@ -1466,18 +1509,20 @@ export class DesktopConversationService implements DesktopConversationPort {
 
       attempt += 1;
       const retryDelayMs = calculateRetryDelayMs({
-        ...MANAGED_AUTORETRY_POLICY,
+        ...retryPolicySelection.policy,
         attempt,
         retryAfterMs: readRetryAfterMs(currentOutput.boundary.error.metadata as Record<string, unknown> | undefined),
       });
       const retryMetadataPatch = {
         managedAutoRetryCount: attempt,
+        managedAutoRetryMaxAttempts: retryPolicySelection.policy.maxAttempts,
         managedExecutionStopReason: undefined,
         blockedReason: undefined,
         lastAutoRetryAt: nowIso(),
         lastAutoRetryDelayMs: retryDelayMs,
         lastRetryableErrorCode: currentOutput.boundary.error.code,
         lastRetryableErrorMessage: currentOutput.boundary.error.message,
+        retryPolicyBucket: retryPolicySelection.bucket,
       } satisfies Record<string, unknown>;
       const selection = readSelectionMetadata(currentItem.metadata);
       const managedRootTaskId = input.seed.rootTaskId
@@ -1516,7 +1561,7 @@ export class DesktopConversationService implements DesktopConversationPort {
           selectedModelId: retrySeed.selectedModelId,
           status: "running",
           progress: 5,
-          message: `Retrying after retryable provider failure (${attempt}/${MANAGED_AUTORETRY_POLICY.maxAttempts}).`,
+          message: `Retrying after retryable provider failure (${attempt}/${retryPolicySelection.policy.maxAttempts}).`,
           metadata: {
             source: "desktop.conversation",
             code: currentOutput.boundary.error.code,
