@@ -12,6 +12,10 @@ import {
   collectAttachmentParts,
   readPromptImageAttachment,
 } from "../prompt-attachments";
+import {
+  compactToolCallHistory,
+  compactToolResultHistory,
+} from "../shared/tool-history-compaction";
 import { normalizeOpenAIStrictJsonSchema } from "./openai-strict-json-schema";
 
 export type OpenAIChatCompletionsUserContentPart =
@@ -204,7 +208,10 @@ function buildAssistantMessage(
     type: "function" as const,
     function: {
       name: toolCall.toolName,
-      arguments: serializeToolPayload(toolCall.input),
+      arguments: serializeToolPayload(compactToolCallHistory({
+        toolName: toolCall.toolName,
+        input: toolCall.input,
+      })),
     },
   }));
 
@@ -255,7 +262,10 @@ function buildMessageInputItem(
   return collectToolResultRefs(message.parts).map((toolResult) => ({
     role: "tool" as const,
     tool_call_id: toolResult.toolCallId,
-    content: text,
+    content: compactToolResultHistory({
+      toolName: toolResult.toolName,
+      text,
+    }),
   }));
 }
 

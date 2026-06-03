@@ -282,6 +282,72 @@ describe("OpenAIChatCompletionsPromptCodec", () => {
     }]);
   });
 
+  test("summarizes heavy tool call arguments for chat completions", () => {
+    const codec = new OpenAIChatCompletionsPromptCodec();
+    const request = createBaseTurnRequest();
+
+    request.prompt.messages = [{
+      message: {
+        id: "message_assistant_large_tool_call" as PromptMessageId,
+        sessionId: "session_1" as PromptEnvelope["sessionId"],
+        role: "assistant",
+        createdAt: 2,
+      },
+      parts: [{
+        id: "message_assistant_large_tool_call_part_1" as PromptMessagePartId,
+        type: "tool_call_ref",
+        toolCallId: asToolCallId("tool_call_large_write"),
+        toolName: "workspace_write_file",
+        input: {
+          path: "docs/demo.md",
+          content: "# Title\n" + "A".repeat(6000),
+        },
+      }],
+    }];
+
+    const payload = codec.encode(request);
+    const toolCall = payload.messages.find((message) =>
+      message.role === "assistant"
+      && Array.isArray(message.tool_calls)
+      && message.tool_calls.length > 0)?.tool_calls?.[0];
+
+    expect(toolCall?.function.arguments).toContain("contentSummary");
+    expect(toolCall?.function.arguments).not.toContain("A".repeat(300));
+  });
+
+  test("summarizes heavy tool results for chat completions", () => {
+    const codec = new OpenAIChatCompletionsPromptCodec();
+    const request = createBaseTurnRequest();
+
+    request.prompt.messages = [{
+      message: {
+        id: "message_tool_large_terminal_output" as PromptMessageId,
+        sessionId: "session_1" as PromptEnvelope["sessionId"],
+        role: "tool",
+        createdAt: 3,
+      },
+      parts: [{
+        id: "message_tool_large_terminal_output_part_1" as PromptMessagePartId,
+        type: "tool_result_ref",
+        toolCallId: asToolCallId("tool_call_terminal_output"),
+        toolName: "terminal_read_output",
+      }, {
+        id: "message_tool_large_terminal_output_part_2" as PromptMessagePartId,
+        type: "text",
+        text: JSON.stringify({
+          exitCode: 1,
+          stdout: "",
+          stderr: "IndentationError\n" + "x".repeat(6000),
+        }),
+      }],
+    }];
+
+    const payload = codec.encode(request);
+    const toolMessage = payload.messages.find((message) => message.role === "tool");
+    expect(String(toolMessage?.content)).toContain("IndentationError");
+    expect(String(toolMessage?.content)).not.toContain("x".repeat(300));
+  });
+
   test("uses explicit system role and structured output config when schema output is requested", () => {
     const codec = new OpenAIChatCompletionsPromptCodec({
       systemMessageRole: "system",

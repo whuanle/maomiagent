@@ -308,6 +308,73 @@ describe("OpenAIResponsesPromptCodec", () => {
     }]);
   });
 
+  test("summarizes heavy tool call arguments for responses", () => {
+    const codec = new OpenAIResponsesPromptCodec();
+    const request = createBaseTurnRequest();
+
+    request.prompt.messages = [{
+      message: {
+        id: "message_assistant_large_tool_call" as PromptMessageId,
+        sessionId: "session_1" as PromptEnvelope["sessionId"],
+        role: "assistant",
+        createdAt: 2,
+      },
+      parts: [{
+        id: "message_assistant_large_tool_call_part_1" as PromptMessagePartId,
+        type: "tool_call_ref",
+        toolCallId: asToolCallId("tool_call_large_write"),
+        toolName: "workspace_write_file",
+        input: {
+          path: "docs/demo.md",
+          content: "# Title\n" + "A".repeat(6000),
+        },
+      }],
+    }];
+
+    const payload = codec.encode(request);
+    const toolCall = payload.input.find((item) =>
+      item.type === "function_call"
+      && item.call_id === "tool_call_large_write");
+
+    expect(JSON.stringify(toolCall)).toContain("contentSummary");
+    expect(JSON.stringify(toolCall)).not.toContain("A".repeat(300));
+  });
+
+  test("summarizes heavy terminal output for responses", () => {
+    const codec = new OpenAIResponsesPromptCodec();
+    const request = createBaseTurnRequest();
+
+    request.prompt.messages = [{
+      message: {
+        id: "message_tool_large_terminal_output" as PromptMessageId,
+        sessionId: "session_1" as PromptEnvelope["sessionId"],
+        role: "tool",
+        createdAt: 3,
+      },
+      parts: [{
+        id: "message_tool_large_terminal_output_part_1" as PromptMessagePartId,
+        type: "tool_result_ref",
+        toolCallId: asToolCallId("tool_call_terminal_output"),
+        toolName: "terminal_read_output",
+      }, {
+        id: "message_tool_large_terminal_output_part_2" as PromptMessagePartId,
+        type: "text",
+        text: JSON.stringify({
+          exitCode: 1,
+          stdout: "",
+          stderr: "IndentationError\n" + "x".repeat(6000),
+        }),
+      }],
+    }];
+
+    const payload = codec.encode(request);
+    const toolResult = payload.input.find((item) =>
+      item.type === "function_call_output"
+      && item.call_id === "tool_call_terminal_output");
+    expect(JSON.stringify(toolResult)).toContain("IndentationError");
+    expect(JSON.stringify(toolResult)).not.toContain("x".repeat(300));
+  });
+
   test("encodes image attachments as input_image user content", () => {
     const codec = new OpenAIResponsesPromptCodec();
     const request = createBaseTurnRequest();
