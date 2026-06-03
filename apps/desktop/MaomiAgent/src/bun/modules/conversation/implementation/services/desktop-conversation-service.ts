@@ -65,6 +65,7 @@ import type {
   DesktopTaskExecutionMode,
   DesktopTaskRunMode,
 } from "../../../../../shared/desktop-tasks";
+import { ConversationSessionMutationQueues } from "./conversation-session-mutation-queues";
 
 const SESSION_ID_RE = /^[a-z0-9][a-z0-9._-]{1,95}$/;
 const SESSION_TITLE_MAX_LENGTH = 160;
@@ -991,7 +992,8 @@ function matchesQuery(item: DesktopConversationSessionItem, queryText: string): 
 }
 
 export class DesktopConversationService implements DesktopConversationPort {
-  private mutationQueue: Promise<void> = Promise.resolve();
+  private globalMutationQueue: Promise<void> = Promise.resolve();
+  private readonly sessionMutationQueues = new ConversationSessionMutationQueues();
   private conversationRuntime: DesktopAiConversationRuntimePort | null = null;
   private readonly pendingConversationTaskSeeds = new Map<string, PendingConversationTaskSeed>();
   private readonly sessionMetadataOverlays = new Map<string, Record<string, unknown>>();
@@ -1104,7 +1106,7 @@ export class DesktopConversationService implements DesktopConversationPort {
   async createSession(
     input: DesktopConversationCreateSessionInput,
   ): Promise<DesktopConversationCreateSessionResponse> {
-    return this.runMutation(async () => {
+    return this.runGlobalMutation(async () => {
       const workspaceId = normalizeRequiredWorkspaceId(input.workspaceId);
       const sessionId = input.sessionId ? normalizeSessionId(input.sessionId) : buildSessionId();
       const existing = this.store.getSession(sessionId);
@@ -1156,7 +1158,7 @@ export class DesktopConversationService implements DesktopConversationPort {
   async renameSession(
     input: DesktopConversationRenameSessionInput,
   ): Promise<DesktopConversationRenameSessionResponse> {
-    return this.runMutation(async () => {
+    return this.runGlobalMutation(async () => {
       const sessionId = normalizeSessionId(input.sessionId);
       const current = this.store.getSession(sessionId);
       if (!current) {
@@ -1183,7 +1185,7 @@ export class DesktopConversationService implements DesktopConversationPort {
   async hideSession(sessionId: string): Promise<DesktopConversationHideSessionResponse> {
     const normalizedSessionId = normalizeSessionId(sessionId);
 
-    return this.runMutation(async () => {
+    return this.runGlobalMutation(async () => {
       const current = this.store.getSession(normalizedSessionId);
       if (!current) {
         return {
@@ -1228,7 +1230,7 @@ export class DesktopConversationService implements DesktopConversationPort {
   async applyWorkspaceSettings(
     input: DesktopConversationApplyWorkspaceSettingsInput,
   ): Promise<DesktopConversationApplyWorkspaceSettingsResponse> {
-    return this.runMutation(async () => {
+    return this.runGlobalMutation(async () => {
       const workspaceId = normalizeRequiredWorkspaceId(input.workspaceId);
       const settings = normalizeConversationSessionSettings(input.settings);
       const result = this.applyWorkspaceConversationSessionSettings(workspaceId, settings);
@@ -1249,7 +1251,7 @@ export class DesktopConversationService implements DesktopConversationPort {
   async saveWorkspaceSettings(
     input: DesktopConversationSaveWorkspaceSettingsInput,
   ): Promise<DesktopConversationSaveWorkspaceSettingsResponse> {
-    return this.runMutation(async () => {
+    return this.runGlobalMutation(async () => {
       const workspaceId = normalizeRequiredWorkspaceId(input.workspaceId);
       const response = await this.requireWorkspaceSettingsService().save({
         workspaceId,
@@ -1289,8 +1291,9 @@ export class DesktopConversationService implements DesktopConversationPort {
   async sendMessage(
     input: DesktopConversationSendMessageInput,
   ): Promise<DesktopConversationSendMessageResponse> {
-    return this.runMutation(async () => {
-      const sessionId = normalizeSessionId(input.sessionId);
+    const sessionId = normalizeSessionId(input.sessionId);
+
+    return this.runSessionMutation(sessionId, async () => {
       const current = this.store.getSession(sessionId);
       if (!current) {
         throw new Error(`desktop conversation session not found: ${sessionId}`);
@@ -1604,9 +1607,10 @@ export class DesktopConversationService implements DesktopConversationPort {
   async answerInteraction(
     input: DesktopConversationAnswerInteractionInput,
   ): Promise<DesktopConversationInteractionReplyResponse> {
-    return this.runMutation(async () => {
-      const interactionId = normalizeSessionId(input.interactionId);
-      const sessionId = normalizeOptionalSessionId(input.sessionId);
+    const interactionId = normalizeSessionId(input.interactionId);
+    const sessionId = normalizeOptionalSessionId(input.sessionId);
+
+    const run = async () => {
       const detailUpdates = await this.startSessionDetailUpdates(
         sessionId ?? "",
         sessionId ? this.store.getSession(sessionId) ?? undefined : undefined,
@@ -1649,15 +1653,20 @@ export class DesktopConversationService implements DesktopConversationPort {
       } finally {
         await detailUpdates?.stop();
       }
-    });
+    };
+
+    return sessionId
+      ? this.runSessionMutation(sessionId, run)
+      : this.runGlobalMutation(run);
   }
 
   async rejectInteraction(
     input: DesktopConversationRejectInteractionInput,
   ): Promise<DesktopConversationInteractionReplyResponse> {
-    return this.runMutation(async () => {
-      const interactionId = normalizeSessionId(input.interactionId);
-      const sessionId = normalizeOptionalSessionId(input.sessionId);
+    const interactionId = normalizeSessionId(input.interactionId);
+    const sessionId = normalizeOptionalSessionId(input.sessionId);
+
+    const run = async () => {
       const detailUpdates = await this.startSessionDetailUpdates(
         sessionId ?? "",
         sessionId ? this.store.getSession(sessionId) ?? undefined : undefined,
@@ -1679,7 +1688,11 @@ export class DesktopConversationService implements DesktopConversationPort {
       } finally {
         await detailUpdates?.stop();
       }
-    });
+    };
+
+    return sessionId
+      ? this.runSessionMutation(sessionId, run)
+      : this.runGlobalMutation(run);
   }
 
   dispose() {
@@ -1687,10 +1700,17 @@ export class DesktopConversationService implements DesktopConversationPort {
     this.conversationRuntime = null;
   }
 
-  private async runMutation<TValue>(work: () => Promise<TValue>): Promise<TValue> {
-    const next = this.mutationQueue.then(work, work);
-    this.mutationQueue = next.then(() => undefined, () => undefined);
+  private async runGlobalMutation<TValue>(work: () => Promise<TValue>): Promise<TValue> {
+    const next = this.globalMutationQueue.then(work, work);
+    this.globalMutationQueue = next.then(() => undefined, () => undefined);
     return next;
+  }
+
+  private async runSessionMutation<TValue>(
+    sessionId: string,
+    work: () => Promise<TValue>,
+  ): Promise<TValue> {
+    return this.sessionMutationQueues.run(sessionId, work);
   }
 
   private applyWorkspaceConversationSessionSettings(

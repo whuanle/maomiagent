@@ -51,6 +51,14 @@ import {
   waitForConversationWorkspaceSettingsSaves,
 } from "../components/conversation-workspace-settings-storage";
 import {
+  clearSessionReplying,
+  hasSessionFlag,
+  markSessionReplying,
+  removeSessionFlag,
+  resolveSelectedSessionActivity,
+  setSessionFlag,
+} from "./chat-session-activity-state";
+import {
   mergeDesktopConversationRuntimeEvents,
   shouldDeferRuntimeEventsWhileStopping,
 } from "./desktop-conversation-runtime-events";
@@ -364,9 +372,9 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
   const [creatingSession, setCreatingSession] = useState(false);
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [archivingSessionId, setArchivingSessionId] = useState<string | null>(null);
-  const [sendingMessage, setSendingMessage] = useState(false);
-  const [stoppingSessionId, setStoppingSessionId] = useState<string | null>(null);
-  const [replyingInteractionId, setReplyingInteractionId] = useState<string | null>(null);
+  const [sendingSessionIds, setSendingSessionIds] = useState<Record<string, true>>({});
+  const [stoppingSessionIds, setStoppingSessionIds] = useState<Record<string, true>>({});
+  const [replyingInteractionIdsBySessionId, setReplyingInteractionIdsBySessionId] = useState<Record<string, string>>({});
   const [searchText, setSearchText] = useState("");
   const [statusFilter, setStatusFilter] = useState<ChatSessionFilter>("all");
   const [draftMessage, setDraftMessage] = useState("");
@@ -382,7 +390,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
   const runtimeEventActivityBySessionIdRef = useRef<Record<string, number>>({});
   const managedTakeoverAttemptKeysRef = useRef<Record<string, true>>({});
   const sessionDetailsByIdRef = useRef<Record<string, DesktopConversationSessionDetail>>({});
-  const stoppingSessionIdRef = useRef<string | null>(null);
+  const stoppingSessionIdsRef = useRef<Record<string, true>>({});
   const selectedSessionIdRef = useRef<string | undefined>(undefined);
   const expandedSessionDetailSessionIdRef = useRef<string | undefined>(undefined);
 
@@ -391,7 +399,17 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
     [selectedSessionId, sessions],
   );
   const selectedSessionDetail = selectedSessionId ? sessionDetailsById[selectedSessionId] : undefined;
-  const stoppingMessage = Boolean(selectedSessionId && stoppingSessionId === selectedSessionId);
+  const sessionActivity = useMemo(() => resolveSelectedSessionActivity({
+    selectedSessionId,
+    sendingSessionIds,
+    stoppingSessionIds,
+    replyingInteractionIdsBySessionId,
+  }), [replyingInteractionIdsBySessionId, selectedSessionId, sendingSessionIds, stoppingSessionIds]);
+  const sendingMessage = sessionActivity.sendingMessage
+    || selectedSession?.status === "active"
+    || selectedSessionDetail?.status === "active";
+  const stoppingMessage = sessionActivity.stoppingMessage;
+  const replyingInteractionId = sessionActivity.replyingInteractionId;
   const selectedSessionComposerMode = readComposerModeMetadata(selectedSessionDetail?.metadata);
   const selectedSessionSummaryChannelId = normalizeOptionalText(selectedSession?.metadata?.selectedChannelId);
   const selectedSessionSummaryModelId = normalizeOptionalText(selectedSession?.metadata?.selectedModelId);
@@ -399,8 +417,8 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
   const selectedSessionDetailModelId = normalizeOptionalText(selectedSessionDetail?.metadata?.selectedModelId);
 
   useEffect(() => {
-    stoppingSessionIdRef.current = stoppingSessionId;
-  }, [stoppingSessionId]);
+    stoppingSessionIdsRef.current = stoppingSessionIds;
+  }, [stoppingSessionIds]);
 
   useEffect(() => {
     selectedSessionIdRef.current = selectedSessionId;
@@ -514,7 +532,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
       && detail.sessionId === options.clearSendingForSessionId
       && detail.status !== "active"
     ) {
-      setSendingMessage(false);
+      setSendingSessionIds((current) => removeSessionFlag(current, options.clearSendingForSessionId!));
     }
 
     if (
@@ -522,7 +540,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
       && detail.sessionId === options.clearStoppingForSessionId
       && detail.status !== "active"
     ) {
-      setStoppingSessionId((current) => current === options.clearStoppingForSessionId ? null : current);
+      setStoppingSessionIds((current) => removeSessionFlag(current, options.clearStoppingForSessionId!));
     }
   }, [updateSessionDetailsById]);
 
@@ -545,7 +563,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
         const withinGracePeriod = now - startedAt < SESSION_DETAIL_FALLBACK_GRACE_MS;
         const recentRuntimeActivity = lastRuntimeEventAt > 0
           && now - lastRuntimeEventAt < SESSION_DETAIL_FALLBACK_SILENCE_WINDOW_MS;
-        const stopRequested = stoppingSessionIdRef.current === sessionId;
+        const stopRequested = hasSessionFlag(stoppingSessionIdsRef.current, sessionId);
         if (withinGracePeriod || recentRuntimeActivity || stopRequested) {
           await delay(SESSION_DETAIL_SEND_POLL_INTERVAL_MS);
           continue;
@@ -814,6 +832,9 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
     updateSessionDetailsById({});
     clearExpandedSessionDetailState();
     setDraftMessage("");
+    setSendingSessionIds({});
+    setStoppingSessionIds({});
+    setReplyingInteractionIdsBySessionId({});
     clearComposerAttachments();
   }, [bridgeAvailable, clearComposerAttachments, clearExpandedSessionDetailState, updateSessionDetailsById]);
 
@@ -955,20 +976,13 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
       }
 
       applySessionDetail(detailUpdate.detail, {
-        clearSendingForSessionId: detailUpdate.detail.sessionId === selectedSessionId
-          ? detailUpdate.detail.sessionId
-          : undefined,
-        clearStoppingForSessionId: detailUpdate.detail.sessionId === selectedSessionId
-          ? detailUpdate.detail.sessionId
-          : undefined,
+        clearSendingForSessionId: detailUpdate.detail.sessionId,
+        clearStoppingForSessionId: detailUpdate.detail.sessionId,
       });
-      setLoadingSessionDetail(false);
-      if (detailUpdate.detail.sessionId === selectedSessionId) {
-        setSendingMessage(detailUpdate.detail.status === "active");
-        if (detailUpdate.detail.status !== "active") {
-          setStoppingSessionId((current) => current === detailUpdate.detail.sessionId ? null : current);
-        }
+      if (detailUpdate.detail.status === "active") {
+        setSendingSessionIds((current) => setSessionFlag(current, detailUpdate.detail.sessionId));
       }
+      setLoadingSessionDetail(false);
     };
 
     window.addEventListener(DESKTOP_CONVERSATION_DETAIL_UPDATED_EVENT, handleConversationDetailUpdated);
@@ -998,7 +1012,9 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
 
       if (shouldDeferRuntimeEventsWhileStopping({
         update: runtimeUpdate,
-        stoppingSessionId: stoppingSessionIdRef.current,
+        stoppingSessionId: hasSessionFlag(stoppingSessionIdsRef.current, runtimeUpdate.sessionId)
+          ? runtimeUpdate.sessionId
+          : undefined,
       })) {
         return;
       }
@@ -1013,13 +1029,12 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
               clearSendingForSessionId: runtimeUpdate.sessionId,
               clearStoppingForSessionId: runtimeUpdate.sessionId,
             });
-            setSendingMessage(merged.detail.status === "active" && stoppingSessionIdRef.current !== runtimeUpdate.sessionId);
             return;
           }
         }
 
-        if (stoppingSessionIdRef.current !== runtimeUpdate.sessionId) {
-          setSendingMessage(true);
+        if (!hasSessionFlag(stoppingSessionIdsRef.current, runtimeUpdate.sessionId)) {
+          setSendingSessionIds((current) => setSessionFlag(current, runtimeUpdate.sessionId));
         }
         void reloadSessionDetail(runtimeUpdate.sessionId);
         return;
@@ -1042,10 +1057,6 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
       );
     };
   }, [active, applySessionDetail, bridgeAvailable, reloadSessionDetail, reloadSessions, selectedSessionId, workspaceId]);
-
-  useEffect(() => {
-    setSendingMessage(false);
-  }, [selectedSessionId]);
 
   useEffect(() => {
     if (!active || !modelsBridgeAvailable) {
@@ -1153,7 +1164,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
       const targetSessionId = created.item.sessionId;
       setSelectedSessionId(targetSessionId);
       await reloadSessions(targetSessionId);
-      setSendingMessage(true);
+      setSendingSessionIds((current) => setSessionFlag(current, targetSessionId));
 
       const stopPolling = startSessionDetailFallbackPolling(targetSessionId, (nextDetail) => {
         applySessionDetail(nextDetail, {
@@ -1187,7 +1198,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
         await reloadComposerModels(response.detail);
       } catch (error) {
         stopPolling();
-        setSendingMessage(false);
+        setSendingSessionIds((current) => removeSessionFlag(current, targetSessionId));
         onError("sendMessage", error);
       }
     } catch (error) {
@@ -1298,7 +1309,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
 
     const selectedModel = composerModelOptions.find((item) => item.value === selectedComposerModelValue);
 
-    setSendingMessage(true);
+    setSendingSessionIds((current) => setSessionFlag(current, selectedSessionId));
     setDraftMessage("");
     clearComposerAttachments();
 
@@ -1334,7 +1345,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
       await reloadComposerModels(response.detail);
     }).catch((error) => {
       stopPolling();
-      setSendingMessage(false);
+      setSendingSessionIds((current) => removeSessionFlag(current, targetSessionId));
       onError("sendMessage", error);
     });
 
@@ -1342,11 +1353,11 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
   }, [applySessionDetail, clearComposerAttachments, composerAttachments, composerMode, composerModelOptions, draftMessage, onError, reloadComposerAgents, reloadComposerModels, reloadSessions, selectedComposerAgentId, selectedComposerModelValue, selectedSessionDetail?.metadata, selectedSessionId, sendingMessage, startSessionDetailFallbackPolling, workspaceId]);
 
   const stopMessage = useCallback(async () => {
-    if (!selectedSessionId || !sendingMessage || stoppingSessionId === selectedSessionId) {
+    if (!selectedSessionId || !sendingMessage || stoppingMessage) {
       return false;
     }
 
-    setStoppingSessionId(selectedSessionId);
+    setStoppingSessionIds((current) => setSessionFlag(current, selectedSessionId));
 
     try {
       const response = await stopDesktopConversationMessage({
@@ -1359,15 +1370,17 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
       await reloadSessions(response.detail.sessionId);
       await reloadComposerAgents(response.detail);
       await reloadComposerModels(response.detail);
-      setSendingMessage(response.detail.status === "active");
-      setStoppingSessionId(null);
+      setSendingSessionIds((current) => response.detail.status === "active"
+        ? setSessionFlag(current, selectedSessionId)
+        : removeSessionFlag(current, selectedSessionId));
+      setStoppingSessionIds((current) => removeSessionFlag(current, selectedSessionId));
       return response.stopped;
     } catch (error) {
-      setStoppingSessionId(null);
+      setStoppingSessionIds((current) => removeSessionFlag(current, selectedSessionId));
       onError("sendMessage", error);
       return false;
     }
-  }, [applySessionDetail, onError, reloadComposerAgents, reloadComposerModels, reloadSessions, selectedSessionId, sendingMessage, stoppingSessionId]);
+  }, [applySessionDetail, onError, reloadComposerAgents, reloadComposerModels, reloadSessions, selectedSessionId, sendingMessage, stoppingMessage]);
 
   const attachComposerFiles = useCallback((files: File[]) => {
     if (files.length === 0) {
@@ -1434,14 +1447,18 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
     interactionId: string,
     interactionResponse: unknown,
   ) => {
-    setReplyingInteractionId(interactionId);
-    const stopPolling = selectedSessionId
-      ? startSessionDetailFallbackPolling(selectedSessionId, applySessionDetail)
+    const targetSessionId = selectedSessionId;
+    if (targetSessionId) {
+      setReplyingInteractionIdsBySessionId((current) =>
+        markSessionReplying(current, targetSessionId, interactionId));
+    }
+    const stopPolling = targetSessionId
+      ? startSessionDetailFallbackPolling(targetSessionId, applySessionDetail)
       : undefined;
 
     try {
       const response = await answerDesktopConversationInteraction({
-        sessionId: selectedSessionId,
+        sessionId: targetSessionId,
         interactionId,
         response: interactionResponse,
       });
@@ -1456,19 +1473,26 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
       onError("replyInteraction", error);
       return false;
     } finally {
-      setReplyingInteractionId((current) => current === interactionId ? null : current);
+      if (targetSessionId) {
+        setReplyingInteractionIdsBySessionId((current) =>
+          clearSessionReplying(current, targetSessionId));
+      }
     }
   }, [applySessionDetail, onError, reloadComposerAgents, reloadComposerModels, reloadSessions, selectedSessionId, startSessionDetailFallbackPolling]);
 
   const rejectInteraction = useCallback(async (interactionId: string) => {
-    setReplyingInteractionId(interactionId);
-    const stopPolling = selectedSessionId
-      ? startSessionDetailFallbackPolling(selectedSessionId, applySessionDetail)
+    const targetSessionId = selectedSessionId;
+    if (targetSessionId) {
+      setReplyingInteractionIdsBySessionId((current) =>
+        markSessionReplying(current, targetSessionId, interactionId));
+    }
+    const stopPolling = targetSessionId
+      ? startSessionDetailFallbackPolling(targetSessionId, applySessionDetail)
       : undefined;
 
     try {
       const response = await rejectDesktopConversationInteraction({
-        sessionId: selectedSessionId,
+        sessionId: targetSessionId,
         interactionId,
       });
       stopPolling?.();
@@ -1482,7 +1506,10 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
       onError("replyInteraction", error);
       return false;
     } finally {
-      setReplyingInteractionId((current) => current === interactionId ? null : current);
+      if (targetSessionId) {
+        setReplyingInteractionIdsBySessionId((current) =>
+          clearSessionReplying(current, targetSessionId));
+      }
     }
   }, [applySessionDetail, onError, reloadComposerAgents, reloadComposerModels, reloadSessions, selectedSessionId, startSessionDetailFallbackPolling]);
 

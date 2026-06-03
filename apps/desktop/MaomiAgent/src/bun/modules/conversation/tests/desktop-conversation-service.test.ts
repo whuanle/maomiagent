@@ -289,6 +289,106 @@ class ScriptedStreamingTextTurnPort implements AiTurnPort {
   }
 }
 
+class ScriptedConcurrentSessionTurnPort implements AiTurnPort {
+  private callCount = 0;
+  private firstCallStartedResolver: (() => void) | undefined;
+  private releaseFirstCallResolver: (() => void) | undefined;
+  private secondCallStartedResolver: (() => void) | undefined;
+  readonly firstCallStarted = new Promise<void>((resolve) => {
+    this.firstCallStartedResolver = resolve;
+  });
+  readonly secondCallStarted = new Promise<void>((resolve) => {
+    this.secondCallStartedResolver = resolve;
+  });
+
+  releaseFirstCall() {
+    this.releaseFirstCallResolver?.();
+    this.releaseFirstCallResolver = undefined;
+  }
+
+  async *stream(): AsyncIterable<AiTurnEvent> {
+    this.callCount += 1;
+    const callIndex = this.callCount;
+
+    if (callIndex === 1) {
+      this.firstCallStartedResolver?.();
+      this.firstCallStartedResolver = undefined;
+      yield { type: "text.start" };
+      yield { type: "text.delta", delta: "session one waiting" };
+      await new Promise<void>((resolve) => {
+        this.releaseFirstCallResolver = resolve;
+      });
+      yield { type: "text.end" };
+      yield { type: "finish", reason: "stop" };
+      return;
+    }
+
+    this.secondCallStartedResolver?.();
+    this.secondCallStartedResolver = undefined;
+    yield { type: "text.start" };
+    yield { type: "text.delta", delta: "session two completed" };
+    yield { type: "text.end" };
+    yield { type: "finish", reason: "stop" };
+  }
+}
+
+class ScriptedBlockedInteractionResumeTurnPort implements AiTurnPort {
+  private callCount = 0;
+  private releaseResumeResolver: (() => void) | undefined;
+  private thirdCallStartedResolver: (() => void) | undefined;
+  readonly thirdCallStarted = new Promise<void>((resolve) => {
+    this.thirdCallStartedResolver = resolve;
+  });
+
+  releaseResume() {
+    this.releaseResumeResolver?.();
+    this.releaseResumeResolver = undefined;
+  }
+
+  async *stream(input: AiTurnRequest): AsyncIterable<AiTurnEvent> {
+    this.callCount += 1;
+
+    const hasToolResult = input.prompt.messages.some((message) =>
+      message.message.role === "tool"
+      || message.parts.some((part) => part.type === "tool_result_ref"));
+
+    if (this.callCount === 1 && !hasToolResult) {
+      yield {
+        type: "tool.call",
+        toolCallId: asToolCallId("tool_call_blocked_interaction_1"),
+        toolName: "desktop_diagnostic",
+        input: {
+          text: "blocked interaction payload",
+          requireApproval: true,
+        },
+      };
+      yield { type: "finish", reason: "tool_calls" };
+      return;
+    }
+
+    if (this.callCount === 2 && hasToolResult) {
+      yield { type: "text.start" };
+      yield { type: "text.delta", delta: "resume waiting" };
+      await new Promise<void>((resolve) => {
+        this.releaseResumeResolver = resolve;
+      });
+      yield { type: "text.end" };
+      yield { type: "finish", reason: "stop" };
+      return;
+    }
+
+    if (this.callCount >= 3) {
+      this.thirdCallStartedResolver?.();
+      this.thirdCallStartedResolver = undefined;
+    }
+
+    yield { type: "text.start" };
+    yield { type: "text.delta", delta: "independent session completed" };
+    yield { type: "text.end" };
+    yield { type: "finish", reason: "stop" };
+  }
+}
+
 class ScriptedCommandFailureRecoveryTurnPort implements AiTurnPort {
   readonly prompts: AiTurnRequest["prompt"][] = [];
 
@@ -3795,6 +3895,112 @@ describe("DesktopConversationService", () => {
       service.dispose();
       database.dispose();
       cleanupTempRoot(tempRoot);
+    }
+  });
+
+  test("allows two sessions to send messages concurrently", async () => {
+    const turnPort = new ScriptedConcurrentSessionTurnPort();
+    const harness = createRuntimeBackedConversationService({
+      tempPrefix: "maomi-desktop-conversation-concurrent-send-",
+      turnPort,
+    });
+
+    try {
+      const first = await harness.service.createSession({
+        workspaceId: "workspace-1",
+        title: "Concurrent session A",
+      });
+      const second = await harness.service.createSession({
+        workspaceId: "workspace-2",
+        title: "Concurrent session B",
+      });
+
+      const firstSend = harness.service.sendMessage({
+        sessionId: first.item.sessionId,
+        text: "keep session A busy",
+        scope: "workspace",
+        selectedChannelId: "kimi",
+        selectedModelId: "moonshot-v1-8k",
+      });
+
+      await waitForValue(turnPort.firstCallStarted, 500, "first session send start");
+
+      const secondSend = harness.service.sendMessage({
+        sessionId: second.item.sessionId,
+        text: "start session B in parallel",
+        scope: "workspace",
+        selectedChannelId: "kimi",
+        selectedModelId: "moonshot-v1-8k",
+      });
+
+      await waitForValue(turnPort.secondCallStarted, 500, "second session send start");
+
+      turnPort.releaseFirstCall();
+
+      const [firstResult, secondResult] = await Promise.all([firstSend, secondSend]);
+      expect(firstResult.detail.sessionId).toBe(first.item.sessionId);
+      expect(secondResult.detail.sessionId).toBe(second.item.sessionId);
+      expect(secondResult.detail.status).toBe("idle");
+    } finally {
+      turnPort.releaseFirstCall();
+      harness.dispose();
+    }
+  });
+
+  test("does not block another session while one session resumes an interaction", async () => {
+    const turnPort = new ScriptedBlockedInteractionResumeTurnPort();
+    const harness = createRuntimeBackedConversationService({
+      tempPrefix: "maomi-desktop-conversation-concurrent-interaction-",
+      turnPort,
+    });
+
+    try {
+      const first = await harness.service.createSession({
+        workspaceId: "workspace-1",
+        title: "Interaction session A",
+      });
+      const second = await harness.service.createSession({
+        workspaceId: "workspace-1",
+        title: "Interaction session B",
+      });
+
+      const blocked = await harness.service.sendMessage({
+        sessionId: first.item.sessionId,
+        text: "run a tool that needs approval",
+        scope: "workspace",
+        selectedChannelId: "kimi",
+        selectedModelId: "moonshot-v1-8k",
+      });
+      expect(blocked.detail.pendingInteractions).toHaveLength(1);
+
+      const answer = harness.service.answerInteraction({
+        sessionId: first.item.sessionId,
+        interactionId: blocked.detail.pendingInteractions[0]!.interactionId,
+        response: {
+          kind: "permission",
+          decision: "approve_once",
+        },
+      });
+
+      const secondSend = harness.service.sendMessage({
+        sessionId: second.item.sessionId,
+        text: "continue unrelated work",
+        scope: "workspace",
+        selectedChannelId: "kimi",
+        selectedModelId: "moonshot-v1-8k",
+      });
+
+      await waitForValue(turnPort.thirdCallStarted, 500, "parallel send while interaction resumes");
+
+      turnPort.releaseResume();
+
+      const [answered, secondResult] = await Promise.all([answer, secondSend]);
+      expect(answered.detail.sessionId).toBe(first.item.sessionId);
+      expect(secondResult.detail.sessionId).toBe(second.item.sessionId);
+      expect(secondResult.detail.status).toBe("idle");
+    } finally {
+      turnPort.releaseResume();
+      harness.dispose();
     }
   });
 
