@@ -365,12 +365,12 @@ describe("mergeDesktopConversationRuntimeEvents", () => {
     expect(result.detail.toolCalls).toHaveLength(1);
   });
 
-  test("falls back to detail reload for compaction runtime events", () => {
+  test("merges compaction started into the current run without requiring a detail reload", () => {
     const detail = createDetail();
 
     const result = mergeDesktopConversationRuntimeEvents(detail, [{
       type: "compaction.started",
-      eventId: "event-5",
+      eventId: "event-compaction-start",
       occurredAt: BASE_TIME + 60,
       sessionId: "session-1",
       runId: "run-1",
@@ -381,16 +381,234 @@ describe("mergeDesktopConversationRuntimeEvents", () => {
         startedAt: 1,
         updatedAt: BASE_TIME + 60,
         trigger: { kind: "user_message" },
+        metadata: {
+          compaction: {
+            status: "running",
+            attempt: 1,
+            reason: "budget_exceeded",
+            startedAt: BASE_TIME + 60,
+          },
+        },
       },
       compaction: {
         status: "running",
         attempt: 1,
-        reason: "context_overflow",
+        reason: "budget_exceeded",
         startedAt: BASE_TIME + 60,
       },
     }]);
 
-    expect(result.requiresReload).toBe(true);
-    expect(result.detail).toEqual(detail);
+    expect(result.requiresReload).toBe(false);
+    expect(result.detail.runs.at(-1)).toEqual(expect.objectContaining({
+      status: "awaiting_compaction",
+      boundary: {
+        kind: "awaiting_compaction",
+        reason: "budget_exceeded",
+      },
+      metadata: expect.objectContaining({
+        compaction: expect.objectContaining({
+          status: "running",
+          attempt: 1,
+        }),
+      }),
+    }));
+  });
+
+  test("clears the visible compaction state when compaction completes", () => {
+    const detail = createDetail();
+    detail.currentContextBudget = {
+      runId: "run-1",
+      estimatedPromptTokens: 2048,
+      contextWindowTokens: 128000,
+      shouldAutoCompress: false,
+      breakdown: {
+        systemTokens: 20,
+        contextTokens: 10,
+        messageTokens: 2018,
+        toolTokens: 0,
+        outputSchemaTokens: 0,
+      },
+      compaction: {
+        status: "running",
+        attempt: 1,
+        reason: "budget_exceeded",
+        startedAt: "2026-05-04T00:00:00.060Z",
+      },
+    };
+
+    const withRunningCompaction = mergeDesktopConversationRuntimeEvents(detail, [{
+      type: "compaction.started",
+      eventId: "event-compaction-running",
+      occurredAt: BASE_TIME + 60,
+      sessionId: "session-1",
+      runId: "run-1",
+      run: {
+        runId: "run-1",
+        sessionId: "session-1",
+        status: "awaiting_compaction",
+        startedAt: 1,
+        updatedAt: BASE_TIME + 60,
+        trigger: { kind: "user_message" },
+        metadata: {
+          compaction: {
+            status: "running",
+            attempt: 1,
+            reason: "budget_exceeded",
+            startedAt: BASE_TIME + 60,
+          },
+        },
+      },
+      compaction: {
+        status: "running",
+        attempt: 1,
+        reason: "budget_exceeded",
+        startedAt: BASE_TIME + 60,
+      },
+    }]).detail;
+
+    const result = mergeDesktopConversationRuntimeEvents(withRunningCompaction, [{
+      type: "compaction.completed",
+      eventId: "event-compaction-complete",
+      occurredAt: BASE_TIME + 80,
+      sessionId: "session-1",
+      runId: "run-1",
+      run: {
+        runId: "run-1",
+        sessionId: "session-1",
+        status: "planning",
+        startedAt: 1,
+        updatedAt: BASE_TIME + 80,
+        trigger: { kind: "user_message" },
+        metadata: {
+          compaction: {
+            status: "completed",
+            attempt: 1,
+            reason: "budget_exceeded",
+            startedAt: BASE_TIME + 60,
+            completedAt: BASE_TIME + 80,
+            summaryMessageId: "message-summary-1",
+            checkpointId: "checkpoint-1",
+            continuationKind: "system_continue",
+            prunedMessageCount: 4,
+            protectedMessageCount: 1,
+            protectedToolNames: [],
+          },
+        },
+      },
+      compaction: {
+        status: "completed",
+        attempt: 1,
+        reason: "budget_exceeded",
+        startedAt: BASE_TIME + 60,
+        completedAt: BASE_TIME + 80,
+        summaryMessageId: "message-summary-1",
+        checkpointId: "checkpoint-1",
+        continuationKind: "system_continue",
+        prunedMessageCount: 4,
+        protectedMessageCount: 1,
+        protectedToolNames: [],
+      },
+    }]);
+
+    expect(result.requiresReload).toBe(false);
+    expect(result.detail.runs.at(-1)).toEqual(expect.objectContaining({
+      status: "planning",
+      boundary: undefined,
+      metadata: expect.objectContaining({
+        compaction: expect.objectContaining({
+          status: "completed",
+        }),
+      }),
+    }));
+    expect(result.detail.currentContextBudget?.compaction).toEqual(expect.objectContaining({
+      status: "completed",
+      completedAt: "2026-05-04T00:00:00.080Z",
+    }));
+  });
+
+  test("ignores stale compaction started events that arrive after a newer terminal compaction state", () => {
+    const detail = mergeDesktopConversationRuntimeEvents(createDetail(), [{
+      type: "compaction.completed",
+      eventId: "event-compaction-newer",
+      occurredAt: BASE_TIME + 100,
+      sessionId: "session-1",
+      runId: "run-1",
+      run: {
+        runId: "run-1",
+        sessionId: "session-1",
+        status: "planning",
+        startedAt: 1,
+        updatedAt: BASE_TIME + 100,
+        trigger: { kind: "user_message" },
+        metadata: {
+          compaction: {
+            status: "completed",
+            attempt: 1,
+            reason: "budget_exceeded",
+            startedAt: BASE_TIME + 60,
+            completedAt: BASE_TIME + 100,
+            summaryMessageId: "message-summary-1",
+            checkpointId: "checkpoint-1",
+            continuationKind: "system_continue",
+            prunedMessageCount: 4,
+            protectedMessageCount: 1,
+            protectedToolNames: [],
+          },
+        },
+      },
+      compaction: {
+        status: "completed",
+        attempt: 1,
+        reason: "budget_exceeded",
+        startedAt: BASE_TIME + 60,
+        completedAt: BASE_TIME + 100,
+        summaryMessageId: "message-summary-1",
+        checkpointId: "checkpoint-1",
+        continuationKind: "system_continue",
+        prunedMessageCount: 4,
+        protectedMessageCount: 1,
+        protectedToolNames: [],
+      },
+    }]).detail;
+
+    const result = mergeDesktopConversationRuntimeEvents(detail, [{
+      type: "compaction.started",
+      eventId: "event-compaction-stale",
+      occurredAt: BASE_TIME + 90,
+      sessionId: "session-1",
+      runId: "run-1",
+      run: {
+        runId: "run-1",
+        sessionId: "session-1",
+        status: "awaiting_compaction",
+        startedAt: 1,
+        updatedAt: BASE_TIME + 90,
+        trigger: { kind: "user_message" },
+        metadata: {
+          compaction: {
+            status: "running",
+            attempt: 1,
+            reason: "budget_exceeded",
+            startedAt: BASE_TIME + 90,
+          },
+        },
+      },
+      compaction: {
+        status: "running",
+        attempt: 1,
+        reason: "budget_exceeded",
+        startedAt: BASE_TIME + 90,
+      },
+    }]);
+
+    expect(result.requiresReload).toBe(false);
+    expect(result.detail.runs.at(-1)).toEqual(expect.objectContaining({
+      status: "planning",
+      metadata: expect.objectContaining({
+        compaction: expect.objectContaining({
+          status: "completed",
+        }),
+      }),
+    }));
   });
 });

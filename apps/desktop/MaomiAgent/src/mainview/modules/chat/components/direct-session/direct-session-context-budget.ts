@@ -77,32 +77,16 @@ export function resolveContextCompressionStatus(input: {
   const compaction = input.detail?.currentContextBudget?.compaction;
   const isEn = input.language === "en-US";
 
-  if (latestRun?.boundary?.kind === "awaiting_compaction") {
+  if (
+    latestRun?.boundary?.kind === "awaiting_compaction"
+    || compaction?.status === "running"
+  ) {
     return {
       tone: "warning" as const,
       label: isEn ? "Compacting context" : "正在压缩上下文",
       title: isEn
-        ? "The current prompt reached the auto-compaction threshold and is being compacted."
-        : "当前提示已达到自动压缩阈值，正在压缩上下文。",
-    };
-  }
-
-  if (compaction?.status === "completed") {
-    return {
-      tone: "success" as const,
-      label: isEn ? "Context compacted" : "已自动压缩",
-      title: isEn
-        ? "Context was compacted automatically before the latest turn continued."
-        : "最近一轮继续执行前，系统已自动完成上下文压缩。",
-    };
-  }
-
-  if (compaction?.status === "failed") {
-    return {
-      tone: "error" as const,
-      label: isEn ? "Compaction failed" : "压缩失败",
-      title: compaction.errorMessage
-        ?? (isEn ? "Context compaction failed." : "上下文压缩失败。"),
+        ? "The current turn is compacting context before continuing."
+        : "当前这一轮正在压缩上下文后继续执行。",
     };
   }
 

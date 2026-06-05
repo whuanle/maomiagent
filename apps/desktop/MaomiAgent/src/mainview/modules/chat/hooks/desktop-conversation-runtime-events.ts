@@ -1,6 +1,7 @@
 import type { ConversationMessagePartView } from "#maomiagent/kernel/src/host/application";
 
 import type {
+  DesktopConversationCompactionStatusSummary,
   DesktopConversationRunItem,
   DesktopConversationRuntimeEventsUpdateEvent,
   DesktopConversationSessionDetail,
@@ -37,6 +38,10 @@ export function shouldDeferRuntimeEventsWhileStopping(input: {
 
   return input.update.events.length > 0
     && input.update.events.every((event) => STOPPING_DEFERRED_RUNTIME_EVENT_TYPES.has(event.type));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function toIso(value: number) {
@@ -334,6 +339,91 @@ function mapRuntimeRun(
   };
 }
 
+function buildCompactionBoundary(
+  event: Extract<DesktopConversationRuntimeEvent, {
+    type: "compaction.started" | "compaction.completed" | "compaction.failed";
+  }>,
+): DesktopConversationRunItem["boundary"] {
+  if (event.type === "compaction.started") {
+    return {
+      kind: "awaiting_compaction",
+      reason: event.compaction.reason === "budget_exceeded" ? "budget_exceeded" : "context_overflow",
+    };
+  }
+
+  return undefined;
+}
+
+function toCompactionStatusSummary(
+  event: Extract<DesktopConversationRuntimeEvent, {
+    type: "compaction.started" | "compaction.completed" | "compaction.failed";
+  }>,
+): DesktopConversationCompactionStatusSummary {
+  const compaction = event.compaction;
+  const summary: DesktopConversationCompactionStatusSummary = {
+    status: compaction.status,
+    attempt: compaction.attempt,
+    startedAt: toIso(compaction.startedAt),
+    ...(compaction.reason ? { reason: compaction.reason } : {}),
+  };
+
+  if (compaction.status === "completed") {
+    summary.completedAt = toIso(compaction.completedAt);
+    summary.prunedMessageCount = compaction.prunedMessageCount;
+    summary.protectedMessageCount = compaction.protectedMessageCount;
+    summary.continuationKind = compaction.continuationKind;
+  }
+
+  if (compaction.status === "failed") {
+    summary.failedAt = toIso(compaction.failedAt);
+    const error = isRecord(compaction.error) ? compaction.error : undefined;
+    if (typeof error?.message === "string" && error.message.trim()) {
+      summary.errorMessage = error.message;
+    }
+  }
+
+  return summary;
+}
+
+function mergeCompactionRuntimeRun(
+  current: DesktopConversationRunItem | undefined,
+  event: Extract<DesktopConversationRuntimeEvent, {
+    type: "compaction.started" | "compaction.completed" | "compaction.failed";
+  }>,
+): DesktopConversationRunItem {
+  const nextRun = mapRuntimeRun(event);
+  const currentCompactionMetadata = isRecord(current?.metadata?.compaction)
+    ? current.metadata.compaction
+    : undefined;
+  const nextCompactionMetadata = isRecord(nextRun.metadata?.compaction)
+    ? nextRun.metadata.compaction
+    : undefined;
+
+  return {
+    ...(current ?? nextRun),
+    ...nextRun,
+    metadata: {
+      ...(current?.metadata ?? {}),
+      ...(nextRun.metadata ?? {}),
+      compaction: {
+        ...(currentCompactionMetadata ?? {}),
+        ...(nextCompactionMetadata ?? {}),
+        ...(event.compaction as Record<string, unknown>),
+      },
+    },
+    boundary: buildCompactionBoundary(event),
+  };
+}
+
+function isStaleCompactionEvent(
+  current: DesktopConversationRunItem | undefined,
+  event: Extract<DesktopConversationRuntimeEvent, {
+    type: "compaction.started" | "compaction.completed" | "compaction.failed";
+  }>,
+) {
+  return Boolean(current && current.updatedAt > event.run.updatedAt);
+}
+
 function resolveStatusFromRuntimeEvent(
   current: DesktopConversationSessionStatus,
   event: DesktopConversationRuntimeEvent,
@@ -349,6 +439,9 @@ function resolveStatusFromRuntimeEvent(
     case "tool-call.updated":
     case "interaction.updated":
     case "context.checkpoint.created":
+    case "compaction.started":
+    case "compaction.completed":
+    case "compaction.failed":
       return current === "archived" ? current : "active";
     case "run.completed":
       return "idle";
@@ -500,7 +593,27 @@ export function mergeDesktopConversationRuntimeEvents(
       case "compaction.started":
       case "compaction.completed":
       case "compaction.failed": {
-        requiresReload = true;
+        const currentRun = nextDetail.runs.find((item) => item.id === event.run.runId);
+        if (isStaleCompactionEvent(currentRun, event)) {
+          break;
+        }
+
+        const run = mergeCompactionRuntimeRun(currentRun, event);
+        const currentContextBudget = nextDetail.currentContextBudget?.runId === event.run.runId
+          ? {
+              ...nextDetail.currentContextBudget,
+              compaction: toCompactionStatusSummary(event),
+            }
+          : nextDetail.currentContextBudget;
+
+        nextDetail = {
+          ...nextDetail,
+          runs: upsertOrdered(nextDetail.runs, run, (item) => item.id === run.id, compareRuns),
+          lastRunId: run.id,
+          status: resolveStatusFromRuntimeEvent(nextDetail.status, event),
+          updatedAt: toIso(event.run.updatedAt),
+          ...(currentContextBudget ? { currentContextBudget } : {}),
+        };
         break;
       }
       default: {

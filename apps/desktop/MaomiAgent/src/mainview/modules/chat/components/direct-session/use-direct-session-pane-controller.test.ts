@@ -80,7 +80,7 @@ describe("direct session pane controller helpers", () => {
     }));
   });
 
-  test("reports compaction status for awaiting and completed states", () => {
+  test("reports compaction status only while compaction is in progress", () => {
     const awaiting = resolveContextCompressionStatus({
       detail: createDetail({
         runs: [{
@@ -96,10 +96,35 @@ describe("direct session pane controller helpers", () => {
       language: "zh-CN",
     });
 
-    const completed = resolveContextCompressionStatus({
+    const running = resolveContextCompressionStatus({
       detail: createDetail({
         currentContextBudget: {
           runId: "run-2",
+          estimatedPromptTokens: 2048,
+          contextWindowTokens: 128000,
+          shouldAutoCompress: false,
+          breakdown: {
+            systemTokens: 20,
+            contextTokens: 10,
+            messageTokens: 2018,
+            toolTokens: 0,
+            outputSchemaTokens: 0,
+          },
+          compaction: {
+            status: "running",
+            attempt: 1,
+            reason: "budget_exceeded",
+            startedAt: "2026-05-08T00:00:00.000Z",
+          },
+        },
+      }),
+      language: "zh-CN",
+    });
+
+    const completed = resolveContextCompressionStatus({
+      detail: createDetail({
+        currentContextBudget: {
+          runId: "run-3",
           estimatedPromptTokens: 2048,
           contextWindowTokens: 128000,
           shouldAutoCompress: false,
@@ -122,13 +147,42 @@ describe("direct session pane controller helpers", () => {
       language: "zh-CN",
     });
 
+    const failed = resolveContextCompressionStatus({
+      detail: createDetail({
+        currentContextBudget: {
+          runId: "run-4",
+          estimatedPromptTokens: 2048,
+          contextWindowTokens: 128000,
+          shouldAutoCompress: false,
+          breakdown: {
+            systemTokens: 20,
+            contextTokens: 10,
+            messageTokens: 2018,
+            toolTokens: 0,
+            outputSchemaTokens: 0,
+          },
+          compaction: {
+            status: "failed",
+            attempt: 1,
+            reason: "budget_exceeded",
+            startedAt: "2026-05-08T00:00:00.000Z",
+            failedAt: "2026-05-08T00:00:05.000Z",
+            errorMessage: "compaction failed",
+          },
+        },
+      }),
+      language: "zh-CN",
+    });
+
     expect(awaiting).toEqual(expect.objectContaining({
       tone: "warning",
       label: "正在压缩上下文",
     }));
-    expect(completed).toEqual(expect.objectContaining({
-      tone: "success",
-      label: "已自动压缩",
+    expect(running).toEqual(expect.objectContaining({
+      tone: "warning",
+      label: "正在压缩上下文",
     }));
+    expect(completed).toBeUndefined();
+    expect(failed).toBeUndefined();
   });
 });
