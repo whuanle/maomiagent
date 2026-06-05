@@ -14,7 +14,7 @@ import {
 import { DESKTOP_CONFIGURATION_PORT, DesktopConfigurationModule } from "../../configuration";
 import { RUNTIME_LOGGER_FACTORY_PORT, DesktopLogsModule } from "../../logs";
 import { DESKTOP_MODELS_QUERY_PORT, DesktopModelsModule } from "../../models";
-import { DESKTOP_WORKSPACE_QUERY_PORT, DesktopWorkspaceModule } from "../../workspace";
+import { DESKTOP_WORKSPACE_PORT, DesktopWorkspaceModule } from "../../workspace";
 import type { DesktopWechatPort } from "../abstraction/ports/desktop-wechat.ports";
 import {
   DESKTOP_WECHAT_COMMAND_PORT,
@@ -50,7 +50,7 @@ export class DesktopWechatModule extends DependencyModuleBase {
           module: "desktop.wechat",
         }),
         services.resolve(DESKTOP_CONVERSATION_COMMAND_PORT),
-        services.resolve(DESKTOP_WORKSPACE_QUERY_PORT),
+        services.resolve(DESKTOP_WORKSPACE_PORT),
         services.resolve(DESKTOP_MODELS_QUERY_PORT),
       ),
       source: context.module.moduleId,

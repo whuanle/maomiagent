@@ -24,7 +24,7 @@ import {
 import { DESKTOP_AI_ONE_SHOT_PORT, DESKTOP_AI_RUNTIME_PORT, DesktopAiModule } from "../../ai";
 import { DESKTOP_CONFIGURATION_PORT, DesktopConfigurationModule } from "../../configuration";
 import { RUNTIME_LOGGER_FACTORY_PORT, DesktopLogsModule } from "../../logs";
-import { DESKTOP_WORKSPACE_QUERY_PORT, DesktopWorkspaceModule } from "../../workspace";
+import { DESKTOP_WORKSPACE_PORT, DESKTOP_WORKSPACE_QUERY_PORT, DesktopWorkspaceModule } from "../../workspace";
 import type { DesktopFeishuPort } from "../abstraction/ports/desktop-feishu.ports";
 import { DESKTOP_FEISHU_ACTION_EXECUTOR_PORT } from "../abstraction/tokens/desktop-feishu-action-executor.tokens";
 import { DESKTOP_FEISHU_DOC_RUNTIME_PORT } from "../abstraction/tokens/desktop-feishu-doc-runtime.tokens";
@@ -170,7 +170,7 @@ export class DesktopFeishuModule extends DependencyModuleBase {
         services.resolve(DESKTOP_FEISHU_STORE_PORT),
         services.resolve(DESKTOP_CONVERSATION_COMMAND_PORT) as DesktopConversationCommandPort,
         services.resolve(DESKTOP_CONVERSATION_QUERY_PORT) as DesktopConversationQueryPort,
-        services.resolve(DESKTOP_WORKSPACE_QUERY_PORT),
+        services.resolve(DESKTOP_WORKSPACE_PORT),
         services.resolve(DESKTOP_FEISHU_ACTION_EXECUTOR_PORT),
         new DesktopFeishuBotSemanticClassifier(
           services.resolve(DESKTOP_AI_ONE_SHOT_PORT),

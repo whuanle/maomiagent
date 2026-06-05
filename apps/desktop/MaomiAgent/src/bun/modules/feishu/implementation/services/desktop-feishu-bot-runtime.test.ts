@@ -8,12 +8,14 @@ import type {
 import type {
   DesktopFeishuStoreSnapshot,
 } from "../../abstraction/ports/desktop-feishu-store.ports";
+import type { DesktopWorkspaceItem, DesktopWorkspacePort } from "../../../workspace";
 import {
   DesktopFeishuBotRuntime,
   buildDesktopFeishuBotConversationKey,
   extractDesktopFeishuBotReplyText,
 } from "./desktop-feishu-bot-runtime";
 import { buildFeishuBotConversationMetadata } from "./desktop-feishu-bot-capability-policy";
+import { buildChannelDedicatedWorkspaceDescriptor } from "../../../workspace/implementation/services/desktop-channel-dedicated-workspace";
 
 function createState(): FeishuStateView {
   return {
@@ -197,6 +199,63 @@ function createBinding(partial: Partial<DesktopFeishuStoreSnapshot["botRuntime"]
   };
 }
 
+function createWorkspaceItem(workspaceId: string): DesktopWorkspaceItem {
+  return {
+    workspaceId,
+    name: "Workspace A",
+    directoryPath: "E:\\workspace\\MaomiAgent",
+    isPinned: true,
+    tags: [],
+    createdAt: "2026-05-25T00:00:00.000Z",
+    updatedAt: "2026-05-25T00:00:00.000Z",
+  };
+}
+
+function createWorkspacePort(input: {
+  existingWorkspaceIds?: string[];
+  createdWorkspaceIds?: string[];
+} = {}): Pick<DesktopWorkspacePort, "get" | "list" | "create"> {
+  const items = (input.existingWorkspaceIds ?? []).map((workspaceId) => createWorkspaceItem(workspaceId));
+
+  return {
+    get: async (workspaceId) => items.find((item) => item.workspaceId === workspaceId) ?? null,
+    list: async () => ({
+      items,
+      meta: {
+        total: items.length,
+        limit: 200,
+        offset: 0,
+        hasMore: false,
+      },
+    }),
+    create: async (workspaceInput) => {
+      if (!workspaceInput.workspaceId) {
+        throw new Error("workspaceId is required for test workspace creation");
+      }
+
+      const existing = items.find((item) => item.workspaceId === workspaceInput.workspaceId);
+      if (existing) {
+        return {
+          created: false,
+          item: existing,
+        };
+      }
+
+      const item = createWorkspaceItem(workspaceInput.workspaceId);
+      item.name = workspaceInput.name ?? item.name;
+      item.directoryPath = workspaceInput.directoryPath;
+      item.isPinned = workspaceInput.isPinned === true;
+      item.tags = workspaceInput.tags ?? [];
+      items.push(item);
+      input.createdWorkspaceIds?.push(item.workspaceId);
+      return {
+        created: true,
+        item,
+      };
+    },
+  };
+}
+
 async function waitFor(condition: () => boolean, timeoutMs = 1_000) {
   const startedAt = Date.now();
   while (!condition()) {
@@ -377,6 +436,11 @@ describe("DesktopFeishuBotRuntime", () => {
     const channel = new FakeChannel();
     const createdSessions: string[] = [];
     const sentMessages: string[] = [];
+    const descriptor = buildChannelDedicatedWorkspaceDescriptor({
+      channel: "feishu",
+      scopeKey: "tenant-1:oc_1",
+      label: "tenant-1:oc_1",
+    });
     const runtime = new DesktopFeishuBotRuntime(
       {
         read: async () => snapshot,
@@ -436,36 +500,7 @@ describe("DesktopFeishuBotRuntime", () => {
       {
         getSession: async () => null,
       },
-      {
-        get: async (workspaceId) => ({
-          workspaceId,
-          name: "Workspace A",
-          directoryPath: "E:\\workspace\\MaomiAgent",
-          isPinned: true,
-          tags: [],
-          createdAt: "2026-05-25T00:00:00.000Z",
-          updatedAt: "2026-05-25T00:00:00.000Z",
-        }),
-        list: async () => ({
-          items: [
-            {
-              workspaceId: "workspace-a",
-              name: "Workspace A",
-              directoryPath: "E:\\workspace\\MaomiAgent",
-              isPinned: true,
-              tags: [],
-              createdAt: "2026-05-25T00:00:00.000Z",
-              updatedAt: "2026-05-25T00:00:00.000Z",
-            },
-          ],
-          meta: {
-            total: 1,
-            limit: 200,
-            offset: 0,
-            hasMore: false,
-          },
-        }),
-      },
+      createWorkspacePort(),
       createActionExecutor(),
       createSemanticClassifier(),
       createLogger(),
@@ -490,7 +525,7 @@ describe("DesktopFeishuBotRuntime", () => {
     });
     await waitFor(() => channel.sent.length === 1 && snapshot.botRuntime.processedMessages.length === 1);
 
-    expect(createdSessions).toEqual(["workspace-a"]);
+    expect(createdSessions).toEqual([descriptor.workspaceId]);
     expect(sentMessages).toEqual([[
       "[飞书消息上下文]",
       "会话类型: 私聊",
@@ -512,7 +547,7 @@ describe("DesktopFeishuBotRuntime", () => {
       expect.objectContaining({
         key: "tenant-1:oc_1:root",
         chatId: "oc_1",
-        workspaceId: "workspace-a",
+        workspaceId: descriptor.workspaceId,
         sessionId: "session-1",
       }),
     ]);
@@ -521,11 +556,215 @@ describe("DesktopFeishuBotRuntime", () => {
         messageId: "om_1",
         conversationKey: "tenant-1:oc_1:root",
         status: "completed",
-        workspaceId: "workspace-a",
+        workspaceId: descriptor.workspaceId,
         sessionId: "session-1",
         responsePreview: "你好，我已经收到你的消息。",
       }),
     ]);
+  });
+
+  test("reuses one dedicated workspace for the same Feishu group chat across different senders and threads", async () => {
+    let snapshot = createSnapshot();
+    const channel = new FakeChannel();
+    const createdWorkspaceIds: string[] = [];
+    const createdSessions: string[] = [];
+    const descriptor = buildChannelDedicatedWorkspaceDescriptor({
+      channel: "feishu",
+      scopeKey: "tenant-1:oc_group",
+      label: "tenant-1:oc_group",
+    });
+    const runtime = new DesktopFeishuBotRuntime(
+      {
+        read: async () => snapshot,
+        write: async (next) => {
+          snapshot = next;
+        },
+        mutate: async (mutator) => {
+          const result = await mutator(snapshot);
+          return result;
+        },
+      },
+      {
+        createSession: async (input) => {
+          createdSessions.push(input.workspaceId);
+          return {
+            created: true,
+            item: {
+              sessionId: `session-${createdSessions.length}`,
+              workspaceId: input.workspaceId,
+              title: input.title ?? "Feishu group",
+              status: "idle",
+              createdAt: "2026-05-25T00:00:00.000Z",
+              updatedAt: "2026-05-25T00:00:00.000Z",
+              metadata: input.metadata,
+            },
+          };
+        },
+        sendMessage: async (input) => ({
+          detail: {
+            sessionId: input.sessionId,
+            workspaceId: input.workspaceId ?? descriptor.workspaceId,
+            title: "Feishu group",
+            status: "idle",
+            createdAt: "2026-05-25T00:00:00.000Z",
+            updatedAt: "2026-05-25T00:00:01.000Z",
+            runs: [],
+            toolCalls: [],
+            interactions: [],
+            pendingInteractions: [],
+            checkpoints: [],
+            timeline: [],
+            messages: [{
+              messageId: "assistant-1",
+              sessionId: input.sessionId,
+              role: "assistant",
+              createdAt: 2,
+              parts: [{ type: "text", partId: "p1", text: "done" }],
+            }],
+          },
+        }),
+      },
+      {
+        getSession: async () => null,
+      },
+      createWorkspacePort({ createdWorkspaceIds }),
+      createActionExecutor(),
+      createSemanticClassifier(),
+      createLogger(),
+      {
+        createChannel: () => channel,
+        now: () => new Date("2026-05-25T00:00:00.000Z"),
+      },
+    );
+
+    await runtime.start();
+    await channel.emitMessage({
+      messageId: "om_group_1",
+      chatId: "oc_group",
+      chatType: "group",
+      senderId: "ou_user_1",
+      threadId: "thread-1",
+      content: "hello",
+      raw: {
+        header: {
+          tenant_key: "tenant-1",
+          event_type: "im.message.receive_v1",
+        },
+      },
+    });
+    await channel.emitMessage({
+      messageId: "om_group_2",
+      chatId: "oc_group",
+      chatType: "group",
+      senderId: "ou_user_2",
+      threadId: "thread-2",
+      content: "again",
+      raw: {
+        header: {
+          tenant_key: "tenant-1",
+          event_type: "im.message.receive_v1",
+        },
+      },
+    });
+    await waitFor(() => snapshot.botRuntime.processedMessages.length === 2);
+
+    expect(createdWorkspaceIds).toEqual([descriptor.workspaceId]);
+    expect(createdSessions).toEqual([descriptor.workspaceId, descriptor.workspaceId]);
+  });
+
+  test("creates different dedicated workspaces for identical Feishu chat ids in different tenants", async () => {
+    let snapshot = createSnapshot();
+    const channel = new FakeChannel();
+    const createdWorkspaceIds: string[] = [];
+    const runtime = new DesktopFeishuBotRuntime(
+      {
+        read: async () => snapshot,
+        write: async (next) => {
+          snapshot = next;
+        },
+        mutate: async (mutator) => {
+          const result = await mutator(snapshot);
+          return result;
+        },
+      },
+      {
+        createSession: async (input) => ({
+          created: true,
+          item: {
+            sessionId: `${input.workspaceId}-session`,
+            workspaceId: input.workspaceId,
+            title: input.title ?? "Feishu chat",
+            status: "idle",
+            createdAt: "2026-05-25T00:00:00.000Z",
+            updatedAt: "2026-05-25T00:00:00.000Z",
+            metadata: input.metadata,
+          },
+        }),
+        sendMessage: async (input) => ({
+          detail: {
+            sessionId: input.sessionId,
+            workspaceId: input.workspaceId ?? "workspace-created",
+            title: "Feishu chat",
+            status: "idle",
+            createdAt: "2026-05-25T00:00:00.000Z",
+            updatedAt: "2026-05-25T00:00:01.000Z",
+            runs: [],
+            toolCalls: [],
+            interactions: [],
+            pendingInteractions: [],
+            checkpoints: [],
+            timeline: [],
+            messages: [{
+              messageId: "assistant-1",
+              sessionId: input.sessionId,
+              role: "assistant",
+              createdAt: 2,
+              parts: [{ type: "text", partId: "p1", text: "done" }],
+            }],
+          },
+        }),
+      },
+      {
+        getSession: async () => null,
+      },
+      createWorkspacePort({ createdWorkspaceIds }),
+      createActionExecutor(),
+      createSemanticClassifier(),
+      createLogger(),
+      {
+        createChannel: () => channel,
+        now: () => new Date("2026-05-25T00:00:00.000Z"),
+      },
+    );
+
+    await runtime.start();
+    await channel.emitMessage({
+      messageId: "om_tenant_1",
+      chatId: "oc_same",
+      senderId: "ou_user_1",
+      content: "hello",
+      raw: {
+        header: {
+          tenant_key: "tenant-1",
+          event_type: "im.message.receive_v1",
+        },
+      },
+    });
+    await channel.emitMessage({
+      messageId: "om_tenant_2",
+      chatId: "oc_same",
+      senderId: "ou_user_1",
+      content: "hello",
+      raw: {
+        header: {
+          tenant_key: "tenant-2",
+          event_type: "im.message.receive_v1",
+        },
+      },
+    });
+    await waitFor(() => snapshot.botRuntime.processedMessages.length === 2);
+
+    expect(new Set(createdWorkspaceIds).size).toBe(2);
   });
 
   test("ignores duplicate Feishu messages after they were already persisted", async () => {
@@ -587,28 +826,7 @@ describe("DesktopFeishuBotRuntime", () => {
       {
         getSession: async () => null,
       },
-      {
-        get: async () => null,
-        list: async () => ({
-          items: [
-            {
-              workspaceId: "workspace-a",
-              name: "Workspace A",
-              directoryPath: "E:\\workspace\\MaomiAgent",
-              isPinned: true,
-              tags: [],
-              createdAt: "2026-05-25T00:00:00.000Z",
-              updatedAt: "2026-05-25T00:00:00.000Z",
-            },
-          ],
-          meta: {
-            total: 1,
-            limit: 200,
-            offset: 0,
-            hasMore: false,
-          },
-        }),
-      },
+      createWorkspacePort(),
       createActionExecutor(),
       createSemanticClassifier(),
       createLogger(),
@@ -648,6 +866,11 @@ describe("DesktopFeishuBotRuntime", () => {
     const channel = new FakeChannel();
     const createdMetadata: Array<Record<string, unknown> | undefined> = [];
     const sentSessionIds: string[] = [];
+    const descriptor = buildChannelDedicatedWorkspaceDescriptor({
+      channel: "feishu",
+      scopeKey: "tenant-1:oc_1",
+      label: "tenant-1:oc_1",
+    });
     const runtime = new DesktopFeishuBotRuntime(
       {
         read: async () => snapshot,
@@ -712,29 +935,7 @@ describe("DesktopFeishuBotRuntime", () => {
           updatedAt: "2026-05-25T08:05:00.000Z",
         }),
       },
-      {
-        get: async (workspaceId) => ({
-          workspaceId,
-          name: "Workspace A",
-          directoryPath: "E:\\workspace\\MaomiAgent",
-          isPinned: true,
-          tags: [],
-          createdAt: "2026-05-25T09:00:00.000Z",
-          updatedAt: "2026-05-25T09:00:00.000Z",
-        }),
-        list: async () => ({
-          items: [{
-            workspaceId: "workspace-a",
-            name: "Workspace A",
-            directoryPath: "E:\\workspace\\MaomiAgent",
-            isPinned: true,
-            tags: [],
-            createdAt: "2026-05-25T09:00:00.000Z",
-            updatedAt: "2026-05-25T09:00:00.000Z",
-          }],
-          meta: { total: 1, limit: 200, offset: 0, hasMore: false },
-        }),
-      },
+      createWorkspacePort(),
       createActionExecutor(),
       createSemanticClassifier(),
       createLogger(),
@@ -785,7 +986,7 @@ describe("DesktopFeishuBotRuntime", () => {
     expect(snapshot.botRuntime.bindings[0]).toEqual(expect.objectContaining({
       key: "tenant-1:oc_1:root",
       sessionId: "session-2",
-      workspaceId: "workspace-a",
+      workspaceId: descriptor.workspaceId,
     }));
   });
 
@@ -875,29 +1076,7 @@ describe("DesktopFeishuBotRuntime", () => {
       {
         getSession: async () => null,
       },
-      {
-        get: async (workspaceId) => ({
-          workspaceId,
-          name: "Workspace A",
-          directoryPath: "E:\\workspace\\MaomiAgent",
-          isPinned: true,
-          tags: [],
-          createdAt: "2026-05-25T09:00:00.000Z",
-          updatedAt: "2026-05-25T09:00:00.000Z",
-        }),
-        list: async () => ({
-          items: [{
-            workspaceId: "workspace-a",
-            name: "Workspace A",
-            directoryPath: "E:\\workspace\\MaomiAgent",
-            isPinned: true,
-            tags: [],
-            createdAt: "2026-05-25T09:00:00.000Z",
-            updatedAt: "2026-05-25T09:00:00.000Z",
-          }],
-          meta: { total: 0, limit: 200, offset: 0, hasMore: false },
-        }),
-      },
+      createWorkspacePort(),
       createActionExecutor(),
       createSemanticClassifier(),
       createLogger(),
@@ -999,29 +1178,7 @@ describe("DesktopFeishuBotRuntime", () => {
           }),
         }),
       },
-      {
-        get: async (workspaceId) => ({
-          workspaceId,
-          name: "Workspace A",
-          directoryPath: "E:\\workspace\\MaomiAgent",
-          isPinned: true,
-          tags: [],
-          createdAt: "2026-05-25T09:00:00.000Z",
-          updatedAt: "2026-05-25T09:00:00.000Z",
-        }),
-        list: async () => ({
-          items: [{
-            workspaceId: "workspace-a",
-            name: "Workspace A",
-            directoryPath: "E:\\workspace\\MaomiAgent",
-            isPinned: true,
-            tags: [],
-            createdAt: "2026-05-25T09:00:00.000Z",
-            updatedAt: "2026-05-25T09:00:00.000Z",
-          }],
-          meta: { total: 0, limit: 200, offset: 0, hasMore: false },
-        }),
-      },
+      createWorkspacePort({ existingWorkspaceIds: ["workspace-a"] }),
       {
         executeSmartAssistantAction: async (input) => {
           executions.push({ ...input });
@@ -1136,29 +1293,7 @@ describe("DesktopFeishuBotRuntime", () => {
           }),
         }),
       },
-      {
-        get: async (workspaceId) => ({
-          workspaceId,
-          name: "Workspace A",
-          directoryPath: "E:\\workspace\\MaomiAgent",
-          isPinned: true,
-          tags: [],
-          createdAt: "2026-05-25T09:00:00.000Z",
-          updatedAt: "2026-05-25T09:00:00.000Z",
-        }),
-        list: async () => ({
-          items: [{
-            workspaceId: "workspace-a",
-            name: "Workspace A",
-            directoryPath: "E:\\workspace\\MaomiAgent",
-            isPinned: true,
-            tags: [],
-            createdAt: "2026-05-25T09:00:00.000Z",
-            updatedAt: "2026-05-25T09:00:00.000Z",
-          }],
-          meta: { total: 0, limit: 200, offset: 0, hasMore: false },
-        }),
-      },
+      createWorkspacePort({ existingWorkspaceIds: ["workspace-a"] }),
       {
         executeSmartAssistantAction: async () => {
           executed = true;
@@ -1251,13 +1386,7 @@ describe("DesktopFeishuBotRuntime", () => {
           }),
         }),
       },
-      {
-        get: async () => null,
-        list: async () => ({
-          items: [],
-          meta: { total: 0, limit: 200, offset: 0, hasMore: false },
-        }),
-      },
+      createWorkspacePort(),
       {
         executeSmartAssistantAction: async () => {
           throw new Error("late confirmation should not execute");
@@ -1365,29 +1494,7 @@ describe("DesktopFeishuBotRuntime", () => {
       {
         getSession: async () => null,
       },
-      {
-        get: async (workspaceId) => ({
-          workspaceId,
-          name: "Workspace A",
-          directoryPath: "E:\\workspace\\MaomiAgent",
-          isPinned: true,
-          tags: [],
-          createdAt: "2026-05-25T09:00:00.000Z",
-          updatedAt: "2026-05-25T09:00:00.000Z",
-        }),
-        list: async () => ({
-          items: [{
-            workspaceId: "workspace-a",
-            name: "Workspace A",
-            directoryPath: "E:\\workspace\\MaomiAgent",
-            isPinned: true,
-            tags: [],
-            createdAt: "2026-05-25T09:00:00.000Z",
-            updatedAt: "2026-05-25T09:00:00.000Z",
-          }],
-          meta: { total: 1, limit: 200, offset: 0, hasMore: false },
-        }),
-      },
+      createWorkspacePort(),
       {
         executeSmartAssistantAction: async () => {
           executionCount += 1;

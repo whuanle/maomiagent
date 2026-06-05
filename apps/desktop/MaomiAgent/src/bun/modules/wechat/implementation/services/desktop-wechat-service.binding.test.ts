@@ -22,9 +22,10 @@ import type {
   DesktopConversationStopMessageInput,
   DesktopConversationStopMessageResponse,
 } from "../../../conversation";
-import type { DesktopWorkspaceItem, DesktopWorkspaceQueryPort } from "../../../workspace";
+import type { DesktopWorkspaceItem, DesktopWorkspacePort } from "../../../workspace";
 import { WECHAT_AGENT_ID } from "../../../../../shared/conversation/managed-execution";
 import { createDefaultDesktopConversationWorkspaceSettings } from "../../../../../shared/desktop-conversation";
+import { buildChannelDedicatedWorkspaceDescriptor } from "../../../workspace/implementation/services/desktop-channel-dedicated-workspace";
 import { DesktopWechatService } from "./desktop-wechat-service";
 import type { WechatInboundMessage } from "./wechat-api-client";
 
@@ -298,9 +299,9 @@ function createInboundTextMessage(input: {
   };
 }
 
-function createMockWorkspaceQuery(workspaceId: string): Pick<DesktopWorkspaceQueryPort, "list"> {
+function createMockWorkspaceQuery(workspaceId: string): Pick<DesktopWorkspacePort, "get" | "list" | "create"> {
   const now = new Date().toISOString();
-  const item: DesktopWorkspaceItem = {
+  const items: DesktopWorkspaceItem[] = [{
     workspaceId,
     name: "Default Workspace",
     directoryPath: "E:/workspace/default",
@@ -308,22 +309,41 @@ function createMockWorkspaceQuery(workspaceId: string): Pick<DesktopWorkspaceQue
     tags: [],
     createdAt: now,
     updatedAt: now,
-  };
+  }];
 
   return {
+    get: async (requestedWorkspaceId: string) =>
+      items.find((item) => item.workspaceId === requestedWorkspaceId) ?? null,
     list: async () => ({
-      items: [item],
+      items,
       meta: {
-        total: 1,
-        limit: 1,
+        total: items.length,
+        limit: items.length,
         offset: 0,
         hasMore: false,
       },
     }),
+    create: async (input) => {
+      const createdAt = new Date().toISOString();
+      const item: DesktopWorkspaceItem = {
+        workspaceId: input.workspaceId ?? "workspace-created",
+        name: input.name ?? "workspace-created",
+        directoryPath: input.directoryPath,
+        isPinned: input.isPinned === true,
+        tags: input.tags ?? [],
+        createdAt,
+        updatedAt: createdAt,
+      };
+      items.push(item);
+      return {
+        created: true,
+        item,
+      };
+    },
   };
 }
 
-test("desktop wechat binding falls back to the first workspace when config has none", async () => {
+test("desktop wechat creates and reuses a dedicated workspace by account-side userId", async () => {
   const storagePath = join(
     tmpdir(),
     `maomi-desktop-wechat-binding-${Date.now()}-${Math.random().toString(16).slice(2)}.json`,
@@ -338,8 +358,21 @@ test("desktop wechat binding falls back to the first workspace when config has n
   );
 
   await service.getState();
+  (service as any).storage.accounts.push({
+    accountId: "wechat-account",
+    userId: "wxid_user_a",
+    token: "wechat-token",
+    enabled: true,
+    updatedAt: new Date().toISOString(),
+  });
 
-  const binding = await (service as any).resolveOrCreateBinding({
+  const descriptor = buildChannelDedicatedWorkspaceDescriptor({
+    channel: "wechat",
+    scopeKey: "wechat-user:wxid_user_a",
+    label: "wxid_user_a",
+  });
+
+  const firstBinding = await (service as any).resolveOrCreateBinding({
     accountId: "wechat-account",
     peerId: "peer-1",
     conversationKey: "wechat-account:peer-1",
@@ -348,9 +381,19 @@ test("desktop wechat binding falls back to the first workspace when config has n
     createdAt: new Date().toISOString(),
   });
 
-  expect(binding.workspaceId).toBe("workspace-fallback");
-  expect(binding.homeWorkspaceId).toBe("workspace-fallback");
-  expect(createSessionCalls[0]?.workspaceId).toBe("workspace-fallback");
+  const secondBinding = await (service as any).createWechatConversationBinding({
+    accountId: "wechat-account",
+    peerId: "peer-2",
+    conversationKey: "wechat-account:peer-2",
+    messageId: "message-2",
+    inboundText: "again",
+    createdAt: new Date().toISOString(),
+  });
+
+  expect(firstBinding.workspaceId).toBe(descriptor.workspaceId);
+  expect(firstBinding.homeWorkspaceId).toBe(descriptor.workspaceId);
+  expect(secondBinding.workspaceId).toBe(descriptor.workspaceId);
+  expect(createSessionCalls[0]?.workspaceId).toBe(descriptor.workspaceId);
   expect(createSessionCalls[0]?.selectedAgentId).toBe(WECHAT_AGENT_ID);
   expect(createSessionCalls[0]?.metadata).toEqual({
     source: "wechat",
@@ -364,11 +407,7 @@ test("desktop wechat binding falls back to the first workspace when config has n
       },
     },
   });
-  expect(binding.runtimeSessionVersion).toBe("wechat-capabilities-v2");
-
-  const state = await service.getState();
-  expect(state.config.selectedWorkspaceId).toBe("workspace-fallback");
-  expect(state.config.defaultExecutionWorkspaceId).toBe("workspace-fallback");
+  expect(firstBinding.runtimeSessionVersion).toBe("wechat-capabilities-v2");
 });
 
 test("desktop wechat recreates legacy bindings to bootstrap runtime capabilities", async () => {
@@ -386,6 +425,13 @@ test("desktop wechat recreates legacy bindings to bootstrap runtime capabilities
   );
 
   await service.getState();
+  (service as any).storage.accounts.push({
+    accountId: "wechat-account",
+    userId: "wxid_user_a",
+    token: "wechat-token",
+    enabled: true,
+    updatedAt: new Date().toISOString(),
+  });
   (service as any).storage.bindings.push({
     key: "wechat-account:peer-1",
     accountId: "wechat-account",
@@ -411,6 +457,48 @@ test("desktop wechat recreates legacy bindings to bootstrap runtime capabilities
   expect(binding.createdAt).toBe("2026-05-01T00:00:00.000Z");
   expect(binding.runtimeSessionVersion).toBe("wechat-capabilities-v2");
   expect(binding.lastMessageId).toBe("message-2");
+});
+
+test("desktop wechat falls back to account identity when userId is missing", async () => {
+  const storagePath = join(
+    tmpdir(),
+    `maomi-desktop-wechat-binding-legacy-account-${Date.now()}-${Math.random().toString(16).slice(2)}.json`,
+  );
+  const createSessionCalls: DesktopConversationCreateSessionInput[] = [];
+  const service = new DesktopWechatService(
+    createMockConfiguration(storagePath),
+    createMockLogger(),
+    createMockConversationCommand(createSessionCalls),
+    createMockWorkspaceQuery("workspace-fallback"),
+    createMockModelsQuery(),
+  );
+
+  await service.getState();
+  (service as any).storage.accounts.push({
+    accountId: "wechat-account-legacy",
+    token: "wechat-token",
+    enabled: true,
+    updatedAt: new Date().toISOString(),
+  });
+
+  const descriptor = buildChannelDedicatedWorkspaceDescriptor({
+    channel: "wechat",
+    scopeKey: "wechat-user:account:wechat-account-legacy",
+    label: "wechat-account-legacy",
+  });
+
+  const binding = await (service as any).resolveOrCreateBinding({
+    accountId: "wechat-account-legacy",
+    peerId: "peer-legacy",
+    conversationKey: "wechat-account-legacy:peer-legacy",
+    messageId: "message-legacy",
+    inboundText: "hello",
+    createdAt: new Date().toISOString(),
+  });
+
+  expect(binding.workspaceId).toBe(descriptor.workspaceId);
+  expect(binding.homeWorkspaceId).toBe(descriptor.workspaceId);
+  expect(createSessionCalls[0]?.workspaceId).toBe(descriptor.workspaceId);
 });
 
 test("desktop wechat captures the desktop and sends the image through the bound conversation", async () => {
@@ -662,6 +750,11 @@ test("desktop wechat merges burst messages into one conversation turn and one re
     enabled: true,
     updatedAt: "2026-05-19T08:30:00.000Z",
   });
+  const descriptor = buildChannelDedicatedWorkspaceDescriptor({
+    channel: "wechat",
+    scopeKey: "wechat-user:account:wechat-account",
+    label: "wechat-account",
+  });
   (service as any).storage.bindings.push({
     key: "wechat-account:peer-1",
     accountId: "wechat-account",
@@ -697,7 +790,7 @@ test("desktop wechat merges burst messages into one conversation turn and one re
   expect(sendMessageCalls).toHaveLength(1);
   expect(sendMessageCalls[0]).toMatchObject({
     sessionId: "existing-session",
-    workspaceId: "workspace-fallback",
+    workspaceId: descriptor.workspaceId,
     text: "第一条消息\n\n第二条消息",
     selectedAgentId: WECHAT_AGENT_ID,
   });

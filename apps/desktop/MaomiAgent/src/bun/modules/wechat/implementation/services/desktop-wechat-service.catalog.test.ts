@@ -21,7 +21,7 @@ import type {
   DesktopConversationSaveWorkspaceSettingsResponse,
   DesktopConversationSessionDetail,
 } from "../../../conversation";
-import type { DesktopWorkspaceQueryPort } from "../../../workspace";
+import type { DesktopWorkspacePort } from "../../../workspace";
 import { createDefaultDesktopConversationWorkspaceSettings } from "../../../../../shared/desktop-conversation";
 import { DesktopWechatService } from "./desktop-wechat-service";
 
@@ -164,8 +164,9 @@ function createMockConversationCommand(): DesktopConversationCommandPort {
   };
 }
 
-function createMockWorkspaceQuery(): Pick<DesktopWorkspaceQueryPort, "list"> {
+function createMockWorkspacePort(): Pick<DesktopWorkspacePort, "get" | "list" | "create"> {
   return {
+    get: async () => null,
     list: async () => ({
       items: [],
       meta: {
@@ -173,6 +174,18 @@ function createMockWorkspaceQuery(): Pick<DesktopWorkspaceQueryPort, "list"> {
         limit: 0,
         offset: 0,
         hasMore: false,
+      },
+    }),
+    create: async (input) => ({
+      created: true,
+      item: {
+        workspaceId: input.workspaceId ?? "workspace-created",
+        name: input.name ?? "workspace-created",
+        directoryPath: input.directoryPath,
+        isPinned: input.isPinned === true,
+        tags: input.tags ?? [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       },
     }),
   };
@@ -187,7 +200,7 @@ test("desktop wechat catalog aligns with latest capability baseline", async () =
     createMockConfiguration(storagePath),
     createMockLogger(),
     createMockConversationCommand(),
-    createMockWorkspaceQuery(),
+    createMockWorkspacePort(),
     createMockModelsQuery(),
   );
 

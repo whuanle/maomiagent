@@ -1,3 +1,4 @@
+import { mkdir } from "node:fs/promises";
 import {
   LoggerLevel,
   createLarkChannel,
@@ -15,7 +16,7 @@ import type {
 } from "../../../conversation";
 import type { DesktopFeishuActionExecutorPort } from "../../abstraction/ports/desktop-feishu-action-executor.ports";
 import type { RuntimeLogger } from "../../../logs";
-import type { DesktopWorkspaceQueryPort } from "../../../workspace";
+import type { DesktopWorkspacePort } from "../../../workspace";
 import type {
   DesktopFeishuBotConversationBindingSnapshot,
   DesktopFeishuBotPendingActionDecision,
@@ -50,6 +51,7 @@ import {
   type DesktopFeishuBotActorContext,
 } from "./desktop-feishu-bot-actor-context";
 import type { DesktopFeishuBotSemanticClassifierPort } from "./desktop-feishu-bot-semantic-classifier";
+import { buildChannelDedicatedWorkspaceDescriptor } from "../../../workspace/implementation/services/desktop-channel-dedicated-workspace";
 
 const FEISHU_BOT_MAX_BINDINGS = 100;
 const FEISHU_BOT_MAX_PROCESSED_MESSAGES = 40;
@@ -330,7 +332,7 @@ export class DesktopFeishuBotRuntime implements DesktopFeishuBotRuntimePort {
       "createSession" | "sendMessage"
     >,
     private readonly conversationQuery: Pick<DesktopConversationQueryPort, "getSession">,
-    private readonly workspaceQuery: Pick<DesktopWorkspaceQueryPort, "get" | "list">,
+    private readonly workspacePort: Pick<DesktopWorkspacePort, "get" | "list" | "create">,
     private readonly actionExecutor: Pick<DesktopFeishuActionExecutorPort, "executeSmartAssistantAction">,
     private readonly semanticClassifier: DesktopFeishuBotSemanticClassifierPort,
     private readonly logger: RuntimeLogger,
@@ -835,7 +837,10 @@ export class DesktopFeishuBotRuntime implements DesktopFeishuBotRuntimePort {
       }
     }
 
-    const workspaceId = await this.resolveExecutionWorkspaceId(input.snapshot);
+    const workspaceId = await this.resolveDedicatedWorkspaceId({
+      tenantKey: input.tenantKey,
+      chatId: input.chatId,
+    });
     const created = await this.conversationCommand.createSession({
       workspaceId,
       title: `Feishu ${input.chatId}`,
@@ -861,32 +866,30 @@ export class DesktopFeishuBotRuntime implements DesktopFeishuBotRuntimePort {
     return binding;
   }
 
-  private async resolveExecutionWorkspaceId(snapshot: DesktopFeishuStoreSnapshot) {
-    const explicitCandidates = [
-      trimText(snapshot.bot.defaultExecutionWorkspaceId),
-      trimText(snapshot.bot.selectedWorkspaceId),
-      ...(snapshot.bot.allowWorkspaceSwitch
-        ? (snapshot.bot.allowedExecutionWorkspaceIds ?? []).map((item) => trimText(item))
-        : []),
-    ].filter((item): item is string => Boolean(item));
+  private async resolveDedicatedWorkspaceId(input: {
+    tenantKey?: string;
+    chatId: string;
+  }) {
+    const scopeKey = `${trimText(input.tenantKey) ?? "default"}:${input.chatId}`;
+    const descriptor = buildChannelDedicatedWorkspaceDescriptor({
+      channel: "feishu",
+      scopeKey,
+      label: scopeKey,
+    });
 
-    for (const workspaceId of explicitCandidates) {
-      const existing = await this.workspaceQuery.get(workspaceId).catch(() => null);
-      if (existing?.workspaceId) {
-        return existing.workspaceId;
-      }
+    const existing = await this.workspacePort.get(descriptor.workspaceId).catch(() => null);
+    if (existing?.workspaceId) {
+      return existing.workspaceId;
     }
 
-    const list = await this.workspaceQuery.list({
-      limit: 200,
-      offset: 0,
-    }).catch(() => null);
-    const fallback = list?.items.find((item) => trimText(item.workspaceId));
-    if (fallback?.workspaceId) {
-      return fallback.workspaceId;
-    }
-
-    throw new Error("当前没有可用于飞书机器人的工作区。");
+    await mkdir(descriptor.directoryPath, { recursive: true });
+    const created = await this.workspacePort.create({
+      workspaceId: descriptor.workspaceId,
+      name: descriptor.name,
+      directoryPath: descriptor.directoryPath,
+      tags: ["channel", "feishu"],
+    });
+    return created.item.workspaceId;
   }
 
   private async persistBinding(binding: DesktopFeishuBotConversationBindingSnapshot) {

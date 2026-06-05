@@ -7,7 +7,7 @@ import type { RuntimeLogger } from "../../../logs";
 import type {
   DesktopWechatPort,
 } from "../../index";
-import type { DesktopWorkspaceQueryPort } from "../../../workspace";
+import type { DesktopWorkspacePort } from "../../../workspace";
 import type {
   DesktopConversationAttachmentInput,
   DesktopConversationCommandPort,
@@ -44,6 +44,7 @@ import {
 } from "./wechat-api-client";
 import { captureDesktopScreenshotForWechat } from "./wechat-desktop-capture";
 import { saveWechatInboundMediaItem } from "./wechat-media";
+import { buildChannelDedicatedWorkspaceDescriptor } from "../../../workspace/implementation/services/desktop-channel-dedicated-workspace";
 
 type WechatConversationBindingRecord = WechatStateView["bindings"][number] & {
   runtimeSessionVersion?: string;
@@ -766,7 +767,7 @@ export class DesktopWechatService implements DesktopWechatPort {
     private readonly configuration: DesktopConfigurationPort,
     private readonly logger: RuntimeLogger,
     private readonly conversationCommand: DesktopConversationCommandPort,
-    private readonly workspaceQuery: Pick<DesktopWorkspaceQueryPort, "list">,
+    private readonly workspacePort: Pick<DesktopWorkspacePort, "get" | "list" | "create">,
     private readonly modelsQuery: Pick<DesktopModelsQueryPort, "getRuntimeSelectionSnapshot">,
     private readonly captureDesktopScreenshot: typeof captureDesktopScreenshotForWechat = captureDesktopScreenshotForWechat,
   ) {
@@ -2077,26 +2078,28 @@ export class DesktopWechatService implements DesktopWechatPort {
     }
   }
 
-  private async resolveExecutionWorkspaceId(): Promise<string | undefined> {
-    const configuredWorkspaceId = trimText(this.storage.config.selectedWorkspaceId)
-      ?? trimText(this.storage.config.defaultExecutionWorkspaceId);
-    if (configuredWorkspaceId) {
-      return configuredWorkspaceId;
-    }
-
-    const workspaceList = await this.workspaceQuery.list({
-      limit: 1,
-      offset: 0,
+  private async resolveDedicatedWorkspaceId(accountId: string): Promise<string> {
+    const account = this.storage.accounts.find((item) => item.accountId === accountId);
+    const identityKey = trimText(account?.userId) ?? `account:${accountId}`;
+    const descriptor = buildChannelDedicatedWorkspaceDescriptor({
+      channel: "wechat",
+      scopeKey: `wechat-user:${identityKey}`,
+      label: trimText(account?.userId) ?? accountId,
     });
-    const fallbackWorkspaceId = trimText(workspaceList.items[0]?.workspaceId);
-    if (!fallbackWorkspaceId) {
-      return undefined;
+
+    const existing = await this.workspacePort.get(descriptor.workspaceId).catch(() => null);
+    if (existing?.workspaceId) {
+      return existing.workspaceId;
     }
 
-    this.storage.config.selectedWorkspaceId = fallbackWorkspaceId;
-    this.storage.config.defaultExecutionWorkspaceId = fallbackWorkspaceId;
-    this.storage.updatedAt = nowIso();
-    return fallbackWorkspaceId;
+    await fs.mkdir(descriptor.directoryPath, { recursive: true });
+    const created = await this.workspacePort.create({
+      workspaceId: descriptor.workspaceId,
+      name: descriptor.name,
+      directoryPath: descriptor.directoryPath,
+      tags: ["channel", "wechat"],
+    });
+    return created.item.workspaceId;
   }
 
   private async resolveOrCreateBinding(input: {
@@ -2146,11 +2149,7 @@ export class DesktopWechatService implements DesktopWechatPort {
     contextToken?: string;
     existing?: WechatConversationBindingRecord;
   }): Promise<WechatConversationBindingRecord> {
-    const workspaceId = input.existing?.workspaceId
-      ?? await this.resolveExecutionWorkspaceId();
-    if (!workspaceId) {
-      throw new Error("未配置 selectedWorkspaceId 或 defaultExecutionWorkspaceId，无法创建会话");
-    }
+    const workspaceId = await this.resolveDedicatedWorkspaceId(input.accountId);
 
     const created = await this.conversationCommand.createSession({
       workspaceId,
@@ -2168,7 +2167,7 @@ export class DesktopWechatService implements DesktopWechatPort {
       key: input.conversationKey,
       accountId: input.accountId,
       peerId: input.peerId,
-      homeWorkspaceId: trimText(this.storage.config.selectedWorkspaceId) ?? input.existing?.homeWorkspaceId,
+      homeWorkspaceId: workspaceId,
       workspaceId,
       sessionId: created.item.sessionId,
       createdAt: input.existing?.createdAt ?? input.createdAt,
