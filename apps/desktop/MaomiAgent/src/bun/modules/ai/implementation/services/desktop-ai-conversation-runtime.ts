@@ -628,6 +628,10 @@ function isTerminalExecutionTool(tool: ToolDescriptor): boolean {
   return tool.name === "terminal_execute";
 }
 
+function isTerminalOutputReadTool(tool: ToolDescriptor): boolean {
+  return tool.name === "terminal_read_output";
+}
+
 function isDedicatedWorkspaceFileEditTool(tool: ToolDescriptor): boolean {
   if (tool.name === "workspace_write_document") {
     return false;
@@ -658,18 +662,31 @@ function buildToolUsagePolicyLines(tools: readonly ToolDescriptor[]): string[] {
     "- Never emit fake tool syntax in assistant text, including <tool_call>, <function=...>, XML tags, JSON wrappers, or handwritten tool transcripts.",
   ];
   const hasTerminalExecution = tools.some((tool) => isTerminalExecutionTool(tool));
+  const hasTerminalOutputRead = tools.some((tool) => isTerminalOutputReadTool(tool));
   const preferredFileEditTools = tools.filter((tool) => isDedicatedWorkspaceFileEditTool(tool));
-  if (!hasTerminalExecution || preferredFileEditTools.length === 0) {
+  if (!hasTerminalExecution && !hasTerminalOutputRead) {
     return basePolicyLines;
   }
 
-  return [
-    ...basePolicyLines,
-    "- Prefer dedicated file-edit tools for creating or updating workspace files in one operation.",
-    "- If a file-edit tool can handle the target path, do not use terminal commands to assemble file contents line by line.",
-    "- Avoid shell file-writing patterns like echo >>, printf >, cat <<EOF, tee, Set-Content, Add-Content, and Out-File when a dedicated file-edit tool is available.",
-    "- Use terminal tools for running programs, tests, builds, version control, and environment inspection.",
-  ];
+  const lines = [...basePolicyLines];
+
+  if (preferredFileEditTools.length > 0) {
+    lines.push(
+      "- Prefer dedicated file-edit tools for creating or updating workspace files in one operation.",
+      "- If a file-edit tool can handle the target path, do not use terminal commands to assemble file contents line by line.",
+      "- Avoid shell file-writing patterns like echo >>, printf >, cat <<EOF, tee, Set-Content, Add-Content, and Out-File when a dedicated file-edit tool is available.",
+    );
+  }
+
+  if (hasTerminalExecution && hasTerminalOutputRead) {
+    lines.push(
+      "- When you need command output, run the underlying command once with terminal_execute and inspect the captured result with terminal_read_output.",
+      "- Avoid shell paging or truncation patterns like | more, | less, | head, | tail, or PowerShell Select-Object -First/-Last when terminal_read_output is available.",
+    );
+  }
+
+  lines.push("- Use terminal tools for running programs, tests, builds, version control, and environment inspection.");
+  return lines;
 }
 
 function readPlanModeToolAccessMetadata(tool: ToolDescriptor): PlanModeToolAccess | undefined {
@@ -781,6 +798,12 @@ const INEFFICIENT_TERMINAL_FILE_WRITE_PATTERNS = [
   /(?:^|[\s;(])(?:Set-Content|Add-Content|Out-File)\b/iu,
 ];
 
+const INEFFICIENT_TERMINAL_OUTPUT_CAPTURE_PATTERNS = [
+  /\|\s*(?:more|less)\b/iu,
+  /\|\s*(?:head|tail)\b/iu,
+  /\|\s*Select-Object\b[\s\S]*?(?:-First|-Last)\b/iu,
+];
+
 function isInefficientTerminalFileWriteCommand(command: string): boolean {
   const normalized = command.trim();
   if (!normalized) {
@@ -788,6 +811,15 @@ function isInefficientTerminalFileWriteCommand(command: string): boolean {
   }
 
   return INEFFICIENT_TERMINAL_FILE_WRITE_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+function isInefficientTerminalOutputCaptureCommand(command: string): boolean {
+  const normalized = command.trim();
+  if (!normalized) {
+    return false;
+  }
+
+  return INEFFICIENT_TERMINAL_OUTPUT_CAPTURE_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
 function readWorkspaceDocumentPathInput(value: unknown): string | undefined {
@@ -860,12 +892,14 @@ function buildToolPreferenceBlockedOutcome(input: {
   toolName: string;
   command: string;
   preferredToolNames: string[];
+  code?: string;
+  message?: string;
 }): ToolExecutionOutcome {
   return {
     kind: "failed",
     error: {
-      code: "terminal_file_edit_preferred_tool_required",
-      message: "Dedicated file-edit tools are available in this turn. Use them instead of terminal_execute to write file contents.",
+      code: input.code ?? "terminal_file_edit_preferred_tool_required",
+      message: input.message ?? "Dedicated file-edit tools are available in this turn. Use them instead of terminal_execute to write file contents.",
       retryable: false,
       metadata: {
         toolName: input.toolName,
@@ -976,6 +1010,37 @@ function guardTerminalFileEditPreference(input: {
     toolName: input.call.toolName,
     command,
     preferredToolNames,
+  });
+}
+
+function guardTerminalOutputReadPreference(input: {
+  call: ToolCallRecord;
+  descriptor: ToolDescriptor;
+  handlers: readonly RegisteredToolHandler[];
+}): ToolExecutionOutcome | undefined {
+  if (!isTerminalExecutionTool(input.descriptor)) {
+    return undefined;
+  }
+
+  const command = readTerminalCommandInput(input.call.input);
+  if (!command || !isInefficientTerminalOutputCaptureCommand(command)) {
+    return undefined;
+  }
+
+  const preferredToolNames = input.handlers
+    .map((handler) => handler.descriptor)
+    .filter((descriptor) => isTerminalOutputReadTool(descriptor))
+    .map((descriptor) => descriptor.name);
+  if (preferredToolNames.length === 0) {
+    return undefined;
+  }
+
+  return buildToolPreferenceBlockedOutcome({
+    toolName: input.call.toolName,
+    command,
+    preferredToolNames,
+    code: "terminal_output_read_preferred_tool_required",
+    message: "Run the underlying command with terminal_execute, then inspect the captured output with terminal_read_output instead of adding shell paging or truncation.",
   });
 }
 
@@ -2599,6 +2664,15 @@ class DesktopConversationCapabilityToolExecutor implements ToolExecutorPort {
       });
       if (blockedByPreference) {
         return blockedByPreference;
+      }
+
+      const blockedByOutputPreference = guardTerminalOutputReadPreference({
+        call,
+        descriptor,
+        handlers,
+      });
+      if (blockedByOutputPreference) {
+        return blockedByOutputPreference;
       }
     }
 

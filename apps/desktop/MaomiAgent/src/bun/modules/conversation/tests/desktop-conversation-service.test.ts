@@ -3898,6 +3898,151 @@ describe("DesktopConversationService", () => {
     }
   });
 
+  test("publishes terminal output reading policy when execute and read-output tools are both available", async () => {
+    const turnPort = new RecordingPromptTurnPort();
+    const fixture = createRuntimeBackedConversationService({
+      tempPrefix: "maomi-desktop-conversation-terminal-output-policy-",
+      turnPort,
+      toolSources: [
+        createStaticToolSource({
+          sourceId: "builtin.desktop.conversation",
+          toolName: "terminal_execute",
+          metadata: {
+            operationKind: "tool_execution",
+          },
+        }),
+        createStaticToolSource({
+          sourceId: "builtin.desktop.conversation",
+          toolName: "terminal_read_output",
+          metadata: {
+            operationKind: "file_read",
+          },
+        }),
+      ],
+    });
+
+    try {
+      const created = await fixture.service.createSession({
+        workspaceId: "workspace-1",
+        title: "Terminal output policy session",
+      });
+
+      await fixture.service.sendMessage({
+        sessionId: created.item.sessionId,
+        text: "先检查终端输出，再判断下一步。",
+      });
+
+      const toolsBlock = turnPort.prompts[0]?.systemBlocks.find((block) => block.metadata?.source === "desktop.runtime.tools")?.content;
+      expect(toolsBlock).toContain("terminal_execute");
+      expect(toolsBlock).toContain("terminal_read_output");
+      expect(toolsBlock).toContain("run the underlying command once with terminal_execute");
+      expect(toolsBlock).toContain("Avoid shell paging or truncation patterns like | more, | less, | head, | tail");
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  test("blocks terminal output truncation commands when terminal_read_output is available", async () => {
+    const terminalDescriptor = {
+      name: "terminal_execute",
+      description: "Execute a terminal command",
+      inputSchema: {
+        type: "object",
+        properties: {
+          sessionId: { type: "string" },
+          command: { type: "string" },
+        },
+        required: ["sessionId", "command"],
+        additionalProperties: false,
+      },
+      metadata: {
+        operationKind: "tool_execution",
+        operationLabel: "Execute terminal command",
+      },
+    };
+    const readOutputDescriptor = {
+      name: "terminal_read_output",
+      description: "Read terminal output",
+      inputSchema: {
+        type: "object",
+        properties: {
+          sessionId: { type: "string" },
+        },
+        required: ["sessionId"],
+        additionalProperties: false,
+      },
+      metadata: {
+        operationKind: "file_read",
+        operationLabel: "Read terminal output",
+      },
+    };
+    let executedTerminalCommand = false;
+    const fixture = createRuntimeBackedConversationService({
+      tempPrefix: "maomi-desktop-conversation-block-output-truncation-",
+      turnPort: new ScriptedCapabilityToolTurnPort({
+        toolName: "terminal_execute",
+        input: {
+          sessionId: "term_1",
+          command: "git diff | more",
+        },
+        completionText: "Completed after blocked output truncation",
+      }),
+      toolSources: [{
+        async listTools() {
+          return {
+            source: {
+              sourceId: "builtin.desktop.conversation",
+              signature: "builtin.desktop.conversation:terminal-output-preference",
+            },
+            tools: [readOutputDescriptor, terminalDescriptor],
+          };
+        },
+      }],
+      toolHandlers: [
+        {
+          descriptor: readOutputDescriptor,
+          async execute() {
+            return {
+              kind: "completed" as const,
+              output: { ok: true },
+            };
+          },
+        },
+        {
+          descriptor: terminalDescriptor,
+          async execute() {
+            executedTerminalCommand = true;
+            return {
+              kind: "completed" as const,
+              output: { ok: true },
+            };
+          },
+        },
+      ],
+    });
+
+    try {
+      const created = await fixture.service.createSession({
+        workspaceId: "workspace-1",
+        title: "Blocked terminal truncation session",
+      });
+
+      const result = await fixture.service.sendMessage({
+        sessionId: created.item.sessionId,
+        text: "看看 git diff 的输出，先别总结。",
+      });
+
+      expect(executedTerminalCommand).toBe(false);
+      expect(result.detail.toolCalls).toHaveLength(1);
+      expect(result.detail.toolCalls[0]?.status).toBe("failed");
+      expect(result.detail.toolCalls[0]?.error).toEqual(expect.objectContaining({
+        code: "terminal_output_read_preferred_tool_required",
+      }));
+    } finally {
+      fixture.dispose();
+    }
+  });
+
   test("allows two sessions to send messages concurrently", async () => {
     const turnPort = new ScriptedConcurrentSessionTurnPort();
     const harness = createRuntimeBackedConversationService({
