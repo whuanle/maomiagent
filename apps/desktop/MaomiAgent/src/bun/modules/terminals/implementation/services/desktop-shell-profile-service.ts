@@ -206,16 +206,26 @@ export class DesktopShellProfileService {
       return null;
     }
 
-    const candidate = path.win32.join(path.win32.dirname(gitPath), "..", "..", "bin", "bash.exe");
-    if (!this.probe.fileExists(candidate)) {
-      return null;
+    const candidates = [
+      // Common Git for Windows layout when `git.exe` resolves to `Git\\cmd\\git.exe`.
+      path.win32.join(path.win32.dirname(gitPath), "..", "bin", "bash.exe"),
+      // Alternate layouts when `git.exe` resolves inside `Git\\mingw64\\bin` or `Git\\usr\\bin`.
+      path.win32.join(path.win32.dirname(gitPath), "..", "..", "bin", "bash.exe"),
+    ];
+
+    for (const candidate of candidates) {
+      if (!this.probe.fileExists(candidate)) {
+        continue;
+      }
+
+      return {
+        resolvedKind: "bash",
+        executable: candidate,
+        acceptable: true,
+      };
     }
 
-    return {
-      resolvedKind: "bash",
-      executable: candidate,
-      acceptable: true,
-    };
+    return null;
   }
 
   private resolveWindowsComSpec(): ShellCandidate | null {

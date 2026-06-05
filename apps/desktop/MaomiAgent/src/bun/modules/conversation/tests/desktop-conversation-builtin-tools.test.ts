@@ -773,6 +773,9 @@ describe("desktop conversation builtin tools", () => {
 
     const executeTool = catalog.tools.find((tool) => tool.name === "terminal_execute");
     expect(executeTool?.description).toContain("cmd.exe");
+    expect(executeTool?.description).toContain("double quotes");
+    expect(executeTool?.description).toContain("`call` before `.cmd` or `.bat`");
+    expect(executeTool?.description).toContain("`terminal_read_output`");
     expect(executeTool?.description).not.toContain("Get-ChildItem");
   });
 

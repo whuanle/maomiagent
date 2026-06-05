@@ -1,6 +1,12 @@
+import path from "node:path";
+
 import { describe, expect, test } from "bun:test";
 
 import { DesktopShellProfileService, type DesktopShellExecutableProbe } from "../implementation/services/desktop-shell-profile-service";
+
+function normalizeWindowsPath(value: string): string {
+  return path.win32.normalize(value).replaceAll("\\", "/").toLowerCase();
+}
 
 function createProbe(map: Record<string, string | null | undefined>): DesktopShellExecutableProbe {
   return {
@@ -11,7 +17,10 @@ function createProbe(map: Record<string, string | null | undefined>): DesktopShe
       return map[name] ?? null;
     },
     fileExists(filePath) {
-      return Object.values(map).includes(filePath);
+      const normalizedTarget = normalizeWindowsPath(filePath);
+      return Object.values(map).some((candidate) => (
+        typeof candidate === "string" && normalizeWindowsPath(candidate) === normalizedTarget
+      ));
     },
   };
 }
@@ -78,6 +87,25 @@ describe("DesktopShellProfileService", () => {
     expect(service.resolvePreferredShell()).toMatchObject({
       resolvedKind: "cmd",
       executable: "C:/Windows/System32/cmd.exe",
+      source: "preferred",
+    });
+  });
+
+  test("prefers Git Bash before cmd when PowerShell-family shells are unavailable", () => {
+    const service = new DesktopShellProfileService({
+      platform: "win32",
+      probe: createProbe({
+        git: "C:/Program Files/Git/cmd/git.exe",
+        COMSPEC: "C:/Windows/System32/cmd.exe",
+        "C:/Program Files/Git/bin/bash.exe": "C:/Program Files/Git/bin/bash.exe",
+      }),
+    });
+
+    expect(service.resolvePreferredShell()).toMatchObject({
+      resolvedKind: "bash",
+      executable: expect.stringMatching(/git[\\/]+bin[\\/]+bash\.exe$/i),
+      displayName: "bash",
+      isPosix: true,
       source: "preferred",
     });
   });
