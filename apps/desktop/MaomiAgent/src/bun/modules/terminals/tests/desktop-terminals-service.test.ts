@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import type { RuntimeLogger } from "../../logs";
 import { DesktopTerminalsService } from "../implementation/services/desktop-terminals-service";
+import type { DesktopShellProfile } from "../implementation/services/desktop-shell-profile.models";
 
 function createLogRecord(level: "debug" | "info" | "warn" | "error") {
   return {
@@ -75,6 +76,22 @@ afterEach(async () => {
 
 let currentService: DesktopTerminalsService | null = null;
 
+function createShellProfile(profile: Partial<DesktopShellProfile> = {}): DesktopShellProfile {
+  return {
+    requestedKind: null,
+    resolvedKind: "cmd",
+    executable: "C:/Windows/System32/cmd.exe",
+    args: ["/D"],
+    displayName: "cmd.exe",
+    acceptable: true,
+    isPowerShell: false,
+    isPosix: false,
+    supportsAndAnd: true,
+    source: "preferred",
+    ...profile,
+  };
+}
+
 describe("DesktopTerminalsService", () => {
   test("creates a session, executes a command, and reads output", async () => {
     const service = new DesktopTerminalsService({
@@ -138,5 +155,38 @@ describe("DesktopTerminalsService", () => {
       shellKind: process.platform === "win32" ? "powershell" : "sh",
       title: "missing-cwd",
     })).rejects.toThrow(/Terminal working directory is not accessible/i);
+  });
+
+  test("stores requested and resolved shell metadata on created sessions", async () => {
+    const service = new DesktopTerminalsService({
+      async get() {
+        return null;
+      },
+    }, logger, {
+      resolvePreferredShell() {
+        return createShellProfile();
+      },
+      resolveExplicitShell() {
+        throw new Error("not used");
+      },
+      listAvailableShells() {
+        return [createShellProfile()];
+      },
+    });
+    currentService = service;
+
+    const session = await service.create({
+      title: "shell-profile",
+    });
+    activeSessionIds.add(session.sessionId);
+
+    expect(session.shellKind).toBe("cmd");
+    expect(session.requestedShellKind).toBeUndefined();
+    expect(session.resolvedShellKind).toBe("cmd");
+    expect(session.resolvedShellCommand).toBe("C:/Windows/System32/cmd.exe");
+    expect(session.shellDisplayName).toBe("cmd.exe");
+
+    await service.close(session.sessionId);
+    activeSessionIds.delete(session.sessionId);
   });
 });

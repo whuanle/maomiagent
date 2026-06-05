@@ -16,6 +16,7 @@ import {
   DESKTOP_TERMINALS_PORT,
   DESKTOP_TERMINALS_QUERY_PORT,
 } from "../abstraction/tokens/desktop-terminals.tokens";
+import { DesktopShellProfileService } from "../implementation/services/desktop-shell-profile-service";
 
 export const DESKTOP_TERMINALS_SERVICE_TOKEN =
   createServiceToken<DesktopTerminalsService>("desktop.terminals.service");
@@ -36,6 +37,7 @@ export class DesktopTerminalsModule extends DependencyModuleBase {
             source: "desktop",
             module: "desktop.terminals",
           }),
+          new DesktopShellProfileService(),
         );
       },
       source: context.module.moduleId,

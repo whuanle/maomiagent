@@ -18,6 +18,8 @@ import type {
 } from "../../abstraction/models/desktop-terminals.models";
 import type { DesktopTerminalsPort } from "../../abstraction/ports/desktop-terminals.ports";
 import type { DesktopWorkspaceQueryPort } from "../../../workspace";
+import { DesktopShellProfileService } from "./desktop-shell-profile-service";
+import type { DesktopShellProfile } from "./desktop-shell-profile.models";
 
 const DEFAULT_OUTPUT_LIMIT = 24_000;
 const MAX_OUTPUT_CHARS = 200_000;
@@ -205,37 +207,6 @@ function resolveDefaultShellKind(): DesktopTerminalShellKind {
   return process.platform === "win32" ? "powershell" : "sh";
 }
 
-function resolveShellLaunch(kind: DesktopTerminalShellKind): {
-  command: string;
-  args: string[];
-} {
-  if (kind === "cmd") {
-    return {
-      command: "cmd.exe",
-      args: ["/D", "/K"],
-    };
-  }
-
-  if (kind === "powershell") {
-    return {
-      command: "powershell.exe",
-      args: ["-NoLogo", "-NoProfile", "-NoExit"],
-    };
-  }
-
-  if (kind === "bash") {
-    return {
-      command: "bash",
-      args: ["--noprofile", "--norc", "-i"],
-    };
-  }
-
-  return {
-    command: "sh",
-    args: ["-i"],
-  };
-}
-
 function normalizeTerminalDimension(value: number, fallback: number, minimum: number): number {
   if (!Number.isFinite(value)) {
     return fallback;
@@ -305,6 +276,10 @@ export class DesktopTerminalsService implements DesktopTerminalsPort {
   constructor(
     private readonly workspaceQuery: Pick<DesktopWorkspaceQueryPort, "get">,
     private readonly logger: RuntimeLogger,
+    private readonly shellProfiles: Pick<
+      DesktopShellProfileService,
+      "resolvePreferredShell" | "resolveExplicitShell" | "listAvailableShells"
+    > = new DesktopShellProfileService(),
   ) {}
 
   async list(input: DesktopTerminalListQuery = {}): Promise<DesktopTerminalSessionListResponse> {
@@ -338,88 +313,59 @@ export class DesktopTerminalsService implements DesktopTerminalsPort {
   }
 
   async create(input: DesktopTerminalCreateInput): Promise<DesktopTerminalSessionRecord> {
-    const shellKind = input.shellKind ?? resolveDefaultShellKind();
+    const requestedShellKind = input.shellKind;
     const workspaceId = normalizeOptionalText(input.workspaceId);
     const workspace = workspaceId ? await this.workspaceQuery.get(workspaceId) : null;
     const cwd = normalizeOptionalText(input.cwd) ?? workspace?.directoryPath ?? homedir();
-    const launch = resolveShellLaunch(shellKind);
     const sessionId = createSessionId();
     const createdAt = nowIso();
     const cols = DEFAULT_TERMINAL_COLS;
     const rows = DEFAULT_TERMINAL_ROWS;
     const title = normalizeOptionalText(input.title)
       ?? workspace?.name
-      ?? `${shellKind} ${createdAt.slice(11, 16)}`;
+      ?? `${requestedShellKind ?? resolveDefaultShellKind()} ${createdAt.slice(11, 16)}`;
 
-    const child = spawn(resolveTerminalHostCommand(), ["-e", PTY_SESSION_HOST_SOURCE], {
-      cwd: TERMINAL_HOST_RUNTIME_DIR,
-      env: {
-        ...process.env,
-        MAOMI_TERMINAL_CONFIG: JSON.stringify({
-          command: launch.command,
-          args: launch.args,
-          cols,
-          rows,
-          cwd,
-          name: "xterm-256color",
-          useConpty: true,
-        }),
-      },
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-    });
+    const profiles = this.resolveShellProfilesForCreate(requestedShellKind);
+    let lastError: unknown = null;
 
-    const session: InternalTerminalSession = {
-      record: {
-        sessionId,
-        title,
-        shellKind,
-        status: "running",
-        cwd,
-        ...(workspaceId ? { workspaceId } : {}),
-        ...(workspace?.name ? { workspaceName: workspace.name } : {}),
-        ...(typeof child.pid === "number" ? { pid: child.pid } : {}),
-        cols,
-        rows,
-        createdAt,
-        updatedAt: createdAt,
-      },
-      process: child,
-      output: "",
-      revision: 1,
-      stdoutBuffer: "",
-      ready: createDeferred<void>(),
-      exited: false,
-    };
-
-    this.sessions.set(sessionId, session);
-    this.bindProcess(session);
-
-    try {
-      await Promise.race([
-        session.ready.promise,
-        new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error("Timed out waiting for terminal host.")), TERMINAL_READY_TIMEOUT_MS);
-        }),
-      ]);
-      await this.logger.info("Desktop terminal session created", {
-        context: {
+    for (const profile of profiles) {
+      try {
+        const session = await this.createSessionWithProfile({
           sessionId,
-          shellKind,
+          title,
           cwd,
           workspaceId,
-        },
-      });
-      return { ...session.record };
-    } catch (error) {
-      this.sessions.delete(sessionId);
-      try {
-        child.kill();
-      } catch {
-        // Ignore cleanup failures while create is already failing.
+          workspaceName: workspace?.name,
+          createdAt,
+          cols,
+          rows,
+          requestedShellKind,
+          profile,
+        });
+
+        await this.logger.info("Desktop terminal session created", {
+          context: {
+            sessionId,
+            shellKind: session.record.shellKind,
+            resolvedShellKind: session.record.resolvedShellKind,
+            cwd,
+            workspaceId,
+          },
+        });
+        return { ...session.record };
+      } catch (error) {
+        lastError = error;
+        if (requestedShellKind) {
+          throw error;
+        }
       }
-      throw error;
     }
+
+    if (lastError) {
+      throw lastError;
+    }
+
+    throw new Error("Failed to resolve a terminal shell profile.");
   }
 
   async execute(sessionId: string, input: DesktopTerminalExecuteInput): Promise<DesktopTerminalSessionRecord | null> {
@@ -509,6 +455,101 @@ export class DesktopTerminalsService implements DesktopTerminalsPort {
       sessionId,
       closed: true,
     };
+  }
+
+  private resolveShellProfilesForCreate(requestedShellKind: DesktopTerminalShellKind | undefined): DesktopShellProfile[] {
+    if (requestedShellKind) {
+      return [this.shellProfiles.resolveExplicitShell(requestedShellKind)];
+    }
+
+    const preferred = this.shellProfiles.resolvePreferredShell();
+    const alternatives = this.shellProfiles.listAvailableShells()
+      .filter((profile) => profile.acceptable)
+      .filter((profile) =>
+        !(profile.resolvedKind === preferred.resolvedKind && profile.executable === preferred.executable));
+    return [preferred, ...alternatives];
+  }
+
+  private async createSessionWithProfile(input: {
+    sessionId: string;
+    title: string;
+    cwd: string;
+    workspaceId?: string;
+    workspaceName?: string;
+    createdAt: string;
+    cols: number;
+    rows: number;
+    requestedShellKind?: DesktopTerminalShellKind;
+    profile: DesktopShellProfile;
+  }): Promise<InternalTerminalSession> {
+    const child = spawn(resolveTerminalHostCommand(), ["-e", PTY_SESSION_HOST_SOURCE], {
+      cwd: TERMINAL_HOST_RUNTIME_DIR,
+      env: {
+        ...process.env,
+        MAOMI_TERMINAL_CONFIG: JSON.stringify({
+          command: input.profile.executable,
+          args: input.profile.args,
+          cols: input.cols,
+          rows: input.rows,
+          cwd: input.cwd,
+          name: "xterm-256color",
+          useConpty: true,
+        }),
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
+
+    const shellKind: DesktopTerminalShellKind = input.profile.resolvedKind === "pwsh"
+      ? "powershell"
+      : input.profile.resolvedKind;
+    const session: InternalTerminalSession = {
+      record: {
+        sessionId: input.sessionId,
+        title: input.title,
+        shellKind,
+        ...(input.requestedShellKind ? { requestedShellKind: input.requestedShellKind } : {}),
+        resolvedShellKind: input.profile.resolvedKind,
+        resolvedShellCommand: input.profile.executable,
+        shellDisplayName: input.profile.displayName,
+        status: "running",
+        cwd: input.cwd,
+        ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+        ...(input.workspaceName ? { workspaceName: input.workspaceName } : {}),
+        ...(typeof child.pid === "number" ? { pid: child.pid } : {}),
+        cols: input.cols,
+        rows: input.rows,
+        createdAt: input.createdAt,
+        updatedAt: input.createdAt,
+      },
+      process: child,
+      output: "",
+      revision: 1,
+      stdoutBuffer: "",
+      ready: createDeferred<void>(),
+      exited: false,
+    };
+
+    this.sessions.set(input.sessionId, session);
+    this.bindProcess(session);
+
+    try {
+      await Promise.race([
+        session.ready.promise,
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error("Timed out waiting for terminal host.")), TERMINAL_READY_TIMEOUT_MS);
+        }),
+      ]);
+      return session;
+    } catch (error) {
+      this.sessions.delete(input.sessionId);
+      try {
+        child.kill();
+      } catch {
+        // Ignore cleanup failures while create is already failing.
+      }
+      throw error;
+    }
   }
 
   private bindProcess(session: InternalTerminalSession) {

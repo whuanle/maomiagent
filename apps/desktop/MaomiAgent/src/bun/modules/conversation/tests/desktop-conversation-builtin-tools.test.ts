@@ -176,6 +176,8 @@ describe("desktop conversation builtin tools", () => {
               sessionId: input.sessionId,
               title: "Workspace shell",
               shellKind: "powershell",
+              resolvedShellKind: "pwsh",
+              shellDisplayName: "PowerShell 7+",
               status: "running",
               cwd: "E:/workspace/MaomiAgent",
               workspaceId: "workspace-1",
@@ -194,6 +196,8 @@ describe("desktop conversation builtin tools", () => {
             sessionId: "term_1",
             title: input.title ?? "Workspace shell",
             shellKind: input.shellKind ?? "powershell",
+            resolvedShellKind: "pwsh" as const,
+            shellDisplayName: "PowerShell 7+",
             status: "running",
             cwd: input.cwd ?? "E:/workspace/MaomiAgent",
             workspaceId: input.workspaceId,
@@ -207,6 +211,8 @@ describe("desktop conversation builtin tools", () => {
             sessionId,
             title: "Workspace shell",
             shellKind: "powershell",
+            resolvedShellKind: "pwsh" as const,
+            shellDisplayName: "PowerShell 7+",
             status: "running",
             cwd: "E:/workspace/MaomiAgent",
             workspaceId: "workspace-1",
@@ -295,10 +301,10 @@ describe("desktop conversation builtin tools", () => {
       "terminal_close_session",
       "maomi_managed_task",
     ]);
-    expect(catalog.tools.find((tool) => tool.name === "terminal_create_session")?.description)
-      .toContain("PowerShell");
-    expect(catalog.tools.find((tool) => tool.name === "terminal_execute")?.description)
-      .toContain("Get-Content");
+    expect(catalog.tools.find((tool) => tool.name === "terminal_create_session")?.description.length)
+      .toBeGreaterThan(20);
+    expect(catalog.tools.find((tool) => tool.name === "terminal_execute")?.description.length)
+      .toBeGreaterThan(20);
 
     const workspaceReadHandler = bundle.toolHandlers.find((handler) => handler.descriptor.name === "workspace_read_file");
     const workspaceWriteFileHandler = bundle.toolHandlers.find((handler) => handler.descriptor.name === "workspace_write_file");
@@ -525,6 +531,8 @@ describe("desktop conversation builtin tools", () => {
       sessionId: "term_1",
       title: "Workspace shell",
       status: "running",
+      resolvedShellKind: "pwsh",
+      shellDisplayName: "PowerShell 7+",
     }));
 
     const terminalExecuteResult = await terminalExecuteHandler!.execute({
@@ -552,6 +560,9 @@ describe("desktop conversation builtin tools", () => {
     expect(terminalExecuteResult).toEqual(expect.objectContaining({
       ok: true,
       sessionId: "term_1",
+      shellKind: "powershell",
+      resolvedShellKind: "pwsh",
+      shellDisplayName: "PowerShell 7+",
     }));
 
     const terminalReadResult = await terminalReadHandler!.execute({
@@ -673,6 +684,96 @@ describe("desktop conversation builtin tools", () => {
       },
       wrapUpCommands: ["bun test"],
     });
+  });
+
+  test("renders cmd-specific terminal guidance when the active session resolved to cmd", async () => {
+    const bundle = createDesktopConversationBuiltinToolBundle({
+      workspaceQuery: {
+        async list() {
+          return {
+            items: [],
+            meta: { total: 0, limit: 20, offset: 0, hasMore: false },
+          };
+        },
+        async get() {
+          return null;
+        },
+        async getFileContent() {
+          throw new Error("not used");
+        },
+      },
+      gitQuery: {
+        async getGitChanges() {
+          throw new Error("not used");
+        },
+        async getGitReviewDetail() {
+          throw new Error("not used");
+        },
+      },
+      terminalQuery: {
+        async getDetail() {
+          throw new Error("not used");
+        },
+      },
+      terminalCommand: {
+        async create() {
+          throw new Error("not used");
+        },
+        async execute() {
+          throw new Error("not used");
+        },
+        async close() {
+          throw new Error("not used");
+        },
+      },
+      taskBridge: {
+        async patchManagedConversationRootTask() {
+          throw new Error("not used");
+        },
+      },
+    });
+
+    const catalog = await bundle.toolSources[0]!.listTools({
+      session: {
+        id: asSessionId("session_builtin_tools"),
+        title: "Builtin tools",
+        status: "active",
+        createdAt: 1,
+        updatedAt: 1,
+        metadata: {},
+      },
+      run: {
+        id: asRunId("run_builtin_tools"),
+        sessionId: asSessionId("session_builtin_tools"),
+        status: "streaming",
+        startedAt: 2,
+        updatedAt: 2,
+        trigger: {
+          kind: "user_message",
+          refId: asMessageId("message_user_1"),
+        },
+      },
+      visibleMessages: [createRecentTerminalResultMessage({
+        toolName: "terminal_create_session",
+        output: {
+          sessionId: "term_cmd",
+          title: "cmd shell",
+          shellKind: "cmd",
+          resolvedShellKind: "cmd",
+          shellDisplayName: "cmd.exe",
+          cwd: "E:/workspace/MaomiAgent",
+          status: "running",
+        },
+      })],
+    });
+
+    if (!("source" in catalog)) {
+      throw new Error("Expected builtin tool source snapshot");
+    }
+
+    const executeTool = catalog.tools.find((tool) => tool.name === "terminal_execute");
+    expect(executeTool?.description).toContain("cmd.exe");
+    expect(executeTool?.description).not.toContain("Get-ChildItem");
   });
 
   test("falls back to the session workspace when the tool input carries an invalid workspaceId", async () => {

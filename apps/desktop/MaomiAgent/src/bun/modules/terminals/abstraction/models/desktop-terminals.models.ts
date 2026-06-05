@@ -1,3 +1,5 @@
+import type { DesktopResolvedShellKind } from "../../implementation/services/desktop-shell-profile.models";
+
 export type DesktopTerminalShellKind = "powershell" | "cmd" | "bash" | "sh";
 
 export type DesktopTerminalStatus = "running" | "exited" | "failed" | "closed";
@@ -12,6 +14,10 @@ export type DesktopTerminalSessionRecord = {
   sessionId: string;
   title: string;
   shellKind: DesktopTerminalShellKind;
+  requestedShellKind?: DesktopTerminalShellKind;
+  resolvedShellKind?: DesktopResolvedShellKind;
+  resolvedShellCommand?: string;
+  shellDisplayName?: string;
   status: DesktopTerminalStatus;
   cwd: string;
   workspaceId?: string;

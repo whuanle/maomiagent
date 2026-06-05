@@ -4,16 +4,23 @@ import type { ToolSource } from "#maomiagent/kernel/src/host/tools";
 
 import type { DesktopGitQueryPort, DesktopGitReviewScope } from "../../../git";
 import type {
+  DesktopResolvedShellKind,
   DesktopTerminalShellKind,
   DesktopTerminalsCommandPort,
   DesktopTerminalsQueryPort,
 } from "../../../terminals";
+import { DesktopShellProfileService } from "../../../terminals";
 import type { DesktopConversationTaskBridgePort } from "../../../tasks";
 import type {
   DesktopWorkspaceCommandPort,
   DesktopWorkspaceItem,
   DesktopWorkspaceQueryPort,
 } from "../../../workspace";
+import {
+  normalizeDesktopTerminalPromptShell,
+  renderDesktopTerminalCreateSessionDescription,
+  renderDesktopTerminalExecuteDescription,
+} from "./desktop-terminal-shell-prompt";
 
 type DesktopConversationBuiltinToolBundleOptions = {
   workspaceQuery: Pick<DesktopWorkspaceQueryPort, "list" | "get" | "getFileContent">;
@@ -198,7 +205,7 @@ const MANAGED_TASK_DESCRIPTOR: ToolDescriptor = {
 
 const TERMINAL_CREATE_SESSION_DESCRIPTOR: ToolDescriptor = {
   name: "terminal_create_session",
-  description: "Create a terminal session that can be reused for command execution and output inspection. On Windows, prefer PowerShell sessions and PowerShell-native command syntax unless the workspace explicitly requires another shell.",
+  description: "Create a terminal session that can be reused for command execution and output inspection.",
   inputSchema: {
     type: "object",
     properties: {
@@ -222,7 +229,7 @@ const TERMINAL_CREATE_SESSION_DESCRIPTOR: ToolDescriptor = {
 
 const TERMINAL_EXECUTE_DESCRIPTOR: ToolDescriptor = {
   name: "terminal_execute",
-  description: "Execute one command in an existing terminal session. Always put the literal command text in `command`. On Windows, prefer PowerShell-native commands such as `Get-ChildItem` or `Get-Content` instead of mixing Unix aliases or `cmd /c` unless the workspace explicitly requires them.",
+  description: "Execute one command in an existing terminal session. Always put the literal command text in `command`.",
   inputSchema: {
     type: "object",
     properties: {
@@ -453,6 +460,12 @@ function normalizeTerminalShellKind(value: unknown): DesktopTerminalShellKind | 
     : undefined;
 }
 
+function normalizeResolvedTerminalShellKind(value: unknown): DesktopResolvedShellKind | undefined {
+  return value === "pwsh" || value === "powershell" || value === "cmd" || value === "bash" || value === "sh"
+    ? value
+    : undefined;
+}
+
 function readRootTaskId(metadata: unknown): string | undefined {
   return isRecord(metadata)
     ? normalizeOptionalText(metadata.linkedRootTaskId) ?? normalizeOptionalText(metadata.rootTaskId)
@@ -480,11 +493,42 @@ function buildCompletionContract(input: Record<string, unknown>): Record<string,
 }
 
 function createStaticToolSource(descriptors: ToolDescriptor[]): ToolSource {
+  const shellProfiles = new DesktopShellProfileService();
+
   return {
-    async listTools() {
+    async listTools(input) {
+      const preferredShell = (() => {
+        try {
+          const profile = shellProfiles.resolvePreferredShell();
+          return normalizeDesktopTerminalPromptShell({
+            resolvedShellKind: profile.resolvedKind,
+            shellDisplayName: profile.displayName,
+          });
+        } catch {
+          return normalizeDesktopTerminalPromptShell({ shellKind: "sh" });
+        }
+      })();
+      const activeShell = resolveRecentTerminalPromptShell(input.visibleMessages ?? []) ?? preferredShell;
+
       return {
         source: BUILTIN_TOOL_SOURCE,
-        tools: descriptors,
+        tools: descriptors.map((descriptor) => {
+          if (descriptor.name === "terminal_create_session") {
+            return {
+              ...descriptor,
+              description: renderDesktopTerminalCreateSessionDescription(preferredShell),
+            };
+          }
+
+          if (descriptor.name === "terminal_execute") {
+            return {
+              ...descriptor,
+              description: renderDesktopTerminalExecuteDescription(activeShell),
+            };
+          }
+
+          return descriptor;
+        }),
       };
     },
   };
@@ -860,6 +904,9 @@ function createTerminalCreateSessionHandler(
           sessionId: session.sessionId,
           title: session.title,
           shellKind: session.shellKind,
+          ...(session.requestedShellKind ? { requestedShellKind: session.requestedShellKind } : {}),
+          ...(session.resolvedShellKind ? { resolvedShellKind: session.resolvedShellKind } : {}),
+          ...(session.shellDisplayName ? { shellDisplayName: session.shellDisplayName } : {}),
           cwd: session.cwd,
           status: session.status,
           ...(session.workspaceId ? { workspaceId: session.workspaceId } : {}),
@@ -922,6 +969,83 @@ function readTerminalSessionIdFromOutput(output: Record<string, unknown>): strin
 
   const session = isRecord(output.session) ? output.session : undefined;
   return normalizeOptionalText(session?.sessionId);
+}
+
+function readTerminalShellFromOutput(output: Record<string, unknown>): {
+  resolvedShellKind?: DesktopResolvedShellKind;
+  shellKind?: DesktopTerminalShellKind;
+  shellDisplayName?: string;
+} | undefined {
+  const resolvedShellKind = normalizeResolvedTerminalShellKind(output.resolvedShellKind);
+  const shellKind = normalizeTerminalShellKind(output.shellKind);
+  const shellDisplayName = normalizeOptionalText(output.shellDisplayName);
+
+  if (resolvedShellKind || shellKind || shellDisplayName) {
+    return {
+      ...(resolvedShellKind ? { resolvedShellKind } : {}),
+      ...(shellKind ? { shellKind } : {}),
+      ...(shellDisplayName ? { shellDisplayName } : {}),
+    };
+  }
+
+  const session = isRecord(output.session) ? output.session : undefined;
+  if (!session) {
+    return undefined;
+  }
+
+  const sessionResolvedShellKind = normalizeResolvedTerminalShellKind(session.resolvedShellKind);
+  const sessionShellKind = normalizeTerminalShellKind(session.shellKind);
+  const sessionShellDisplayName = normalizeOptionalText(session.shellDisplayName);
+  if (!sessionResolvedShellKind && !sessionShellKind && !sessionShellDisplayName) {
+    return undefined;
+  }
+
+  return {
+    ...(sessionResolvedShellKind ? { resolvedShellKind: sessionResolvedShellKind } : {}),
+    ...(sessionShellKind ? { shellKind: sessionShellKind } : {}),
+    ...(sessionShellDisplayName ? { shellDisplayName: sessionShellDisplayName } : {}),
+  };
+}
+
+function resolveRecentTerminalPromptShell(
+  recentMessages: readonly MessageRecordWithParts[],
+): ReturnType<typeof normalizeDesktopTerminalPromptShell> | undefined {
+  const closedSessionIds = new Set<string>();
+
+  for (let index = recentMessages.length - 1; index >= 0; index -= 1) {
+    const message = recentMessages[index];
+    if (!message) {
+      continue;
+    }
+
+    const result = readRecentToolResultOutput(message);
+    if (!result) {
+      continue;
+    }
+
+    const sessionId = readTerminalSessionIdFromOutput(result.output);
+    if (!sessionId) {
+      continue;
+    }
+
+    if (result.toolName === "terminal_close_session") {
+      closedSessionIds.add(sessionId);
+      continue;
+    }
+
+    if (closedSessionIds.has(sessionId)) {
+      continue;
+    }
+
+    const shell = readTerminalShellFromOutput(result.output);
+    if (!shell) {
+      continue;
+    }
+
+    return normalizeDesktopTerminalPromptShell(shell);
+  }
+
+  return undefined;
 }
 
 function resolveRecentTerminalSessionId(recentMessages: readonly MessageRecordWithParts[]): string | undefined {
@@ -1021,6 +1145,8 @@ function createTerminalExecuteHandler(
         sessionId: resolvedSessionId,
         status: session.status,
         shellKind: session.shellKind,
+        ...(session.resolvedShellKind ? { resolvedShellKind: session.resolvedShellKind } : {}),
+        ...(session.shellDisplayName ? { shellDisplayName: session.shellDisplayName } : {}),
         cwd: session.cwd,
       };
     },
