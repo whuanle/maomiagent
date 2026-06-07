@@ -16,7 +16,10 @@ test("creates default design package files for a workspace", async () => {
     expect(result.hasDesignSpec).toBe(false);
     expect(result.files.designSpecMarkdown).toContain("# UI Design Spec");
     expect(result.files.stackJson).toContain('"framework"');
+    expect(result.files.scopeJson).toContain('"projectType"');
+    expect(result.files.scopeJson).toContain('"businessType"');
     expect(result.files.scopeJson).toContain('"selectedSections"');
+    expect(result.files.pagesJson).toContain('"modules"');
     expect(await readFile(join(workspaceRoot, "design", "design-spec.md"), "utf8")).toContain(
       "# UI Design Spec",
     );

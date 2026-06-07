@@ -13,6 +13,8 @@ type DesignerPreviewPanelProps = Pick<
   | "designerState"
   | "loadingDesignerState"
   | "previewMode"
+  | "scope"
+  | "stack"
   | "setPreviewMode"
 >;
 
@@ -32,6 +34,11 @@ function resolvePreviewStatusTagColor(status: string) {
 export function DesignerPreviewPanel(props: DesignerPreviewPanelProps) {
   const preview = props.designerState?.preview;
   const activeUrl = preview?.url?.trim();
+  const summaryItems = [
+    props.scope.projectType ? `项目类型：${String(props.scope.projectType)}` : "项目类型：待确认",
+    props.scope.businessType ? `业务类型：${String(props.scope.businessType)}` : "业务类型：待确认",
+    props.stack.framework ? `技术栈：${String(props.stack.framework)}` : "技术栈：待确认",
+  ];
 
   return (
     <section className="ui-designer-pane ui-designer-pane-right" data-testid="ui-designer-right-pane">
@@ -79,10 +86,17 @@ export function DesignerPreviewPanel(props: DesignerPreviewPanelProps) {
           : activeUrl
             ? <iframe className="ui-designer-preview-frame" src={activeUrl} title="UI 设计师预览" />
             : (
-                <Empty
-                  image={Empty.PRESENTED_IMAGE_SIMPLE}
-                  description={props.previewMode === "generated-app" ? "正式项目尚未启动" : "临时预览尚未启动"}
-                />
+                <div className="ui-designer-preview-empty-state">
+                  <Empty
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    description={props.previewMode === "generated-app" ? "正式项目尚未启动" : "临时预览尚未启动"}
+                  />
+                  <div className="ui-designer-preview-summary">
+                    {summaryItems.map((item) => (
+                      <div key={item}>{item}</div>
+                    ))}
+                  </div>
+                </div>
               )}
       </div>
     </section>

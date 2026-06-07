@@ -61,7 +61,9 @@ test("reports missing readiness fields for a new workspace design package", asyn
     expect(state.designRoot.endsWith("design")).toBe(true);
     expect(state.hasDesignSpec).toBe(false);
     expect(state.shouldSendKickoff).toBe(true);
-    expect(state.kickoffPrompt).toContain("前端框架");
+    expect(state.kickoffPrompt).toContain("项目范围");
+    expect(state.kickoffPrompt).toContain("桌面应用");
+    expect(state.kickoffPrompt).toContain("后台系统");
     expect(state.readiness.ready).toBe(false);
     expect(state.readiness.missing).toContain("stack.framework");
     expect(state.readiness.missing).toContain("theme.style");

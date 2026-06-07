@@ -82,7 +82,9 @@ export class DesktopUiDesignerService implements DesktopUiDesignerPort {
       hasDesignSpec: snapshot.hasDesignSpec,
       shouldSendKickoff: !snapshot.hasDesignSpec,
       ...(!snapshot.hasDesignSpec
-        ? { kickoffPrompt: "我们先确认技术栈。请告诉我你要使用的前端框架和 UI 组件库。" }
+        ? {
+            kickoffPrompt: "我们先确认项目范围。请先告诉我是桌面应用、Web 应用、小程序、移动端还是仅做原型；再告诉我是后台系统、商城、官网还是其他类型。",
+          }
         : {}),
       updatedAt: snapshot.updatedAt,
       readiness: resolveReadiness(snapshot),

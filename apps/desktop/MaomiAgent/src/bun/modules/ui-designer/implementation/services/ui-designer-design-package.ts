@@ -30,6 +30,8 @@ const DEFAULT_FILES: DesktopUiDesignerDesignPackageFiles = {
     requiresDocumentation: false,
   }, null, 2),
   scopeJson: JSON.stringify({
+    projectType: "",
+    businessType: "",
     selectedSections: [],
   }, null, 2),
   themeJson: JSON.stringify({
@@ -39,7 +41,7 @@ const DEFAULT_FILES: DesktopUiDesignerDesignPackageFiles = {
   }, null, 2),
   patternsJson: JSON.stringify({ groups: [] }, null, 2),
   layoutsJson: JSON.stringify({ items: [] }, null, 2),
-  pagesJson: JSON.stringify({ templates: [] }, null, 2),
+  pagesJson: JSON.stringify({ templates: [], modules: [] }, null, 2),
   sourcesMarkdown: `# References
 
 `,

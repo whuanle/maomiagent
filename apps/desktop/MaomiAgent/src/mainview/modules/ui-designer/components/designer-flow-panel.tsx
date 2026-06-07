@@ -12,10 +12,8 @@ import { DesignerStatusBar } from "./designer-status-bar";
 type DesignerFlowPanelProps = Pick<
   UiDesignerShellState,
   | "designerState"
-  | "patterns"
   | "pages"
   | "queueRedesignPrompt"
-  | "layouts"
   | "scope"
   | "selectedWorkspace"
   | "sourcesMarkdown"
@@ -28,12 +26,6 @@ function joinSummary(items: string[]) {
   return items.filter(Boolean).join(" / ");
 }
 
-function summarizeSelectedSections(value: unknown) {
-  return Array.isArray(value) && value.length > 0
-    ? value.map((item) => String(item)).join("、")
-    : "未确认";
-}
-
 function hasConfirmedStack(stack: Record<string, unknown>) {
   return typeof stack.framework === "string"
     && stack.framework.trim().length > 0
@@ -41,20 +33,15 @@ function hasConfirmedStack(stack: Record<string, unknown>) {
     && stack.uiLibrary.trim().length > 0;
 }
 
-function hasConfirmedScope(scope: Record<string, unknown>) {
-  return Array.isArray(scope.selectedSections) && scope.selectedSections.length > 0;
+function hasConfirmedProjectScope(scope: Record<string, unknown>) {
+  return typeof scope.projectType === "string"
+    && scope.projectType.trim().length > 0
+    && typeof scope.businessType === "string"
+    && scope.businessType.trim().length > 0;
 }
 
 function hasConfirmedTheme(theme: Record<string, unknown>) {
   return typeof theme.style === "string" && theme.style.trim().length > 0;
-}
-
-function hasConfirmedPatterns(patterns: Record<string, unknown>) {
-  return Array.isArray(patterns.groups) && patterns.groups.length > 0;
-}
-
-function hasConfirmedLayouts(layouts: Record<string, unknown>) {
-  return Array.isArray(layouts.items) && layouts.items.length > 0;
 }
 
 function hasConfirmedPages(pages: Record<string, unknown>) {
@@ -65,22 +52,37 @@ function hasConfirmedSources(sourcesMarkdown: string) {
   return sourcesMarkdown.includes("http");
 }
 
+function hasConfirmedDesignSpec(designSpecMarkdown: string) {
+  const normalized = designSpecMarkdown.trim();
+  if (!normalized) {
+    return false;
+  }
+
+  return normalized.includes("## 项目范围")
+    || normalized.includes("项目类型：")
+    || normalized.includes("页面模板：");
+}
+
 export function DesignerFlowPanel(props: DesignerFlowPanelProps) {
   const missingItems = props.designerState?.readiness.missing ?? [];
   const pageTemplates = Array.isArray(props.pages.templates) ? props.pages.templates.map((item) => String(item)) : [];
-  const patternGroups = Array.isArray(props.patterns.groups) ? props.patterns.groups.map((item) => String(item)) : [];
-  const layoutSource = props.layouts["items"];
-  const layoutItems = Array.isArray(layoutSource) ? layoutSource.map((item) => String(item)) : [];
-  const stackDesigned = hasConfirmedStack(props.stack);
-  const scopeDesigned = stackDesigned && hasConfirmedScope(props.scope);
-  const themeDesigned = scopeDesigned && hasConfirmedTheme(props.theme);
-  const patternsDesigned = themeDesigned && hasConfirmedPatterns(props.patterns);
-  const layoutsDesigned = patternsDesigned && hasConfirmedLayouts(props.layouts);
-  const pagesDesigned = layoutsDesigned && hasConfirmedPages(props.pages);
+  const pageModules = Array.isArray(props.pages.modules) ? props.pages.modules.map((item) => String(item)) : [];
+  const projectScopeDesigned = hasConfirmedProjectScope(props.scope);
+  const stackDesigned = projectScopeDesigned && hasConfirmedStack(props.stack);
+  const themeDesigned = stackDesigned && hasConfirmedTheme(props.theme);
+  const pagesDesigned = themeDesigned && hasConfirmedPages(props.pages);
   const sourcesDesigned = pagesDesigned && hasConfirmedSources(props.sourcesMarkdown);
-  const specDesigned = Boolean(props.designerState?.hasDesignSpec);
-  const i18nDesigned = typeof props.stack.i18n === "boolean" || props.sourcesMarkdown.includes("i18n");
+  const specDesigned = hasConfirmedDesignSpec(props.designFiles.designSpecMarkdown);
   const stageItems = [
+    {
+      key: "projectScope",
+      title: "项目范围确认",
+      completed: projectScopeDesigned,
+      summary: joinSummary([
+        typeof props.scope.projectType === "string" && props.scope.projectType.trim() ? props.scope.projectType : "未确认项目类型",
+        typeof props.scope.businessType === "string" && props.scope.businessType.trim() ? props.scope.businessType : "未确认业务类型",
+      ]),
+    },
     {
       key: "stack",
       title: "技术栈确认",
@@ -91,52 +93,33 @@ export function DesignerFlowPanel(props: DesignerFlowPanelProps) {
       ]),
     },
     {
-      key: "scope",
-      title: "范围确认",
-      completed: scopeDesigned,
-      summary: summarizeSelectedSections(props.scope.selectedSections),
-    },
-    {
       key: "theme",
-      title: "主题与设计系统",
+      title: "视觉与交互基线",
       completed: themeDesigned,
-      summary: typeof props.theme.style === "string" && props.theme.style.trim() ? props.theme.style : "未确认",
-    },
-    {
-      key: "patterns",
-      title: "组件模式",
-      completed: patternsDesigned,
-      summary: patternGroups.length > 0 ? patternGroups.join("、") : "未确认",
-    },
-    {
-      key: "layouts",
-      title: "布局设计",
-      completed: layoutsDesigned,
-      summary: layoutItems.length > 0 ? layoutItems.join("、") : "未确认",
+      summary: joinSummary([
+        typeof props.theme.style === "string" && props.theme.style.trim() ? props.theme.style : "未确认风格方向",
+        typeof props.theme.colorTendency === "string" && props.theme.colorTendency.trim() ? props.theme.colorTendency : "未确认色彩倾向",
+        typeof props.theme.density === "string" && props.theme.density.trim() ? props.theme.density : "未确认界面密度",
+      ]),
     },
     {
       key: "pages",
-      title: "页面模板",
+      title: "页面与模块确认",
       completed: pagesDesigned,
-      summary: pageTemplates.length > 0 ? pageTemplates.join("、") : "未确认",
-    },
-    {
-      key: "sources",
-      title: "资料补充",
-      completed: sourcesDesigned && !missingItems.includes("sources.documentation"),
-      summary: sourcesDesigned && !missingItems.includes("sources.documentation") ? "已补充资料来源" : "未确认",
-    },
-    {
-      key: "i18n",
-      title: "多语言",
-      completed: i18nDesigned,
-      summary: i18nDesigned ? "已确认" : "未确认",
+      summary: joinSummary([
+        pageTemplates.length > 0 ? pageTemplates.join("、") : "未确认页面模板",
+        pageModules.length > 0 ? pageModules.join("、") : "未确认业务模块",
+      ]),
     },
     {
       key: "spec",
-      title: "设计规格书",
+      title: "设计规格整理",
       completed: specDesigned,
-      summary: specDesigned ? "已生成规格书" : "未生成规格书",
+      summary: specDesigned
+        ? "已生成设计规格书"
+        : sourcesDesigned && !missingItems.includes("sources.documentation")
+          ? "资料已补充，待生成规格书"
+          : "待整理资料与规格书",
     },
   ] as const;
   const nextStageKey = stageItems.find((item) => !item.completed)?.key;
@@ -200,15 +183,11 @@ export function DesignerFlowPanel(props: DesignerFlowPanelProps) {
                           )
                         : null}
                     </div>
-                    {item.completed
-                      ? (
-                          <div className="ui-designer-stage-summary">
-                            {item.summary === "未确认"
-                              ? <Tag>未确认</Tag>
-                              : item.summary}
-                          </div>
-                        )
-                      : null}
+                    <div className="ui-designer-stage-summary">
+                      {item.summary === "未确认"
+                        ? <Tag>未确认</Tag>
+                        : item.summary}
+                    </div>
                   </div>
                 </div>
               );
