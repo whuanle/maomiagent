@@ -1,10 +1,13 @@
+import type { ChatConversationOpenRequest } from "../../modules/chat/types";
+
 export type FrontendConversationLauncherPort = {
   openConversation(input: {
     workspaceId?: string;
     content?: string;
     draftText?: string;
     createSession?: boolean;
-    attachedTabs?: Array<Record<string, unknown>>;
+    attachedTabs?: ChatConversationOpenRequest["attachedTabs"];
+    selectedAgentId?: string;
     selectedChannelId?: string;
     selectedModelId?: string;
     title?: string;

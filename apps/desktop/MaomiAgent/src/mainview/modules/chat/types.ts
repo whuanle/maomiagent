@@ -123,6 +123,7 @@ export type ChatConversationOpenRequest = {
   createSession?: boolean;
   draftText?: string;
   attachedTabs?: ChatAttachedTabRequest[];
+  selectedAgentId?: string;
 };
 
 export type ChatConversationRailItem = {

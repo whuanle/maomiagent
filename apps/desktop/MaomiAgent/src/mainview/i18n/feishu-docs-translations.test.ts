@@ -17,12 +17,22 @@ describe("Feishu docs translations", () => {
 
     expect(t("飞书页.文档.状态标签.已接通")).toBe("Ready");
     expect(t("飞书页.文档.按钮.推送文档")).toBe("Push Document");
+    expect(t("飞书页.文档.按钮.添加到对话")).toBe("Add to Conversation");
+    expect(t("飞书页.文档.按钮.加入当前选择到对话")).toBe("Add Selection to Conversation");
+    expect(t("飞书页.文档.按钮.全选")).toBe("Select All");
+    expect(t("飞书页.文档.按钮.全取消")).toBe("Clear Selection");
+    expect(t("飞书页.文档.按钮.仅当前")).toBe("Current Only");
+    expect(t("飞书页.文档.按钮.含子文档")).toBe("Include Children");
+    expect(t("飞书页.文档.按钮.补选子文档")).toBe("Add Children");
+    expect(t("飞书页.文档.按钮.取消子文档")).toBe("Remove Children");
     expect(t("飞书页.文档.模式.预览")).toBe("Preview");
     expect(t("飞书页.文档.模式.纯文本编辑")).toBe("Plain Text Edit");
     expect(t("飞书页.文档.提示.工作区草稿说明")).toContain("original Markdown");
     expect(t("飞书页.文档.状态.正在加载")).toBe("Loading");
     expect(t("飞书页.文档.状态.已显示上次结果")).toBe("Showing previous results");
     expect(t("飞书页.文档.状态.加载失败")).toBe("Load failed");
+    expect(t("飞书页.文档.状态.已选择文档数", { 数量: 2 })).toBe("2 selected");
+    expect(t("飞书页.文档.反馈.部分子文档未加入")).toBe("Some child documents were not added");
   });
 
   test("resolves compact tree runtime status copy in Chinese", () => {
@@ -31,6 +41,9 @@ describe("Feishu docs translations", () => {
     expect(t("飞书页.文档.状态.正在加载")).toBe("正在加载");
     expect(t("飞书页.文档.状态.已显示上次结果")).toBe("已显示上次结果");
     expect(t("飞书页.文档.状态.加载失败")).toBe("加载失败");
+    expect(t("飞书页.文档.状态.已选择文档数", { 数量: 2 })).toBe("已选择 2 项");
+    expect(t("飞书页.文档.按钮.仅当前")).toBe("仅当前");
+    expect(t("飞书页.文档.按钮.含子文档")).toBe("含子文档");
   });
 
   test("resolves permission diagnostics copy instead of echoing raw keys", () => {

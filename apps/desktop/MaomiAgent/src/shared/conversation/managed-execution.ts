@@ -8,6 +8,7 @@ export const FULLY_MANAGED_AGENT_ID = "managed-autopilot";
 export const CONCISE_AGENT_ID = "concise";
 export const WECHAT_AGENT_ID = "wechat.agent";
 export const UI_DESIGNER_AGENT_ID = "ui-designer";
+export const FEISHU_DOC_WRITER_AGENT_ID = "feishu-doc-writer";
 export const UI_DESIGNER_CONTEXT_METADATA_KEY = "uiDesignerContext";
 export const DEFAULT_DESKTOP_PRIMARY_AGENT_ID = CONCISE_AGENT_ID;
 const CONVERSATION_SETTINGS_KEY = "conversationSettings";

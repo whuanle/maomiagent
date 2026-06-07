@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test"
 
-import { buildFeishuDocChatDraftText } from "./feishu-doc-chat-draft"
+import {
+  buildFeishuDocChatDraftBatchText,
+  buildFeishuDocChatDraftText,
+} from "./feishu-doc-chat-draft"
 
 describe("buildFeishuDocChatDraftText", () => {
   test("reserves leading space for the user task and keeps the caution block above the document context", () => {
@@ -17,25 +20,58 @@ describe("buildFeishuDocChatDraftText", () => {
 
     expect(draft.startsWith("\n\n---\n注意：\n")).toBe(true)
     expect(draft).not.toContain("请在上方填写你的问题或任务。")
-    expect(draft).toContain("处理前先读取工作区里的原始 Markdown 文件。")
-    expect(draft).toContain("如果原始 Markdown 文件内容为空，也表示已读取到一个空白飞书文档，不要因此跳过本地草稿生成。")
-    expect(draft).toContain("如需生成修改稿，只能写入本地 Markdown 草稿，不要直接改动或推送飞书远端。")
+    expect(draft).toContain("本次任务请使用“飞书文档助手”智能体处理。")
+    expect(draft).toContain("先读取 `original_markdown_path`。")
+    expect(draft).toContain("如需修改、改写、整理或续写，只能写入 `local_draft_path`。")
+    expect(draft).toContain("不要直接修改 `original_markdown_path`。")
+    expect(draft).toContain("如果缺少 `local_draft_path`，按只读参考处理，并先告知用户。")
+    expect(draft).toContain("如果需要更多信息，请读取文档同目录的元数据文件。")
     expect(draft).toContain("<feishu_doc_context>")
-    expect(draft).toContain("doc_token: doc_token_1")
-    expect(draft).toContain("resolved_document_id: resolved_1")
-    expect(draft).toContain("root_doc_token: root_1")
-    expect(draft).toContain("create_target: root_doc_token")
-    expect(draft).toContain("workflow: read_original_then_edit_local_draft")
+    expect(draft).toContain("title: 测试文档")
+    expect(draft).toContain("original_markdown_path: .maomi/feishu-docs/original.md")
+    expect(draft).toContain("local_draft_path: .maomi/feishu-docs/draft.md")
+    expect(draft).not.toContain("doc_token:")
+    expect(draft).not.toContain("resolved_document_id:")
+    expect(draft).not.toContain("root_doc_token:")
+    expect(draft).not.toContain("url:")
+    expect(draft).not.toContain("updated_at:")
+    expect(draft).not.toContain("create_target:")
+    expect(draft).not.toContain("workflow:")
     expect(draft).toContain("</feishu_doc_context>")
   })
 
-  test("falls back to querying the workspace root when no root token is known", () => {
+  test("keeps read-only context when no local draft path exists", () => {
     const draft = buildFeishuDocChatDraftText({
-      title: "测试文档",
-      docId: "doc_token_2",
+      title: "只读文档",
+      docId: "doc_token_readonly",
+      originalRelativePath: ".maomi/feishu-docs/readonly/original.md",
     })
 
-    expect(draft).toContain("create_target: query_workspace_root_doc_first")
-    expect(draft).not.toContain("root_doc_token:")
+    expect(draft).toContain("title: 只读文档")
+    expect(draft).toContain("original_markdown_path: .maomi/feishu-docs/readonly/original.md")
+    expect(draft).not.toContain("local_draft_path:")
+  })
+
+  test("builds independent context blocks for multiple selected documents", () => {
+    const draft = buildFeishuDocChatDraftBatchText([
+      {
+        title: "需求说明",
+        docId: "doc_token_1",
+        originalRelativePath: ".maomi/feishu-docs/requirements/original.md",
+      },
+      {
+        title: "技术方案",
+        docId: "doc_token_2",
+        draftRelativePath: ".maomi/feishu-docs/design/draft.md",
+      },
+    ])
+
+    expect(draft.startsWith("\n\n---\n注意：\n")).toBe(true)
+    expect(draft.match(/<feishu_doc_context>/g)?.length).toBe(2)
+    expect(draft).toContain("title: 需求说明")
+    expect(draft).toContain("original_markdown_path: .maomi/feishu-docs/requirements/original.md")
+    expect(draft).toContain("title: 技术方案")
+    expect(draft).toContain("local_draft_path: .maomi/feishu-docs/design/draft.md")
+    expect(draft).not.toContain("doc_token:")
   })
 })

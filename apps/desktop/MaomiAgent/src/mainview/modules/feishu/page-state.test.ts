@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import type { WorkspaceRestoreState } from "../../lib/workspace";
 
 import {
   mergeFeishuDocsUiStateWithWorkspaceRestore,
@@ -39,6 +40,15 @@ function installWindowStorage(): void {
   });
 }
 
+function createRestoreState(ui: Record<string, unknown>): WorkspaceRestoreState {
+  return {
+    workspaceId: "workspace_1",
+    version: "1",
+    updatedAt: "2026-06-05T00:00:00.000Z",
+    ui,
+  };
+}
+
 describe("Feishu page state helpers", () => {
   afterEach(() => {
     Reflect.deleteProperty(globalThis, "window");
@@ -75,15 +85,13 @@ describe("Feishu page state helpers", () => {
   test("restores a docs root token from workspace UI state when local state is empty", () => {
     const mergedState = mergeFeishuDocsUiStateWithWorkspaceRestore(
       { treeQuery: "", treeRootDocId: "", workspaceMode: "workspace" },
-      {
-        ui: {
-          feishuDocsWorkspace: {
-            treeQuery: TEST_ROOT_TOKEN,
-            treeRootDocId: TEST_ROOT_TOKEN,
-            workspaceMode: "workspace",
-          },
+      createRestoreState({
+        feishuDocsWorkspace: {
+          treeQuery: TEST_ROOT_TOKEN,
+          treeRootDocId: TEST_ROOT_TOKEN,
+          workspaceMode: "workspace",
         },
-      },
+      }),
     );
 
     expect(mergedState).toMatchObject({
@@ -149,6 +157,7 @@ describe("Feishu page state helpers", () => {
         treeRootDocId: TEST_ROOT_TOKEN,
         workspaceMode: "workspace",
         expandedKeys: ["folder_1"],
+        checkedTreeKeys: ["doc_1"],
         treeNodes: [
           {
             key: "folder_1",
@@ -187,6 +196,7 @@ describe("Feishu page state helpers", () => {
     expect(readFeishuPagePersistentState("workspace_1").docs).toMatchObject({
       activeDocId: "doc_1",
       expandedKeys: ["folder_1"],
+      checkedTreeKeys: ["doc_1"],
       treeNodes: [
         {
           key: "folder_1",
@@ -209,6 +219,7 @@ describe("Feishu page state helpers", () => {
         treeRootDocId: "",
         workspaceMode: "workspace",
         expandedKeys: ["folder_1"],
+        checkedTreeKeys: ["doc_1"],
         treeNodes: [
           {
             key: "folder_1",
@@ -218,13 +229,13 @@ describe("Feishu page state helpers", () => {
         ],
       },
       {
-        ui: {
+        ...createRestoreState({
           feishuDocsWorkspace: {
             treeQuery: TEST_ROOT_TOKEN,
             treeRootDocId: TEST_ROOT_TOKEN,
             workspaceMode: "workspace",
           },
-        },
+        }),
       },
     );
 
@@ -232,6 +243,7 @@ describe("Feishu page state helpers", () => {
       treeQuery: TEST_ROOT_TOKEN,
       treeRootDocId: TEST_ROOT_TOKEN,
       expandedKeys: ["folder_1"],
+      checkedTreeKeys: ["doc_1"],
       treeNodes: [
         {
           key: "folder_1",
@@ -248,5 +260,27 @@ describe("Feishu page state helpers", () => {
     writeSavedFeishuActiveWorkspaceId("");
 
     expect(readSavedFeishuActiveWorkspaceId()).toBe("workspace_1");
+  });
+
+  test("restores checked tree keys from workspace restore state when local state is empty", () => {
+    const mergedState = mergeFeishuDocsUiStateWithWorkspaceRestore(
+      { treeQuery: "", treeRootDocId: "", workspaceMode: "workspace" },
+      {
+        ...createRestoreState({
+          feishuDocsWorkspace: {
+            treeQuery: TEST_ROOT_TOKEN,
+            treeRootDocId: TEST_ROOT_TOKEN,
+            workspaceMode: "workspace",
+            checkedTreeKeys: ["doc_2", "doc_3"],
+          },
+        }),
+      },
+    );
+
+    expect(mergedState).toMatchObject({
+      treeQuery: TEST_ROOT_TOKEN,
+      treeRootDocId: TEST_ROOT_TOKEN,
+      checkedTreeKeys: ["doc_2", "doc_3"],
+    });
   });
 });

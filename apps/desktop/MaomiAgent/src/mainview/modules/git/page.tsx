@@ -26,6 +26,7 @@ import {
   getDesktopGitModuleSnapshot,
   hasDesktopGitBridge,
 } from "../../lib/desktop-git";
+import { filterSelectableDesktopWorkspaces } from "../../lib/desktop-workspace-filter";
 import { listDesktopWorkspaces } from "../../lib/desktop-workspace";
 import { createGitBranchCopy } from "./branch-copy";
 import { GitBranchWorkbench } from "./components/branch-workbench";
@@ -158,7 +159,7 @@ export const GitPage = forwardRef<GitPageHandle, Props>(function GitPage(props, 
         return;
       }
 
-      const options = buildWorkspaceOptions(response.items);
+      const options = buildWorkspaceOptions(filterSelectableDesktopWorkspaces(response.items));
       setWorkspaceOptions(options);
       setWorkspaceId((current) => resolveWorkspaceId(options, current, restoredWorkspaceId));
       setWorkspaceOptionsLoaded(true);

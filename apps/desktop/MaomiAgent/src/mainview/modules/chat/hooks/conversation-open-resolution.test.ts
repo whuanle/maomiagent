@@ -45,4 +45,29 @@ describe("partitionConversationOpenRequestsByWorkspace", () => {
       unresolved: [],
     });
   });
+
+  test("preserves selectedAgentId when releasing queued requests", () => {
+    expect(partitionConversationOpenRequestsByWorkspace({
+      requests: [{
+        workspaceId: "workspace-a",
+        createSession: true,
+        draftText: "read original markdown first",
+        selectedAgentId: "feishu-doc-writer",
+      }],
+      activeWorkspaceId: "workspace-a",
+      openWorkspaceIds: ["workspace-a"],
+      workspaceItems: [{ workspaceId: "workspace-a" }],
+    })).toEqual({
+      ready: [{
+        workspaceId: "workspace-a",
+        request: {
+          workspaceId: "workspace-a",
+          createSession: true,
+          draftText: "read original markdown first",
+          selectedAgentId: "feishu-doc-writer",
+        },
+      }],
+      unresolved: [],
+    });
+  });
 });

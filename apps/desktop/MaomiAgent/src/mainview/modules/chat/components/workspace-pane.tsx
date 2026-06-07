@@ -85,7 +85,9 @@ export const ConversationWorkspacePane = forwardRef<ConversationWorkspacePaneHan
       if (sessionId) {
         state.activateSession(sessionId);
       } else if (input?.createSession) {
-        const createdSession = await state.createSession();
+        const createdSession = await state.createSession({
+          selectedAgentId: input.selectedAgentId,
+        });
         if (!createdSession) {
           return;
         }

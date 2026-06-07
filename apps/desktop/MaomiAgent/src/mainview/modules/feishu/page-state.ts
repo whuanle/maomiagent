@@ -179,12 +179,14 @@ function readWorkspaceDocsUiState(
   const treeQuery = normalizeText(docsUi.treeQuery)
   const treeRootDocId = normalizeText(docsUi.treeRootDocId)
   const workspaceMode = docsUi.workspaceMode === "workspace" ? "workspace" : undefined
+  const checkedTreeKeys = normalizeTextList(docsUi.checkedTreeKeys)
 
   return {
     ...(activeDocId ? { activeDocId } : {}),
     ...(treeQuery ? { treeQuery } : {}),
     ...(treeRootDocId ? { treeRootDocId } : {}),
     ...(workspaceMode ? { workspaceMode } : {}),
+    ...(checkedTreeKeys.length ? { checkedTreeKeys } : {}),
   }
 }
 
@@ -199,6 +201,7 @@ export function isSameDocsUiState(
     && previous.workspaceMode === next.workspaceMode
     && areTreeSnapshotsEqual(previous.treeNodes, next.treeNodes)
     && areTextListsEqual(previous.expandedKeys, next.expandedKeys)
+    && areTextListsEqual(previous.checkedTreeKeys, next.checkedTreeKeys)
   )
 }
 
@@ -284,6 +287,7 @@ export function readFeishuPagePersistentState(workspaceId?: string): FeishuPageP
       : treeQuery
     const treeNodes = readTreeNodeSnapshots(parsed.docs?.treeNodes)
     const expandedKeys = normalizeTextList(parsed.docs?.expandedKeys)
+    const checkedTreeKeys = normalizeTextList(parsed.docs?.checkedTreeKeys)
 
     return {
       pageView:
@@ -301,6 +305,7 @@ export function readFeishuPagePersistentState(workspaceId?: string): FeishuPageP
         workspaceMode: "workspace",
         ...(treeNodes.length ? { treeNodes } : {}),
         ...(expandedKeys.length ? { expandedKeys } : {}),
+        ...(checkedTreeKeys.length ? { checkedTreeKeys } : {}),
       },
     }
   } catch {
@@ -361,5 +366,10 @@ export function mergeFeishuDocsUiStateWithWorkspaceRestore(
     workspaceMode: "workspace",
     ...(localState.treeNodes ? { treeNodes: localState.treeNodes } : {}),
     ...(localState.expandedKeys ? { expandedKeys: localState.expandedKeys } : {}),
+    ...(localState.checkedTreeKeys?.length
+      ? { checkedTreeKeys: localState.checkedTreeKeys }
+      : workspaceState.checkedTreeKeys?.length
+        ? { checkedTreeKeys: workspaceState.checkedTreeKeys }
+        : {}),
   }
 }

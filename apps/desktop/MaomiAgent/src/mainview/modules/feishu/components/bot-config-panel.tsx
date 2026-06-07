@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import type { FeishuBotConfigInput, FeishuBotStateView } from "../../../../shared/desktop-feishu"
 import type { DesktopWorkspaceItem as WorkspaceItem } from "../../../../shared/desktop-workspace"
 import { notifier } from "../../../lib/notifications"
+import { filterSelectableDesktopWorkspaces } from "../../../lib/desktop-workspace-filter"
 import type { FeishuTranslate as Translate } from "../types"
 import { RuntimeModelSelect } from "../../wechat/components/runtime-model-select"
 import {
@@ -182,7 +183,7 @@ export function FeishuBotConfigPanel(props: Props) {
   }, [props.onClear, syncDraftFromState])
 
   const workspaceOptions = useMemo(
-    () => props.workspaces
+    () => filterSelectableDesktopWorkspaces(props.workspaces)
       .map((item) => ({
         label: `${item.name} · ${item.workspaceId}`,
         value: item.workspaceId,

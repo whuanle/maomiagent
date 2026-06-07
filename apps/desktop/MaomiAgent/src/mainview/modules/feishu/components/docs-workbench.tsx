@@ -1,4 +1,6 @@
 import {
+  BorderOutlined,
+  CheckSquareOutlined,
   CloseOutlined,
   ApartmentOutlined,
   ArrowLeftOutlined,
@@ -6,6 +8,10 @@ import {
   DownloadOutlined,
   FileTextOutlined,
   MessageOutlined,
+  MinusSquareOutlined,
+  NodeExpandOutlined,
+  PartitionOutlined,
+  PlusSquareOutlined,
   ReloadOutlined,
   SaveOutlined,
   UploadOutlined,
@@ -38,6 +44,7 @@ import type {
   FeishuStateView,
 } from "../../../../shared/desktop-feishu"
 import type { FeishuDocIR } from "../../../../shared/desktop-feishu-doc-ir"
+import { FEISHU_DOC_WRITER_AGENT_ID } from "../../../../shared/conversation/managed-execution"
 import type { FeishuTranslate as Translate } from "../types"
 import {
   fetchFeishuDocContent,
@@ -62,7 +69,15 @@ import {
   createFeishuDocPreviewIR,
   extractFeishuMediaTokens,
 } from "./feishu-doc-preview-support"
-import { buildFeishuDocChatDraftText } from "./feishu-doc-chat-draft"
+import {
+  buildFeishuDocChatDraftBatchText,
+  buildFeishuDocChatDraftText,
+} from "./feishu-doc-chat-draft"
+import {
+  collectNodeAndDescendantKeys,
+  mergeCheckedKeys,
+  removeDescendantKeys,
+} from "./feishu-doc-tree-selection"
 import { FeishuDocPermissionInspectModal } from "./feishu-doc-permission-inspect-modal"
 
 const { Text, Title } = Typography
@@ -87,9 +102,21 @@ export type FeishuDocsWorkbenchUiState = {
   workspaceMode: FeishuDocWorkspaceMode
   treeNodes?: FeishuDocsTreeSnapshotNode[]
   expandedKeys?: string[]
+  checkedTreeKeys?: string[]
 }
 
 type DocsTreeNode = TreeDataNode & FeishuDocsTreeSnapshotNode
+
+type CheckedConversationTarget = {
+  key: string
+  title: string
+  docId: string
+  resolvedDocId?: string
+  url?: string
+  updateTime?: string
+}
+
+type TreeSelectionMode = "include_subtree" | "current_only"
 
 type Props = {
   active: boolean
@@ -104,6 +131,7 @@ type Props = {
   initialTreeRootDocId?: string
   initialTreeNodes?: FeishuDocsTreeSnapshotNode[]
   initialExpandedKeys?: string[]
+  initialCheckedTreeKeys?: string[]
   onReloadState?: () => void
   onBackToSettings?: () => void
   onUiStateChange?: (state: FeishuDocsWorkbenchUiState) => void
@@ -235,6 +263,19 @@ function collectExpandableKeys(nodes: DocsTreeNode[]): string[] {
     }
     keys.push(node.key)
     keys.push(...collectExpandableKeys(node.children))
+  }
+
+  return keys
+}
+
+function collectTreeKeys(nodes: DocsTreeNode[]): string[] {
+  const keys: string[] = []
+
+  for (const node of nodes) {
+    keys.push(String(node.key))
+    if (node.children?.length) {
+      keys.push(...collectTreeKeys(node.children))
+    }
   }
 
   return keys
@@ -395,6 +436,9 @@ export function FeishuDocsWorkbench(props: Props) {
   const [expandedKeys, setExpandedKeys] = useState<string[]>(
     () => resolveInitialExpandedKeys(initialTreeNodes, props.initialExpandedKeys),
   )
+  const [checkedTreeKeys, setCheckedTreeKeys] = useState<string[]>(() => props.initialCheckedTreeKeys ?? [])
+  const [treeSelectionMode, setTreeSelectionMode] = useState<TreeSelectionMode>("include_subtree")
+  const [treeSelectionBusy, setTreeSelectionBusy] = useState(false)
   const [activeDoc, setActiveDoc] = useState<FeishuDocSummary | null>(null)
   const [currentDoc, setCurrentDoc] = useState<FeishuDocContentView | null>(null)
   const [docLoading, setDocLoading] = useState(false)
@@ -423,6 +467,7 @@ export function FeishuDocsWorkbench(props: Props) {
   const loadingTreeNodeKeysRef = useRef<Set<string>>(new Set())
   const treeHydrationRunIdRef = useRef(0)
   const treeNodesLengthRef = useRef(initialTreeNodes.length)
+  const treeNodesRef = useRef(initialTreeNodes)
   const [hasPendingEditChanges, setHasPendingEditChanges] = useState(false)
   const [modal, modalContextHolder] = Modal.useModal()
   const wasPageActiveRef = useRef(props.active)
@@ -589,9 +634,10 @@ export function FeishuDocsWorkbench(props: Props) {
     rootToken: string,
     nodes: DocsTreeNode[],
     options?: { forceRefresh?: boolean; runId?: number },
-  ) => {
+  ): Promise<DocsTreeNode[]> => {
     const runId = options?.runId ?? ++treeHydrationRunIdRef.current
     const visitedKeys = new Set<string>()
+    let nextNodesSnapshot = nodes
 
     const visitNode = async (node: DocsTreeNode, lineage: Set<string>): Promise<void> => {
       if (treeHydrationRunIdRef.current !== runId || node.isLeaf || !node.key || lineage.has(node.key)) {
@@ -618,6 +664,7 @@ export function FeishuDocsWorkbench(props: Props) {
         }
 
         const childNodes = mapTreeNodes(result.nodes)
+        nextNodesSnapshot = replaceChildren(nextNodesSnapshot, parentKey, childNodes)
         setTreeNodes((previous) => replaceChildren(previous, parentKey, childNodes))
         setExpandedKeys((previous) => mergeExpandedKeyLists(previous, [parentKey]))
         if (result.error) {
@@ -639,6 +686,8 @@ export function FeishuDocsWorkbench(props: Props) {
     for (const node of nodes) {
       await visitNode(node, new Set())
     }
+
+    return nextNodesSnapshot
   }, [props.baseUrl])
 
   const loadTree = useCallback(async (
@@ -965,9 +1014,12 @@ export function FeishuDocsWorkbench(props: Props) {
 
   const handleTreeSubmit = useCallback(() => {
     const nextRoot = treeQuery.trim()
+    if (nextRoot !== treeRootDocId.trim()) {
+      setCheckedTreeKeys([])
+    }
     setTreeRootDocId(nextRoot)
     void loadTree(nextRoot, { forceRefresh: true, preloadSubtree: true })
-  }, [loadTree, treeQuery])
+  }, [loadTree, treeQuery, treeRootDocId])
 
   const handleTreeQueryChange = useCallback((value: string) => {
     setTreeQuery(value)
@@ -992,6 +1044,14 @@ export function FeishuDocsWorkbench(props: Props) {
     setTreeQuery((previous) => previous.trim() ? previous : nextTreeQuery)
     setTreeRootDocId((previous) => previous.trim() ? previous : nextTreeRootDocId)
   }, [props.initialTreeQuery, props.initialTreeRootDocId])
+
+  useEffect(() => {
+    if (!props.initialCheckedTreeKeys?.length) {
+      return
+    }
+
+    setCheckedTreeKeys((previous) => previous.length > 0 ? previous : props.initialCheckedTreeKeys ?? [])
+  }, [props.initialCheckedTreeKeys])
 
   const handleLoadTreeData = useCallback<NonNullable<TreeProps["loadData"]>>(async (node) => {
     if (!remoteDocsReady || (capabilities && !capabilities.canBrowseTree)) {
@@ -1063,8 +1123,21 @@ export function FeishuDocsWorkbench(props: Props) {
   }, [loadTree, remoteDocsBlockedMessage, remoteDocsReady, statePending, treeRootDocId])
 
   useEffect(() => {
+    treeNodesRef.current = treeNodes
     treeNodesLengthRef.current = treeNodes.length
-  }, [treeNodes.length])
+  }, [treeNodes])
+
+  useEffect(() => {
+    if (treeNodes.length === 0) {
+      return
+    }
+
+    const availableKeys = new Set(collectTreeKeys(treeNodes))
+    setCheckedTreeKeys((previous) => {
+      const nextKeys = previous.filter((key) => availableKeys.has(key))
+      return nextKeys.length === previous.length ? previous : nextKeys
+    })
+  }, [treeNodes])
 
   useEffect(() => {
     if (initialDocLoadedRef.current || !props.initialDocId) {
@@ -1087,8 +1160,9 @@ export function FeishuDocsWorkbench(props: Props) {
       workspaceMode: "workspace",
       treeNodes: snapshotTreeNodes(treeNodes),
       expandedKeys: normalizeExpandedKeys(expandedKeys),
+      checkedTreeKeys,
     })
-  }, [activeDoc?.docId, activeDoc?.id, currentDoc?.docId, expandedKeys, props, treeNodes, treeQuery, treeRootDocId])
+  }, [activeDoc?.docId, activeDoc?.id, checkedTreeKeys, currentDoc?.docId, expandedKeys, props, treeNodes, treeQuery, treeRootDocId])
 
   useEffect(() => {
     if (!currentDoc) {
@@ -1397,6 +1471,32 @@ export function FeishuDocsWorkbench(props: Props) {
   }, [activeDoc?.docId, activeDoc?.id, currentDoc?.docId, treeNodes])
 
   const selectedKeys = selectedTreeKey ? [selectedTreeKey] : []
+  const controlledCheckedKeys = useMemo<NonNullable<TreeProps["checkedKeys"]>>(() => ({
+    checked: checkedTreeKeys,
+    halfChecked: [],
+  }), [checkedTreeKeys])
+  const checkedConversationTargets = useMemo<CheckedConversationTarget[]>(() => {
+    const targets: CheckedConversationTarget[] = []
+
+    for (const key of checkedTreeKeys) {
+      const node = findTreeNodeByKey(treeNodes, key)
+      const docId = node?.doc?.docId ?? node?.doc?.id ?? ""
+      if (!node || !docId) {
+        continue
+      }
+
+      targets.push({
+        key: String(node.key),
+        title: node.doc?.title ?? node.title,
+        docId,
+        resolvedDocId: node.doc?.resolvedDocId,
+        url: node.doc?.url,
+        updateTime: node.doc?.updateTime,
+      })
+    }
+
+    return targets
+  }, [checkedTreeKeys, treeNodes])
   const treeStatusText = useMemo(() => {
     if (treeStatus === "loading" || treeStatus === "refreshing") {
       return props.t("飞书页.文档.状态.正在加载")
@@ -1424,6 +1524,189 @@ export function FeishuDocsWorkbench(props: Props) {
 
     setExpandedKeys(mergeExpandedKeyLists(nextKeys, collectExpandableKeys([expandedNode])))
   }, [treeNodes])
+  const handleSelectAllTreeDocs = useCallback(() => {
+    if (treeNodesRef.current.length === 0) {
+      return
+    }
+
+    void (async () => {
+      setTreeSelectionBusy(true)
+      try {
+        const nextNodes = treeRootDocId.trim()
+          ? await hydrateTreeBranches(treeRootDocId.trim(), treeNodesRef.current, { forceRefresh: false })
+          : treeNodesRef.current
+        setCheckedTreeKeys(collectTreeKeys(nextNodes))
+      } catch (error) {
+        void error
+        setCheckedTreeKeys(collectTreeKeys(treeNodesRef.current))
+        notifier.warning(props.t("飞书页.文档.反馈.部分子文档未加入"))
+      } finally {
+        setTreeSelectionBusy(false)
+      }
+    })()
+  }, [hydrateTreeBranches, props.t, treeRootDocId])
+  const handleFillCheckedTreeDescendants = useCallback(() => {
+    if (checkedTreeKeys.length === 0) {
+      return
+    }
+
+    void (async () => {
+      setTreeSelectionBusy(true)
+      try {
+        let nextCheckedKeys = checkedTreeKeys
+
+        for (const key of checkedTreeKeys) {
+          const node = findTreeNodeByKey(treeNodesRef.current, key)
+          if (!node) {
+            continue
+          }
+
+          const subtreeNodes = !node.isLeaf && !node.loaded
+            ? await hydrateTreeBranches(treeRootDocId.trim() || key, [node], { forceRefresh: false })
+            : [node]
+
+          nextCheckedKeys = mergeCheckedKeys(
+            nextCheckedKeys,
+            collectNodeAndDescendantKeys(subtreeNodes, key),
+          )
+        }
+
+        setCheckedTreeKeys(nextCheckedKeys)
+      } catch (error) {
+        void error
+        notifier.warning(props.t("飞书页.文档.反馈.部分子文档未加入"))
+      } finally {
+        setTreeSelectionBusy(false)
+      }
+    })()
+  }, [checkedTreeKeys, hydrateTreeBranches, props.t, treeRootDocId])
+  const handleClearCheckedTreeDescendants = useCallback(() => {
+    const parentKeys = checkedTreeKeys.filter((key) => {
+      const node = findTreeNodeByKey(treeNodesRef.current, key)
+      return Boolean(node?.children?.length)
+    })
+
+    if (parentKeys.length === 0) {
+      return
+    }
+
+    setCheckedTreeKeys((current) => removeDescendantKeys({
+      tree: treeNodesRef.current,
+      checkedKeys: current,
+      parentKeys,
+    }))
+  }, [checkedTreeKeys])
+  const handleTreeCheck = useCallback<NonNullable<TreeProps["onCheck"]>>((_keys, info) => {
+    const key = String(info.node.key)
+    const node = findTreeNodeByKey(treeNodesRef.current, key)
+
+    if (!info.checked) {
+      const removedKeys = treeSelectionMode === "include_subtree" && node
+        ? collectNodeAndDescendantKeys(treeNodesRef.current, key)
+        : [key]
+      setCheckedTreeKeys((current) => current.filter((item) => !removedKeys.includes(item)))
+      return
+    }
+
+    void (async () => {
+      setTreeSelectionBusy(true)
+      try {
+        if (!node) {
+          setCheckedTreeKeys((current) => mergeCheckedKeys(current, [key]))
+          return
+        }
+
+        if (treeSelectionMode === "current_only") {
+          setCheckedTreeKeys((current) => mergeCheckedKeys(current, [key]))
+          return
+        }
+
+        const subtreeNodes = !node.isLeaf && !node.loaded
+          ? await hydrateTreeBranches(treeRootDocId.trim() || key, [node], { forceRefresh: false })
+          : [node]
+        const subtreeKeys = collectNodeAndDescendantKeys(subtreeNodes, key)
+
+        setCheckedTreeKeys((current) => mergeCheckedKeys(current, subtreeKeys.length > 0 ? subtreeKeys : [key]))
+      } catch (error) {
+        void error
+        notifier.warning(props.t("飞书页.文档.反馈.部分子文档未加入"))
+        setCheckedTreeKeys((current) => mergeCheckedKeys(current, [key]))
+      } finally {
+        setTreeSelectionBusy(false)
+      }
+    })()
+  }, [hydrateTreeBranches, props.t, treeRootDocId, treeSelectionMode])
+  const handleAddCheckedDocsToConversation = useCallback(() => {
+    if (!hasWorkspaceContext || checkedConversationTargets.length === 0) {
+      return
+    }
+
+    void (async () => {
+      try {
+        const preparedDocs = await Promise.all(checkedConversationTargets.map(async (target) => {
+          const chatDoc = currentDoc?.docId === target.docId
+            ? currentDoc
+            : await openFeishuWorkspaceDoc(props.baseUrl, props.workspaceId, target.docId)
+          const chatPreviewPath = chatDoc.cache?.draftRelativePath ?? chatDoc.cache?.originalRelativePath
+          const chatPreviewFallbackPath = chatDoc.cache?.draftRelativePath
+            && chatDoc.cache?.originalRelativePath
+            && chatDoc.cache.draftRelativePath !== chatDoc.cache.originalRelativePath
+            ? chatDoc.cache.originalRelativePath
+            : undefined
+
+          return {
+            title: target.title,
+            docId: target.docId,
+            resolvedDocId: chatDoc.resolvedDocId ?? target.resolvedDocId,
+            rootDocId: treeRootDocId || undefined,
+            url: target.url,
+            relativeUpdate: formatRelativeDocUpdateTime(target.updateTime, props.t),
+            originalRelativePath: chatDoc.cache?.originalRelativePath,
+            draftRelativePath: chatDoc.cache?.draftRelativePath,
+            attachedTab: chatPreviewPath
+              ? {
+                  kind: "preview" as const,
+                  title: target.title,
+                  workspaceId: props.workspaceId || undefined,
+                  source: {
+                    kind: "feishu-doc" as const,
+                    docId: target.docId,
+                    path: chatPreviewPath,
+                    ...(chatPreviewFallbackPath ? { fallbackPath: chatPreviewFallbackPath } : {}),
+                  },
+                }
+              : null,
+          }
+        }))
+
+        await conversationLauncher.openConversation({
+          workspaceId: props.workspaceId,
+          createSession: true,
+          selectedAgentId: FEISHU_DOC_WRITER_AGENT_ID,
+          draftText: buildFeishuDocChatDraftBatchText(preparedDocs.map((item) => ({
+            title: item.title,
+            docId: item.docId,
+            originalRelativePath: item.originalRelativePath,
+            draftRelativePath: item.draftRelativePath,
+          }))),
+          attachedTabs: preparedDocs
+            .map((item) => item.attachedTab)
+            .filter((item): item is NonNullable<typeof item> => Boolean(item)),
+        })
+      } catch (error) {
+        notifier.error(props.t("飞书页.反馈.加载失败", { 错误: error instanceof Error ? error.message : String(error) }))
+      }
+    })()
+  }, [
+    checkedConversationTargets,
+    conversationLauncher,
+    currentDoc,
+    hasWorkspaceContext,
+    props.baseUrl,
+    props.t,
+    props.workspaceId,
+    treeRootDocId,
+  ])
 
   const saveTag = useMemo(() => {
     if (saveState === "pulling") return { color: "blue", text: props.t("飞书页.文档.保存状态.拉取中") }
@@ -1540,6 +1823,80 @@ export function FeishuDocsWorkbench(props: Props) {
                     {treeStatusText}
                   </Text>
                 ) : null}
+                <div className="feishu-docs-tree-toolbar">
+                  <Tooltip title={props.t("飞书页.文档.按钮.加入当前选择到对话")}>
+                    <Button
+                      type="text"
+                      icon={<MessageOutlined />}
+                      className="feishu-docs-tree-toolbar-button"
+                      disabled={!hasWorkspaceContext || checkedConversationTargets.length === 0}
+                      loading={treeSelectionBusy}
+                      aria-label={props.t("飞书页.文档.按钮.加入当前选择到对话")}
+                      onClick={handleAddCheckedDocsToConversation}
+                    />
+                  </Tooltip>
+                  <Tooltip title={props.t("飞书页.文档.按钮.全选")}>
+                    <Button
+                      type="text"
+                      icon={<CheckSquareOutlined />}
+                      className="feishu-docs-tree-toolbar-button"
+                      disabled={treeNodes.length === 0}
+                      aria-label={props.t("飞书页.文档.按钮.全选")}
+                      onClick={handleSelectAllTreeDocs}
+                    />
+                  </Tooltip>
+                  <Tooltip title={props.t("飞书页.文档.按钮.全取消")}>
+                    <Button
+                      type="text"
+                      icon={<BorderOutlined />}
+                      className="feishu-docs-tree-toolbar-button"
+                      disabled={checkedTreeKeys.length === 0}
+                      aria-label={props.t("飞书页.文档.按钮.全取消")}
+                      onClick={() => setCheckedTreeKeys([])}
+                    />
+                  </Tooltip>
+                  <Tooltip title={props.t("飞书页.文档.按钮.仅当前")}>
+                    <Button
+                      type="text"
+                      icon={<PartitionOutlined />}
+                      className={`feishu-docs-tree-toolbar-button${treeSelectionMode === "current_only" ? " is-active" : ""}`}
+                      aria-label={props.t("飞书页.文档.按钮.仅当前")}
+                      onClick={() => setTreeSelectionMode("current_only")}
+                    />
+                  </Tooltip>
+                  <Tooltip title={props.t("飞书页.文档.按钮.含子文档")}>
+                    <Button
+                      type="text"
+                      icon={<NodeExpandOutlined />}
+                      className={`feishu-docs-tree-toolbar-button${treeSelectionMode === "include_subtree" ? " is-active" : ""}`}
+                      aria-label={props.t("飞书页.文档.按钮.含子文档")}
+                      onClick={() => setTreeSelectionMode("include_subtree")}
+                    />
+                  </Tooltip>
+                  <Tooltip title={props.t("飞书页.文档.按钮.补选子文档")}>
+                    <Button
+                      type="text"
+                      icon={<PlusSquareOutlined />}
+                      className="feishu-docs-tree-toolbar-button"
+                      disabled={checkedTreeKeys.length === 0}
+                      aria-label={props.t("飞书页.文档.按钮.补选子文档")}
+                      onClick={handleFillCheckedTreeDescendants}
+                    />
+                  </Tooltip>
+                  <Tooltip title={props.t("飞书页.文档.按钮.取消子文档")}>
+                    <Button
+                      type="text"
+                      icon={<MinusSquareOutlined />}
+                      className="feishu-docs-tree-toolbar-button"
+                      disabled={checkedTreeKeys.length === 0}
+                      aria-label={props.t("飞书页.文档.按钮.取消子文档")}
+                      onClick={handleClearCheckedTreeDescendants}
+                    />
+                  </Tooltip>
+                  <Text type="secondary" className="feishu-docs-tree-selection-count">
+                    {props.t("飞书页.文档.状态.已选择文档数", { 数量: checkedConversationTargets.length })}
+                  </Text>
+                </div>
                 {treeLoading && treeNodes.length === 0 ? (
                   <div className="feishu-docs-loading-shell">
                     <Spin size="small" />
@@ -1550,9 +1907,12 @@ export function FeishuDocsWorkbench(props: Props) {
                     {treeError ? <Alert showIcon type="error" message={treeError} /> : null}
                     <Tree
                       blockNode
+                      checkable
+                      checkStrictly
                       className="feishu-docs-tree"
                       treeData={treeNodes}
                       expandedKeys={expandedKeys}
+                      checkedKeys={controlledCheckedKeys}
                       selectedKeys={selectedKeys}
                       loadData={handleLoadTreeData}
                       switcherIcon={(nodeProps) => nodeProps.isLeaf ? null : <CaretRightFilled className="feishu-docs-tree-switcher-icon" />}
@@ -1599,13 +1959,10 @@ export function FeishuDocsWorkbench(props: Props) {
                                       conversationLauncher.openConversation({
                                         workspaceId: props.workspaceId,
                                         createSession: true,
+                                        selectedAgentId: FEISHU_DOC_WRITER_AGENT_ID,
                                         draftText: buildFeishuDocChatDraftText({
                                           title: target.doc?.title ?? target.title,
                                           docId,
-                                          resolvedDocId: chatDoc.resolvedDocId ?? target.doc?.resolvedDocId,
-                                          rootDocId: treeRootDocId || undefined,
-                                          url: target.doc?.url,
-                                          relativeUpdate: formatRelativeDocUpdateTime(target.doc?.updateTime, props.t),
                                           originalRelativePath: chatDoc.cache?.originalRelativePath,
                                           draftRelativePath: chatDoc.cache?.draftRelativePath,
                                         }),
@@ -1633,6 +1990,7 @@ export function FeishuDocsWorkbench(props: Props) {
                           </span>
                         )
                       }}
+                      onCheck={handleTreeCheck}
                       onExpand={handleTreeExpand}
                       onSelect={(_keys, info) => {
                         const target = info.node as DocsTreeNode

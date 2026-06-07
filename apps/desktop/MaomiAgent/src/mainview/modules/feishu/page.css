@@ -1379,6 +1379,31 @@
   background: color-mix(in srgb, var(--ant-color-primary, #1677ff) 20%, white 80%) !important;
 }
 
+.feishu-docs-tree-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.feishu-docs-tree-toolbar-button.ant-btn {
+  min-width: 32px;
+  height: 32px;
+  padding-inline: 0;
+}
+
+.feishu-docs-tree-toolbar-button.ant-btn.is-active,
+.feishu-docs-tree-toolbar-button.ant-btn.is-active:hover,
+.feishu-docs-tree-toolbar-button.ant-btn.is-active:focus-visible {
+  color: var(--ant-color-primary, #1677ff);
+  background: color-mix(in srgb, var(--ant-color-primary, #1677ff) 12%, transparent);
+}
+
+.feishu-docs-tree-selection-count.ant-typography {
+  margin: 0 0 0 6px;
+}
+
 .feishu-docs-tree-title {
   display: flex;
   width: 100%;

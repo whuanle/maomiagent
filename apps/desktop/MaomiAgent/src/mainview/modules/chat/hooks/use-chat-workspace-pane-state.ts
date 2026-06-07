@@ -1097,13 +1097,13 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
     }
   }, [clearComposerAttachments, reloadSessionDetail, reloadSessions, sessions]);
 
-  const createSession = useCallback(async () => {
+  const createSession = useCallback(async (options?: { selectedAgentId?: string }) => {
     setCreatingSession(true);
     try {
       await waitForConversationWorkspaceSettingsSaves(workspaceId);
       const response = await createDesktopConversationSession({
         workspaceId,
-        selectedAgentId: selectedComposerAgentId,
+        selectedAgentId: options?.selectedAgentId?.trim() || selectedComposerAgentId,
       });
       await reloadSessions(response.item.sessionId);
       await reloadSessionDetail(response.item.sessionId);

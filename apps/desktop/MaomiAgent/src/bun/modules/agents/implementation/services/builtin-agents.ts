@@ -2,6 +2,7 @@ import type { AgentItem } from "../../../../../shared/desktop-agents"
 import {
   CONCISE_AGENT_ID,
   DEFAULT_DESKTOP_PRIMARY_AGENT_ID,
+  FEISHU_DOC_WRITER_AGENT_ID,
   FULLY_MANAGED_AGENT_ID,
   UI_DESIGNER_AGENT_ID,
   WECHAT_AGENT_ID,
@@ -9,7 +10,7 @@ import {
 
 export const MAOMI_COORDINATOR_AGENT_ID = "dev-coordinator"
 export const REPO_DOC_MASTER_AGENT_ID = "repo-doc-master"
-export const FEISHU_DOC_WRITER_AGENT_ID = "feishu-doc-writer"
+export { FEISHU_DOC_WRITER_AGENT_ID } from "../../../../../shared/conversation/managed-execution"
 
 const BUILTIN_EPOCH = "1970-01-01T00:00:00.000Z"
 

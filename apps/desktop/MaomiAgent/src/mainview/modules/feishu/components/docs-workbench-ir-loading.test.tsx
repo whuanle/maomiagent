@@ -38,9 +38,13 @@ describe("Feishu docs workbench IR loading bridge", () => {
     const pane = await source("src/mainview/modules/chat/components/workspace-pane.tsx");
 
     expect(workbench).toContain("? await openFeishuWorkspaceDoc(props.baseUrl, props.workspaceId, docId)");
-    expect(workbench).toContain('import { buildFeishuDocChatDraftText } from "./feishu-doc-chat-draft"');
+    expect(workbench).toContain('buildFeishuDocChatDraftBatchText');
+    expect(workbench).toContain('buildFeishuDocChatDraftText');
+    expect(workbench).toContain('collectNodeAndDescendantKeys');
+    expect(workbench).toContain('FEISHU_DOC_WRITER_AGENT_ID');
     expect(workbench).toContain("draftText: buildFeishuDocChatDraftText({");
-    expect(workbench).toContain("relativeUpdate: formatRelativeDocUpdateTime(target.doc?.updateTime, props.t)");
+    expect(workbench).toContain("draftText: buildFeishuDocChatDraftBatchText(preparedDocs.map((item) => ({");
+    expect(workbench).toContain('selectedAgentId: FEISHU_DOC_WRITER_AGENT_ID');
     expect(workbench).toContain("const result = await pullFeishuWorkspaceDoc(props.baseUrl, props.workspaceId, currentDoc.docId)");
     expect(workbench).toContain('import { FeishuDocPermissionInspectModal } from "./feishu-doc-permission-inspect-modal"');
     expect(workbench).toContain("inspectFeishuWorkspaceDocPermissions(props.baseUrl, props.workspaceId, currentDoc.docId)");
@@ -54,12 +58,18 @@ describe("Feishu docs workbench IR loading bridge", () => {
     expect(workbench).toContain("mdx={draft}");
     expect(workbench).not.toContain('className="feishu-docs-workspace-view-switch is-secondary"');
     expect(workbench).toContain("treeNodes: snapshotTreeNodes(treeNodes)");
+    expect(workbench).toContain("checkedTreeKeys,");
     expect(page).toContain("initialTreeNodes={docsUiState.treeNodes}");
+    expect(page).toContain("initialCheckedTreeKeys={docsUiState.checkedTreeKeys}");
     expect(page).toContain("readSavedFeishuActiveWorkspaceId");
     expect(draftBuilder).toContain("original_markdown_path:");
+    expect(draftBuilder).toContain("本次任务请使用“飞书文档助手”智能体处理。");
     expect(draftBuilder).toContain('    "---",');
     expect(draftBuilder).toContain('    "注意：",');
     expect(draftBuilder).not.toContain("请在上方填写你的问题或任务。");
+    expect(draftBuilder).not.toContain("doc_token:");
+    expect(draftBuilder).not.toContain("create_target:");
+    expect(draftBuilder).not.toContain("workflow:");
     expect(workbench).toContain("draftRelativePath: chatDoc.cache?.draftRelativePath");
     expect(workbench).toContain("const chatPreviewPath = chatDoc.cache?.draftRelativePath ?? chatDoc.cache?.originalRelativePath");
     expect(workbench).toContain("const chatPreviewFallbackPath = chatDoc.cache?.draftRelativePath");
@@ -75,6 +85,11 @@ describe("Feishu docs workbench IR loading bridge", () => {
     expect(workbench).toContain("boardSnapshots={currentDoc.boardSnapshots}");
     expect(workbench).not.toContain("fetchFeishuDocWhiteboardPreviewUrls");
     expect(workbench).toContain("createSession: true");
+    expect(workbench).toContain('treeSelectionMode === "include_subtree"');
+    expect(workbench).toContain('props.t("飞书页.文档.按钮.仅当前")');
+    expect(workbench).toContain('props.t("飞书页.文档.按钮.含子文档")');
+    expect(workbench).toContain('props.t("飞书页.文档.按钮.补选子文档")');
+    expect(workbench).toContain('props.t("飞书页.文档.按钮.取消子文档")');
     expect(workbench).toContain("void loadTree(treeRootDocId, { forceRefresh: true, preloadSubtree: true })");
     expect(workbench).toContain("void loadTree(nextRoot, { forceRefresh: true, preloadSubtree: true })");
     expect(workbench).toContain('void loadTree(treeRootDocId.trim(), { preloadSubtree: true })');
@@ -82,6 +97,8 @@ describe("Feishu docs workbench IR loading bridge", () => {
     expect(workbench).toContain('kind: "feishu-doc"');
     expect(workbench).toContain("path: chatPreviewPath");
     expect(workbench).toContain("fallbackPath: chatPreviewFallbackPath");
+    expect(workbench).toContain("checkable");
+    expect(workbench).toContain("checkStrictly");
     expect(workbench).not.toContain('kind: "feishu-docs-workspace"');
     expect(app).toContain("registerAppServiceConversationLauncher");
     expect(app).toContain("pendingConversationOpenRef");
@@ -91,7 +108,8 @@ describe("Feishu docs workbench IR loading bridge", () => {
     expect(bridge).toContain("flushPendingConversationOpens");
     expect(bridge).toContain("if (request?.createSession)");
     expect(pane).toContain("openConversation: async (input) => {");
-    expect(pane).toContain("const createdSession = await state.createSession()");
+    expect(pane).toContain("const createdSession = await state.createSession({");
+    expect(pane).toContain("selectedAgentId: input.selectedAgentId");
     expect(pane).toContain("Keep session creation and draft prefill resilient");
     expect(services).toContain('window.location.hash = "chat"');
     expect(workbench).not.toContain("if (props.workspaceId && !item.cache)");

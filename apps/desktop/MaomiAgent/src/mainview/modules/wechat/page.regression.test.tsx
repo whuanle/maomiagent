@@ -63,9 +63,23 @@ const sampleState = {
   updatedAt: "2026-05-19T08:12:00.000Z",
 } satisfies WechatStateView;
 
+const workspaceItems = [{
+  workspaceId: "workspace-a",
+  name: "Workspace A",
+  directoryPath: "E:/workspace/a",
+  isPinned: false,
+  tags: [],
+  createdAt: "2026-05-19T08:00:00.000Z",
+  updatedAt: "2026-05-19T08:00:00.000Z",
+}];
+const saveWechatConfigCalls: Array<Record<string, unknown>> = [];
+
 mock.module("../../lib/desktop-wechat", () => ({
   fetchWechatState: async () => sampleState,
-  saveWechatConfig: async () => sampleState,
+  saveWechatConfig: async (input: Record<string, unknown>) => {
+    saveWechatConfigCalls.push(input);
+    return sampleState;
+  },
   startWechatQrLogin: async () => ({
     sessionKey: "session-1",
     message: "二维码已生成",
@@ -97,17 +111,9 @@ mock.module("../../lib/desktop-wechat", () => ({
 }));
 mock.module("../../lib/desktop-workspace", () => ({
   listDesktopWorkspaces: async () => ({
-    items: [{
-      workspaceId: "workspace-a",
-      name: "Workspace A",
-      directoryPath: "E:/workspace/a",
-      isPinned: false,
-      tags: [],
-      createdAt: "2026-05-19T08:00:00.000Z",
-      updatedAt: "2026-05-19T08:00:00.000Z",
-    }],
+    items: workspaceItems,
     meta: {
-      total: 1,
+      total: workspaceItems.length,
       limit: 200,
       offset: 0,
       hasMore: false,
@@ -261,6 +267,16 @@ async function cleanupWechatPage(root: Root, container: HTMLElement) {
 
 afterEach(() => {
   globalThis.document?.body?.replaceChildren?.();
+  workspaceItems.splice(0, workspaceItems.length, {
+    workspaceId: "workspace-a",
+    name: "Workspace A",
+    directoryPath: "E:/workspace/a",
+    isPinned: false,
+    tags: [],
+    createdAt: "2026-05-19T08:00:00.000Z",
+    updatedAt: "2026-05-19T08:00:00.000Z",
+  });
+  saveWechatConfigCalls.length = 0;
   restoreDomWindow();
 });
 
@@ -277,6 +293,57 @@ test("renders only the account list panel on the main area", async () => {
   expect(container.textContent).not.toContain("默认工作区");
   expect(container.textContent).not.toContain("工作区切换");
   expect(container.textContent).not.toContain("先生成二维码，再使用微信扫码登录");
+
+  await cleanupWechatPage(root, container);
+});
+
+test("uses the first ordinary workspace when dedicated channel workspaces are present", async () => {
+  installDomWindow();
+  workspaceItems.splice(0, workspaceItems.length,
+    {
+      workspaceId: "wechat-user-1",
+      name: "WeChat User",
+      directoryPath: "C:/Users/demo/.maomiagent/desktop/workspaces/channels/wechat/wechat-user-1",
+      isPinned: false,
+      tags: [],
+      createdAt: "2026-05-19T08:00:00.000Z",
+      updatedAt: "2026-05-19T08:00:00.000Z",
+    },
+    {
+      workspaceId: "workspace-a",
+      name: "Workspace A",
+      directoryPath: "E:/workspace/a",
+      isPinned: false,
+      tags: [],
+      createdAt: "2026-05-19T08:00:00.000Z",
+      updatedAt: "2026-05-19T08:00:00.000Z",
+    },
+    {
+      workspaceId: "feishu-user-1",
+      name: "Feishu User",
+      directoryPath: "C:/Users/demo/.maomiagent/desktop/workspaces/channels/feishu/feishu-user-1",
+      isPinned: false,
+      tags: [],
+      createdAt: "2026-05-19T08:00:00.000Z",
+      updatedAt: "2026-05-19T08:00:00.000Z",
+    },
+  );
+
+  const { container, root } = await renderWechatPage();
+  const saveButton = Array.from(container.querySelectorAll("button"))
+    .find((item) => item.textContent?.includes("保存配置"));
+
+  expect(saveButton).toBeTruthy();
+
+  await act(async () => {
+    saveButton?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  });
+  await flushTasks();
+
+  expect(saveWechatConfigCalls.at(-1)).toEqual(expect.objectContaining({
+    selectedWorkspaceId: "workspace-a",
+    defaultExecutionWorkspaceId: "workspace-a",
+  }));
 
   await cleanupWechatPage(root, container);
 });

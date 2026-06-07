@@ -361,6 +361,7 @@ export function FeishuPage(props: Props) {
             treeQuery: docsUiState.treeQuery.trim(),
             treeRootDocId: docsUiState.treeRootDocId.trim(),
             workspaceMode: docsUiState.workspaceMode,
+            checkedTreeKeys: docsUiState.checkedTreeKeys ?? [],
           },
         },
       }).catch(() => undefined)
@@ -667,6 +668,7 @@ export function FeishuPage(props: Props) {
         treeRootDocId: nextTreeRootDocId || previousTreeRootDocId,
         treeNodes: nextState.treeNodes ?? previous.treeNodes,
         expandedKeys: nextState.expandedKeys ?? previous.expandedKeys,
+        checkedTreeKeys: nextState.checkedTreeKeys ?? previous.checkedTreeKeys,
       }
 
       return isSameDocsUiState(previous, mergedState)
@@ -787,7 +789,8 @@ export function FeishuPage(props: Props) {
     docsUiState.activeDocId?.trim()
     || docsUiState.treeQuery.trim()
     || docsUiState.treeRootDocId.trim()
-    || docsUiState.treeNodes?.length,
+    || docsUiState.treeNodes?.length
+    || docsUiState.checkedTreeKeys?.length,
   )
 
   if (!baseUrl) {
@@ -828,6 +831,7 @@ export function FeishuPage(props: Props) {
           initialTreeRootDocId={docsUiState.treeRootDocId}
           initialTreeNodes={docsUiState.treeNodes}
           initialExpandedKeys={docsUiState.expandedKeys}
+          initialCheckedTreeKeys={docsUiState.checkedTreeKeys}
           onReloadState={() => {
             void loadData(true)
           }}

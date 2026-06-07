@@ -18,6 +18,7 @@ import type {
   WechatStateView,
 } from "../../../shared/desktop-wechat";
 import type { DesktopWorkspaceItem } from "../../../shared/desktop-workspace";
+import { filterSelectableDesktopWorkspaces } from "../../lib/desktop-workspace-filter";
 import { listDesktopWorkspaces } from "../../lib/desktop-workspace";
 import {
   clearWechatAccountConversations,
@@ -285,12 +286,17 @@ export function WechatPage(props: Props) {
       ?? null;
   }, [activeLoginSessionKey, state?.loginSessions]);
 
+  const selectableWorkspaces = useMemo(
+    () => filterSelectableDesktopWorkspaces(workspaces),
+    [workspaces],
+  );
+
   const workspaceOptions = useMemo(
-    () => workspaces.map((item) => ({
+    () => selectableWorkspaces.map((item) => ({
       label: `${item.name} · ${item.workspaceId}`,
       value: item.workspaceId,
     })),
-    [workspaces],
+    [selectableWorkspaces],
   );
 
   const pollLoginSession = useCallback(async (sessionKey: string) => {
@@ -354,7 +360,7 @@ export function WechatPage(props: Props) {
   const handleSaveConfig = useCallback(async () => {
     try {
       setSavingConfig(true);
-      const executionWorkspaceId = resolveWechatExecutionWorkspaceId(stateRef.current, workspaces);
+      const executionWorkspaceId = resolveWechatExecutionWorkspaceId(stateRef.current, selectableWorkspaces);
       const nextState = await saveWechatConfig({
         baseUrl: draftConfig.baseUrl.trim() || undefined,
         cdnBaseUrl: draftConfig.cdnBaseUrl.trim() || undefined,
@@ -383,7 +389,7 @@ export function WechatPage(props: Props) {
     } finally {
       setSavingConfig(false);
     }
-  }, [commitWechatState, draftConfig, message, workspaces]);
+  }, [commitWechatState, draftConfig, message, selectableWorkspaces]);
 
   const handleStartLogin = useCallback(async () => {
     const loginWindow = reserveAndTrackLoginWindow();

@@ -9,28 +9,47 @@ export type FeishuDocChatDraftTextInput = {
   draftRelativePath?: string
 }
 
-export function buildFeishuDocChatDraftText(input: FeishuDocChatDraftTextInput): string {
+function buildFeishuDocChatDraftNoticeLines(): string[] {
   return [
     "",
     "",
     "---",
     "注意：",
     "",
-    "处理前先读取工作区里的原始 Markdown 文件。",
-    "如果原始 Markdown 文件内容为空，也表示已读取到一个空白飞书文档，不要因此跳过本地草稿生成。",
-    "如需生成修改稿，只能写入本地 Markdown 草稿，不要直接改动或推送飞书远端。",
+    "本次任务请使用“飞书文档助手”智能体处理。",
+    "先读取 `original_markdown_path`。",
+    "如需修改、改写、整理或续写，只能写入 `local_draft_path`。",
+    "不要直接修改 `original_markdown_path`。",
+    "如果缺少 `local_draft_path`，按只读参考处理，并先告知用户。",
+    "如果需要更多信息，请读取文档同目录的元数据文件。",
     "",
+  ]
+}
+
+function buildFeishuDocContextLines(input: FeishuDocChatDraftTextInput): string[] {
+  return [
     "<feishu_doc_context>",
-    `doc_token: ${input.docId}`,
-    input.resolvedDocId && input.resolvedDocId !== input.docId ? `resolved_document_id: ${input.resolvedDocId}` : undefined,
     `title: ${input.title}`,
-    input.rootDocId ? `root_doc_token: ${input.rootDocId}` : undefined,
-    input.url ? `url: ${input.url}` : undefined,
-    input.relativeUpdate ? `updated_at: ${input.relativeUpdate}` : undefined,
     input.originalRelativePath ? `original_markdown_path: ${input.originalRelativePath}` : undefined,
     input.draftRelativePath ? `local_draft_path: ${input.draftRelativePath}` : undefined,
-    input.rootDocId ? "create_target: root_doc_token" : "create_target: query_workspace_root_doc_first",
-    "workflow: read_original_then_edit_local_draft",
     "</feishu_doc_context>",
-  ].filter((item): item is string => item !== undefined).join("\n")
+  ].filter((item): item is string => item !== undefined)
+}
+
+export function buildFeishuDocChatDraftText(input: FeishuDocChatDraftTextInput): string {
+  return [
+    ...buildFeishuDocChatDraftNoticeLines(),
+    ...buildFeishuDocContextLines(input),
+  ].join("\n")
+}
+
+export function buildFeishuDocChatDraftBatchText(inputs: FeishuDocChatDraftTextInput[]): string {
+  const contexts = inputs
+    .filter((input) => input.docId.trim())
+    .map((input) => buildFeishuDocContextLines(input).join("\n"))
+
+  return [
+    ...buildFeishuDocChatDraftNoticeLines(),
+    ...contexts.flatMap((context, index) => index === 0 ? [context] : ["", context]),
+  ].join("\n")
 }

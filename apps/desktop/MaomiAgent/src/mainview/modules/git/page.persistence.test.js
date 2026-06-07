@@ -325,6 +325,21 @@ export async function listDesktopWorkspaces() {
 }
 `);
 
+  writeFileSync(join(tempModuleDir, "desktop-workspace-filter.stub.mjs"), `
+export function filterSelectableDesktopWorkspaces(items) {
+  return items.filter((item) => {
+    const workspaceId = item.workspaceId.trim().toLowerCase();
+    const directoryPath = (item.directoryPath ?? "").trim().replace(/\\\\/g, "/").toLowerCase();
+    if (workspaceId.startsWith("wechat-") || workspaceId.startsWith("feishu-")) {
+      return false;
+    }
+
+    return !directoryPath.includes("/desktop/workspaces/channels/wechat/")
+      && !directoryPath.includes("/desktop/workspaces/channels/feishu/");
+  });
+}
+`);
+
   writeFileSync(join(tempModuleDir, "git-page-ui-state.stub.mjs"), `
 const state = globalThis.__MAOMI_GIT_PAGE_TEST_STATE;
 
@@ -369,6 +384,7 @@ function buildRunnablePageModule() {
       `import {\n  App as AntdApp,\n  Button,\n  Empty,\n  Modal,\n  Select,\n  Tabs,\n} from "./antd.stub.mjs";`,
     )
     .replace(`import { listDesktopWorkspaces } from "../../lib/desktop-workspace";`, `import { listDesktopWorkspaces } from "./desktop-workspace.stub.mjs";`)
+    .replace(`import { filterSelectableDesktopWorkspaces } from "../../lib/desktop-workspace-filter";`, `import { filterSelectableDesktopWorkspaces } from "./desktop-workspace-filter.stub.mjs";`)
     .replace(`} from "../../lib/desktop-git";`, `} from "./desktop-git.stub.mjs";`)
     .replace(`import { createGitBranchCopy } from "./branch-copy";`, `import { createGitBranchCopy } from "./branch-copy.stub.mjs";`)
     .replace(`import { GitBranchWorkbench } from "./components/branch-workbench";`, `import { GitBranchWorkbench } from "./branch-workbench.stub.mjs";`)
@@ -515,6 +531,25 @@ test("restores the persisted workspace when it still exists", async () => {
 
   expect(changesWorkbench?.props.workspaceId).toBe("workspace-b");
   expect(runtimeTestState.writeCalls.at(-1)?.workspaceId).toBe("workspace-b");
+});
+
+test("filters dedicated channel workspaces from the selector options", async () => {
+  runtimeTestState.persistedState = {
+    workspaceId: "workspace-a",
+  };
+  runtimeTestState.workspaceItems = [
+    { workspaceId: "wechat-user-1", name: "WeChat User" },
+    { workspaceId: "workspace-a", name: "Workspace A" },
+    { workspaceId: "feishu-user-1", name: "Feishu User" },
+  ];
+
+  const page = await renderGitPage();
+  const select = findNodeByType(page.tree, "select");
+
+  expect(select?.props.options).toEqual([
+    { label: "Workspace A (workspace-a)", value: "workspace-a" },
+  ]);
+  expect(findNodeByType(page.tree, "git-changes-workbench")?.props.workspaceId).toBe("workspace-a");
 });
 
 test("falls back to the first workspace when the persisted workspace is missing", async () => {
