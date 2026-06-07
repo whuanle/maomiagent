@@ -1162,6 +1162,8 @@ async function resolveTerminalPromptShellForExecution(input: {
   sessionId: string;
   fallbackSessionId?: string;
 }): Promise<ReturnType<typeof normalizeDesktopTerminalPromptShell> | undefined> {
+  // Prefer recent tool history for consistency with the current turn, then fall back
+  // to live terminal detail so long-lived sessions still get shell-aware validation.
   return resolveRecentTerminalPromptShellForSessionId(input.recentMessages, input.sessionId)
     ?? await resolveTerminalPromptShellFromSessionDetail(input.terminalQuery, input.sessionId)
     ?? (input.fallbackSessionId && input.fallbackSessionId !== input.sessionId

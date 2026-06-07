@@ -70,6 +70,8 @@ export function validateDesktopTerminalCommandForShell(input: {
     return undefined;
   }
 
+  // Keep this intentionally narrow: we only block commands that are very likely to
+  // fail in the current shell, and we avoid rewriting or "fixing" commands here.
   if (input.shell.resolvedShellKind === "cmd" && CMD_INCOMPATIBLE_POWERSHELL_COMMAND_RE.test(command)) {
     return {
       code: "terminal_shell_command_mismatch",
