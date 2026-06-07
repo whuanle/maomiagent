@@ -1123,8 +1123,56 @@ function resolveRecentTerminalSessionId(recentMessages: readonly MessageRecordWi
   return undefined;
 }
 
+async function resolveTerminalPromptShellFromSessionDetail(
+  terminalQuery: Pick<DesktopTerminalsQueryPort, "getDetail">,
+  sessionId: string,
+): Promise<ReturnType<typeof normalizeDesktopTerminalPromptShell> | undefined> {
+  try {
+    const detail = await terminalQuery.getDetail({ sessionId, limit: 1 });
+    const session = detail?.session;
+    if (!session) {
+      return undefined;
+    }
+
+    const shell = {
+      resolvedShellKind: session.resolvedShellKind,
+      shellKind: session.shellKind,
+      shellDisplayName: session.shellDisplayName,
+    };
+    const resolvedShellKind = normalizeResolvedTerminalShellKind(shell.resolvedShellKind);
+    const shellKind = normalizeTerminalShellKind(shell.shellKind);
+    const shellDisplayName = normalizeOptionalText(shell.shellDisplayName);
+    if (!resolvedShellKind && !shellKind && !shellDisplayName) {
+      return undefined;
+    }
+
+    return normalizeDesktopTerminalPromptShell({
+      ...(resolvedShellKind ? { resolvedShellKind } : {}),
+      ...(shellKind ? { shellKind } : {}),
+      ...(shellDisplayName ? { shellDisplayName } : {}),
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+async function resolveTerminalPromptShellForExecution(input: {
+  terminalQuery: Pick<DesktopTerminalsQueryPort, "getDetail">;
+  recentMessages: readonly MessageRecordWithParts[];
+  sessionId: string;
+  fallbackSessionId?: string;
+}): Promise<ReturnType<typeof normalizeDesktopTerminalPromptShell> | undefined> {
+  return resolveRecentTerminalPromptShellForSessionId(input.recentMessages, input.sessionId)
+    ?? await resolveTerminalPromptShellFromSessionDetail(input.terminalQuery, input.sessionId)
+    ?? (input.fallbackSessionId && input.fallbackSessionId !== input.sessionId
+      ? resolveRecentTerminalPromptShellForSessionId(input.recentMessages, input.fallbackSessionId)
+        ?? await resolveTerminalPromptShellFromSessionDetail(input.terminalQuery, input.fallbackSessionId)
+      : undefined);
+}
+
 function createTerminalExecuteHandler(
   workspaceQuery: Pick<DesktopWorkspaceQueryPort, "list" | "get">,
+  terminalQuery: Pick<DesktopTerminalsQueryPort, "getDetail">,
   terminalCommand: Pick<DesktopTerminalsCommandPort, "create" | "execute">,
 ): RegisteredToolHandler {
   return {
@@ -1146,10 +1194,12 @@ function createTerminalExecuteHandler(
         });
       }
 
-      const targetShell = resolveRecentTerminalPromptShellForSessionId(context.recentMessages, sessionId)
-        ?? (recentSessionId && recentSessionId !== sessionId
-          ? resolveRecentTerminalPromptShellForSessionId(context.recentMessages, recentSessionId)
-          : undefined);
+      const targetShell = await resolveTerminalPromptShellForExecution({
+        terminalQuery,
+        recentMessages: context.recentMessages,
+        sessionId,
+        ...(recentSessionId ? { fallbackSessionId: recentSessionId } : {}),
+      });
       if (targetShell) {
         const validation = validateDesktopTerminalCommandForShell({
           shell: targetShell,
@@ -1188,6 +1238,25 @@ function createTerminalExecuteHandler(
           ...(normalizeOptionalText(input.cwd) ? { cwd: normalizeOptionalText(input.cwd) } : {}),
           ...(normalizeTerminalShellKind(input.shellKind) ? { shellKind: normalizeTerminalShellKind(input.shellKind) } : {}),
         });
+        const createdShell = normalizeDesktopTerminalPromptShell({
+          ...(createdSession.resolvedShellKind ? { resolvedShellKind: createdSession.resolvedShellKind } : {}),
+          ...(createdSession.shellKind ? { shellKind: createdSession.shellKind } : {}),
+          ...(createdSession.shellDisplayName ? { shellDisplayName: createdSession.shellDisplayName } : {}),
+        });
+        const createdValidation = validateDesktopTerminalCommandForShell({
+          shell: createdShell,
+          command,
+        });
+        if (createdValidation) {
+          return asToolFailure(createdValidation.code, createdValidation.message, {
+            sessionId: createdSession.sessionId,
+            requestedSessionId,
+            resolvedShellKind: createdShell.resolvedShellKind,
+            shellDisplayName: createdShell.shellDisplayName,
+            command,
+            suggestedPattern: createdValidation.suggestedPattern,
+          });
+        }
 
         session = await terminalCommand.execute(createdSession.sessionId, {
           text: command,
@@ -1505,7 +1574,7 @@ export function createDesktopConversationBuiltinToolBundle(
     createGitListChangesHandler(options.workspaceQuery, options.gitQuery),
     createGitReviewFileHandler(options.workspaceQuery, options.gitQuery),
     createTerminalCreateSessionHandler(options.workspaceQuery, options.terminalCommand),
-    createTerminalExecuteHandler(options.workspaceQuery, options.terminalCommand),
+    createTerminalExecuteHandler(options.workspaceQuery, options.terminalQuery, options.terminalCommand),
     createTerminalReadOutputHandler(options.terminalQuery),
     createTerminalCloseSessionHandler(options.terminalCommand),
     createManagedTaskHandler(options.workspaceQuery, options.taskBridge),

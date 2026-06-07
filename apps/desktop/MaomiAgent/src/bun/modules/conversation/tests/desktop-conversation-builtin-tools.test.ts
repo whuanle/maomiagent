@@ -1047,6 +1047,148 @@ describe("desktop conversation builtin tools", () => {
     }));
   });
 
+  test("loads shell metadata from terminal detail when recent messages do not include the session", async () => {
+    const executedCommands: string[] = [];
+    const bundle = createDesktopConversationBuiltinToolBundle({
+      workspaceQuery: {
+        async list() {
+          return { items: [], meta: { total: 0, limit: 20, offset: 0, hasMore: false } };
+        },
+        async get() {
+          return null;
+        },
+        async getFileContent() {
+          throw new Error("not used");
+        },
+      },
+      gitQuery: {
+        async getGitChanges() {
+          throw new Error("not used");
+        },
+        async getGitReviewDetail() {
+          throw new Error("not used");
+        },
+      },
+      terminalQuery: {
+        async getDetail(input) {
+          if (input.sessionId !== "term_cmd_detail") {
+            return null;
+          }
+
+          return {
+            session: {
+              sessionId: input.sessionId,
+              title: "cmd shell",
+              shellKind: "cmd",
+              resolvedShellKind: "cmd",
+              shellDisplayName: "cmd.exe",
+              status: "running",
+              cwd: "E:/workspace/MaomiAgent",
+              createdAt: "2026-05-04T00:00:00.000Z",
+              updatedAt: "2026-05-04T00:00:00.000Z",
+            },
+            output: "",
+            revision: 1,
+            truncated: false,
+          };
+        },
+      },
+      terminalCommand: {
+        async create() {
+          throw new Error("not used");
+        },
+        async execute(sessionId, input) {
+          executedCommands.push(`${sessionId}:${input.text}`);
+          return {
+            sessionId,
+            title: "cmd shell",
+            shellKind: "cmd" as const,
+            resolvedShellKind: "cmd" as const,
+            shellDisplayName: "cmd.exe",
+            status: "running" as const,
+            cwd: "E:/workspace/MaomiAgent",
+            createdAt: "2026-05-04T00:00:00.000Z",
+            updatedAt: "2026-05-04T00:00:00.000Z",
+          };
+        },
+        async close() {
+          throw new Error("not used");
+        },
+      },
+      taskBridge: {
+        async patchManagedConversationRootTask() {
+          throw new Error("not used");
+        },
+      },
+    });
+
+    const terminalExecuteHandler = bundle.toolHandlers.find((handler) => handler.descriptor.name === "terminal_execute");
+    expect(terminalExecuteHandler).toBeTruthy();
+
+    const result = await terminalExecuteHandler!.execute({
+      call: {
+        id: asToolCallId("tool_call_terminal_execute_cmd_detail_mismatch"),
+        sessionId: asSessionId("session_builtin_tools"),
+        runId: asRunId("run_builtin_tools"),
+        turnId: asTurnId("turn_builtin_tools"),
+        messageId: asMessageId("message_assistant_1"),
+        toolName: "terminal_execute",
+        input: {
+          sessionId: "term_cmd_detail",
+          command: "Get-ChildItem -Force",
+        },
+        status: "executing",
+        startedAt: 4,
+        updatedAt: 4,
+      },
+      context: {
+        descriptor: terminalExecuteHandler!.descriptor,
+        signal: new AbortController().signal,
+        session: {
+          id: asSessionId("session_builtin_tools"),
+          title: "Builtin tools",
+          status: "active",
+          createdAt: 1,
+          updatedAt: 1,
+          metadata: {},
+        },
+        run: {
+          id: asRunId("run_builtin_tools"),
+          sessionId: asSessionId("session_builtin_tools"),
+          status: "streaming",
+          startedAt: 2,
+          updatedAt: 2,
+          trigger: {
+            kind: "user_message",
+            refId: asMessageId("message_user_1"),
+          },
+        },
+        turn: {
+          id: asTurnId("turn_builtin_tools"),
+          sessionId: asSessionId("session_builtin_tools"),
+          runId: asRunId("run_builtin_tools"),
+          sequence: 1,
+          agentId: "desktop.primary",
+          executionProfile: {
+            id: "desktop.openai.test" as never,
+            modelId: "test-model",
+          },
+          status: "streaming",
+          startedAt: 3,
+        },
+        recentMessages: [],
+      },
+    });
+
+    expect(executedCommands).toEqual([]);
+    expect(result).toEqual(expect.objectContaining({
+      kind: "failed",
+      error: expect.objectContaining({
+        code: "terminal_shell_command_mismatch",
+      }),
+    }));
+  });
+
   test("falls back to the session workspace when the tool input carries an invalid workspaceId", async () => {
     const requestedWorkspaceIds: string[] = [];
     const bundle = createDesktopConversationBuiltinToolBundle({
@@ -1522,6 +1664,158 @@ describe("desktop conversation builtin tools", () => {
     expect(result).toEqual(expect.objectContaining({
       ok: true,
       sessionId: "term_auto",
+    }));
+  });
+
+  test("validates commands against the resolved shell of an auto-created session before execution", async () => {
+    const executedSessionIds: string[] = [];
+    const bundle = createDesktopConversationBuiltinToolBundle({
+      workspaceQuery: {
+        async list() {
+          return {
+            items: [{
+              workspaceId: "workspace-1",
+              name: "MaomiAgent",
+              directoryPath: "E:/workspace/MaomiAgent",
+              isPinned: false,
+              tags: [],
+              createdAt: "2026-05-04T00:00:00.000Z",
+              updatedAt: "2026-05-04T00:00:00.000Z",
+            }],
+            meta: {
+              total: 1,
+              limit: 20,
+              offset: 0,
+              hasMore: false,
+            },
+          };
+        },
+        async get(workspaceId) {
+          return workspaceId === "workspace-1"
+            ? {
+              workspaceId: "workspace-1",
+              name: "MaomiAgent",
+              directoryPath: "E:/workspace/MaomiAgent",
+              isPinned: false,
+              tags: [],
+              createdAt: "2026-05-04T00:00:00.000Z",
+              updatedAt: "2026-05-04T00:00:00.000Z",
+            }
+            : null;
+        },
+        async getFileContent() {
+          throw new Error("not used");
+        },
+      },
+      gitQuery: {
+        async getGitChanges() {
+          throw new Error("not used");
+        },
+        async getGitReviewDetail() {
+          throw new Error("not used");
+        },
+      },
+      terminalQuery: {
+        async getDetail() {
+          throw new Error("not used");
+        },
+      },
+      terminalCommand: {
+        async create(input) {
+          return {
+            sessionId: "term_auto_cmd",
+            title: input.title ?? "Workspace shell",
+            shellKind: "cmd" as const,
+            resolvedShellKind: "cmd" as const,
+            shellDisplayName: "cmd.exe",
+            status: "running" as const,
+            cwd: input.cwd ?? "E:/workspace/MaomiAgent",
+            workspaceId: input.workspaceId,
+            createdAt: "2026-05-04T00:00:00.000Z",
+            updatedAt: "2026-05-04T00:00:00.000Z",
+          };
+        },
+        async execute(sessionId) {
+          executedSessionIds.push(sessionId);
+          return null;
+        },
+        async close() {
+          throw new Error("not used");
+        },
+      },
+      taskBridge: {
+        async patchManagedConversationRootTask() {
+          throw new Error("not used");
+        },
+      },
+    });
+
+    const terminalExecuteHandler = bundle.toolHandlers.find((handler) => handler.descriptor.name === "terminal_execute");
+    expect(terminalExecuteHandler).toBeTruthy();
+
+    const result = await terminalExecuteHandler!.execute({
+      call: {
+        id: asToolCallId("tool_call_terminal_execute_autocreate_mismatch"),
+        sessionId: asSessionId("session_builtin_tools"),
+        runId: asRunId("run_builtin_tools"),
+        turnId: asTurnId("turn_builtin_tools"),
+        messageId: asMessageId("message_assistant_1"),
+        toolName: "terminal_execute",
+        input: {
+          sessionId: "blog-setup",
+          command: "Get-ChildItem -Force",
+        },
+        status: "executing",
+        startedAt: 4,
+        updatedAt: 4,
+      },
+      context: {
+        descriptor: terminalExecuteHandler!.descriptor,
+        signal: new AbortController().signal,
+        session: {
+          id: asSessionId("session_builtin_tools"),
+          title: "Builtin tools",
+          status: "active",
+          createdAt: 1,
+          updatedAt: 1,
+          metadata: {
+            workspaceId: "workspace-1",
+          },
+        },
+        run: {
+          id: asRunId("run_builtin_tools"),
+          sessionId: asSessionId("session_builtin_tools"),
+          status: "streaming",
+          startedAt: 2,
+          updatedAt: 2,
+          trigger: {
+            kind: "user_message",
+            refId: asMessageId("message_user_1"),
+          },
+        },
+        turn: {
+          id: asTurnId("turn_builtin_tools"),
+          sessionId: asSessionId("session_builtin_tools"),
+          runId: asRunId("run_builtin_tools"),
+          sequence: 1,
+          agentId: "desktop.primary",
+          executionProfile: {
+            id: "desktop.openai.test" as never,
+            modelId: "test-model",
+          },
+          status: "streaming",
+          startedAt: 3,
+        },
+        recentMessages: [],
+      },
+    });
+
+    expect(executedSessionIds).toEqual(["blog-setup"]);
+    expect(result).toEqual(expect.objectContaining({
+      kind: "failed",
+      error: expect.objectContaining({
+        code: "terminal_shell_command_mismatch",
+      }),
     }));
   });
 });
