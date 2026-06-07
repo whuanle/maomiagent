@@ -86,6 +86,8 @@ const WorkspaceInspectorTreeFileIcon = memo(function WorkspaceInspectorTreeFileI
 });
 
 const WorkspaceInspectorTreeDirectory = memo(function WorkspaceInspectorTreeDirectory(props: {
+  language: LanguageCode;
+  workspaceId?: string;
   node: DesktopWorkspaceFileTreeNode;
   level: number;
   expanded: boolean;
@@ -105,61 +107,69 @@ const WorkspaceInspectorTreeDirectory = memo(function WorkspaceInspectorTreeDire
 
   return (
     <div className="chat-inspector-tree-group">
-      <button
-        type="button"
-        className={[
-          "chat-inspector-tree-row",
-          props.selected ? "is-active" : "",
-        ].filter(Boolean).join(" ")}
-        data-tree-kind="directory"
-        data-level={String(Math.min(props.level, 12))}
-        onClick={props.onToggle}
-        title={props.node.path || props.node.name}
-        ref={(node) => {
-          if (node && props.selected) {
-            requestAnimationFrame(() => {
-              node.scrollIntoView({
-                block: "nearest",
-                inline: "nearest",
-              });
-            });
-          }
-        }}
+      <WorkspaceInspectorFileContextMenu
+        language={props.language}
+        workspaceId={props.workspaceId}
+        path={props.node.path}
+        absolutePath={props.node.absolutePath}
+        nodeType="directory"
       >
-        <span className="chat-inspector-tree-leading">
-          {props.loading ? (
-            <LoadingOutlined spin className="chat-inspector-tree-caret is-loading" />
-          ) : props.expanded ? (
-            <CaretDownFilled className="chat-inspector-tree-caret" />
-          ) : (
-            <CaretRightFilled className="chat-inspector-tree-caret" />
-          )}
-        </span>
-        <span className="chat-inspector-tree-node">
-          <WorkspaceFileIcon
-            path={props.node.path}
-            kind="directory"
-            expanded={props.expanded}
-            mono={Boolean(props.kind)}
-            className={directoryIconClassName}
-          />
-        </span>
-        <span
+        <button
+          type="button"
           className={[
-            "chat-inspector-tree-name",
-            props.kind ? "is-kind-active" : "",
-            kindClass,
+            "chat-inspector-tree-row",
+            props.selected ? "is-active" : "",
           ].filter(Boolean).join(" ")}
+          data-tree-kind="directory"
+          data-level={String(Math.min(props.level, 12))}
+          onClick={props.onToggle}
+          title={props.node.path || props.node.name}
+          ref={(node) => {
+            if (node && props.selected) {
+              requestAnimationFrame(() => {
+                node.scrollIntoView({
+                  block: "nearest",
+                  inline: "nearest",
+                });
+              });
+            }
+          }}
         >
-          {props.node.name}
-        </span>
-        {props.kind ? (
+          <span className="chat-inspector-tree-leading">
+            {props.loading ? (
+              <LoadingOutlined spin className="chat-inspector-tree-caret is-loading" />
+            ) : props.expanded ? (
+              <CaretDownFilled className="chat-inspector-tree-caret" />
+            ) : (
+              <CaretRightFilled className="chat-inspector-tree-caret" />
+            )}
+          </span>
+          <span className="chat-inspector-tree-node">
+            <WorkspaceFileIcon
+              path={props.node.path}
+              kind="directory"
+              expanded={props.expanded}
+              mono={Boolean(props.kind)}
+              className={directoryIconClassName}
+            />
+          </span>
           <span
-            className={`chat-inspector-tree-mark is-dot is-${props.kind}`}
-            aria-hidden="true"
-          />
-        ) : null}
-      </button>
+            className={[
+              "chat-inspector-tree-name",
+              props.kind ? "is-kind-active" : "",
+              kindClass,
+            ].filter(Boolean).join(" ")}
+          >
+            {props.node.name}
+          </span>
+          {props.kind ? (
+            <span
+              className={`chat-inspector-tree-mark is-dot is-${props.kind}`}
+              aria-hidden="true"
+            />
+          ) : null}
+        </button>
+      </WorkspaceInspectorFileContextMenu>
       {props.expanded ? (
         <div className="chat-inspector-tree-children">
           {props.children}
@@ -207,6 +217,7 @@ const WorkspaceInspectorTreeFile = memo(function WorkspaceInspectorTreeFile(prop
       workspaceId={props.workspaceId}
       path={props.node.path}
       absolutePath={props.node.absolutePath}
+      nodeType="file"
       isGitRepo={props.isGitRepo}
       gitChange={props.gitChange}
       onSelect={() => props.onSelect()}
@@ -335,6 +346,8 @@ export function WorkspaceInspectorTree(props: Props) {
 
           return (
             <WorkspaceInspectorTreeDirectory
+              language={props.language}
+              workspaceId={props.workspaceId}
               key={node.path}
               node={node}
               level={level}

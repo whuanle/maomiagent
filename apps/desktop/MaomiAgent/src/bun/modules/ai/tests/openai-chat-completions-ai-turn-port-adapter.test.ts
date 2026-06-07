@@ -174,6 +174,54 @@ describe("OpenAIChatCompletionsAiTurnPortAdapter", () => {
     });
   });
 
+  test("forwards configured headers for Kimi Coding chat completions", async () => {
+    let capturedHeaders: HeadersInit | undefined;
+
+    globalThis.fetch = (async (_input, init) => {
+      capturedHeaders = init?.headers;
+
+      return new Response(JSON.stringify({
+        id: "chatcmpl_kimi_headers_1",
+        choices: [{
+          index: 0,
+          finish_reason: "stop",
+          message: {
+            role: "assistant",
+            content: "ok",
+          },
+        }],
+      }), {
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    }) as typeof fetch;
+
+    const adapter = new OpenAIChatCompletionsAiTurnPortAdapter({
+      resolveConfig: () => ({
+        apiKey: "kimi-test-key",
+        baseUrl: "https://api.kimi.com/coding/v1",
+        headers: {
+          "User-Agent": "KimiCLI/1.3",
+        },
+      }),
+    });
+
+    await collectEvents(adapter.stream({
+      ...createTurnRequest(),
+      executionProfile: {
+        id: "profile-kimi-coding-headers" as AiTurnRequest["executionProfile"]["id"],
+        modelId: "kimi-k2.6",
+      },
+    }));
+
+    expect(capturedHeaders).toEqual(expect.objectContaining({
+      Authorization: "Bearer kimi-test-key",
+      "Content-Type": "application/json",
+      "User-Agent": "KimiCLI/1.3",
+    }));
+  });
+
   test("uses compatible system and tool names for openai-compatible chat providers", async () => {
     let capturedBody = "";
 

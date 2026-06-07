@@ -1,6 +1,32 @@
 import { describe, expect, test } from "bun:test";
 
-import { resolveWorkspaceFileContainingDirectory } from "./workspace-file-location";
+import {
+  resolveWorkspaceAbsolutePath,
+  resolveWorkspaceFileContainingDirectory,
+} from "./workspace-file-location";
+
+describe("resolveWorkspaceAbsolutePath", () => {
+  test("joins a workspace root with a relative path", () => {
+    expect(resolveWorkspaceAbsolutePath({
+      path: "src/main.ts",
+      rootPath: "E:\\workspace\\MaomiAgent",
+    })).toBe("E:\\workspace\\MaomiAgent\\src\\main.ts");
+  });
+
+  test("keeps absolute paths unchanged", () => {
+    expect(resolveWorkspaceAbsolutePath({
+      path: "E:\\workspace\\MaomiAgent\\src\\main.ts",
+      rootPath: "E:\\workspace\\MaomiAgent",
+    })).toBe("E:\\workspace\\MaomiAgent\\src\\main.ts");
+  });
+
+  test("resolves dot to the workspace root", () => {
+    expect(resolveWorkspaceAbsolutePath({
+      path: ".",
+      rootPath: "E:\\workspace\\MaomiAgent\\",
+    })).toBe("E:\\workspace\\MaomiAgent");
+  });
+});
 
 describe("resolveWorkspaceFileContainingDirectory", () => {
   test("resolves the parent directory for a regular Windows file path", () => {

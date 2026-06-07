@@ -66,6 +66,7 @@ import {
   readProjectedConversationToolOutputSummary,
 } from "./direct-session-session-detail-projection";
 import type { ConversationAvatarSettings } from "./types";
+import { WorkspacePathContextMenu } from "../workspace-path-context-menu";
 
 type ChatMessageDisplayRole = "assistant" | "user" | "system";
 type MessageTone = "success" | "running" | "warning" | "error";
@@ -864,27 +865,35 @@ function createCodePreviewHandler(input: {
 }
 
 function renderToolPreviewPath(input: {
+  language: LanguageCode;
+  workspaceId?: string;
   path: string;
   key: string;
+  pathKind?: "file" | "directory" | "unknown";
   onOpenWorkspaceFilePreview?: (path: string) => void;
 }) {
-  if (input.onOpenWorkspaceFilePreview) {
-    return (
-      <button
-        key={input.key}
-        type="button"
-        className="chat-direct-tool-path"
-        onClick={() => input.onOpenWorkspaceFilePreview?.(input.path)}
-      >
-        {input.path}
-      </button>
-    );
-  }
-
   return (
-    <span key={input.key} className="chat-direct-tool-path">
-      {input.path}
-    </span>
+    <WorkspacePathContextMenu
+      key={input.key}
+      language={input.language}
+      workspaceId={input.workspaceId}
+      path={input.path}
+      pathKind={input.pathKind}
+    >
+      {input.onOpenWorkspaceFilePreview ? (
+        <button
+          type="button"
+          className="chat-direct-tool-path"
+          onClick={() => input.onOpenWorkspaceFilePreview?.(input.path)}
+        >
+          {input.path}
+        </button>
+      ) : (
+        <span className="chat-direct-tool-path">
+          {input.path}
+        </span>
+      )}
+    </WorkspacePathContextMenu>
   );
 }
 
@@ -1378,8 +1387,11 @@ function renderMessagePart(
             {previewPaths.length > 0 ? (
               <div className="chat-direct-tool-paths is-command-card">
                 {previewPaths.map((path) => renderToolPreviewPath({
+                  language,
+                  workspaceId,
                   path,
                   key: `${part.partId || `${part.type}-${index}`}:${path}`,
+                  pathKind: "unknown",
                   onOpenWorkspaceFilePreview,
                 }))}
               </div>
@@ -1411,8 +1423,11 @@ function renderMessagePart(
             {previewPaths.length > 0 ? (
               <div className="chat-direct-tool-paths">
                 {previewPaths.map((path) => renderToolPreviewPath({
+                  language,
+                  workspaceId,
                   path,
                   key: `${part.partId || `${part.type}-${index}`}:${path}`,
+                  pathKind: "unknown",
                   onOpenWorkspaceFilePreview,
                 }))}
               </div>
@@ -1589,17 +1604,26 @@ function DirectSessionMessageInner(props: Props) {
             const actionLabel = formatModifiedFileAction(item.action, isEn);
             const lineLabel = formatModifiedFileAffectedLines(item, isEn);
             const impactTitle = formatModifiedFileImpactTitle(item, isEn);
-            const pathNode = openWorkspaceFilePreview ? (
-              <button
-                type="button"
-                className="chat-direct-message-files-path is-button"
-                title={item.path}
-                onClick={() => openWorkspaceFilePreview?.(item.path)}
+            const pathNode = (
+              <WorkspacePathContextMenu
+                language={props.language}
+                workspaceId={workspaceId}
+                path={item.path}
+                pathKind="file"
               >
-                {item.path}
-              </button>
-            ) : (
-              <span className="chat-direct-message-files-path" title={item.path}>{item.path}</span>
+                {openWorkspaceFilePreview ? (
+                  <button
+                    type="button"
+                    className="chat-direct-message-files-path is-button"
+                    title={item.path}
+                    onClick={() => openWorkspaceFilePreview?.(item.path)}
+                  >
+                    {item.path}
+                  </button>
+                ) : (
+                  <span className="chat-direct-message-files-path" title={item.path}>{item.path}</span>
+                )}
+              </WorkspacePathContextMenu>
             );
 
             return (

@@ -16,8 +16,8 @@ import {
 import {
   DESKTOP_WORKSPACE_BRIDGE_READY_EVENT,
   hasDesktopWorkspaceBridge,
-  listDesktopWorkspaces,
 } from "../../../lib/desktop-workspace";
+import { getNormalWorkspaces } from "../../../services/workspace-query-service";
 import type { ChatActionErrorType } from "../types";
 
 type UseChatPageShellStateInput = {
@@ -85,8 +85,7 @@ export function useChatPageShellState(input: UseChatPageShellStateInput) {
 
     setLoadingWorkspaces(true);
     try {
-      const response = await listDesktopWorkspaces({ limit: 100, offset: 0 });
-      const nextItems = [...response.items].sort(compareWorkspaces);
+      const nextItems = (await getNormalWorkspaces({ limit: 100, offset: 0 })).sort(compareWorkspaces);
       setWorkspaces(nextItems);
       setWorkspaceId((currentWorkspaceId) => resolveNextWorkspaceId(nextItems, currentWorkspaceId));
       setWorkspaceListHydrated(true);

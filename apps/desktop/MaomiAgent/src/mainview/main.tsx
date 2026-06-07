@@ -1,9 +1,11 @@
 import { installElectrobunWindowBridge } from "./lib/electrobun-window-bridge";
+import { installDesktopContextMenuGuard } from "./lib/desktop-contextmenu-guard";
 import { installDesktopZoomGuard } from "./lib/desktop-zoom-guard";
 import { installDesktopExternalLinkDelegation } from "./lib/external-link-delegation";
 import { installRendererRuntimeErrorLogging } from "./lib/renderer-runtime-error-logging";
 
 installElectrobunWindowBridge();
+installDesktopContextMenuGuard();
 installDesktopZoomGuard();
 installDesktopExternalLinkDelegation();
 installRendererRuntimeErrorLogging();

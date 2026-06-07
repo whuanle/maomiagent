@@ -153,7 +153,6 @@ export type ChatWorkspaceShellState = {
   onOpenWorkspace: (workspaceId: string) => void | Promise<void>;
   onActivateWorkspace: (workspaceId: string) => void | Promise<void>;
   onCloseWorkspace: (workspaceId: string) => void | Promise<void>;
-  onCreateWorkspace: () => void | Promise<void>;
 };
 
 export type ChatOpenCodePreviewInput = {

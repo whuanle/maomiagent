@@ -591,11 +591,29 @@ async function openPathInFileManager(targetPath: string): Promise<{ opened: bool
     throw new Error("Path is required to open the file manager.");
   }
 
-  const command = process.platform === "win32"
-    ? ["explorer.exe", normalizedTargetPath.replaceAll("/", "\\")]
-    : process.platform === "darwin"
-      ? ["open", normalizedTargetPath]
-      : ["xdg-open", normalizedTargetPath];
+  if (process.platform === "win32") {
+    const windowsTargetPath = normalizedTargetPath.replaceAll("/", "\\");
+    const script = `Start-Process -FilePath explorer.exe -ArgumentList '${escapePowerShellLiteral(windowsTargetPath)}'`;
+    const processHandle = Bun.spawn({
+      cmd: ["powershell", "-NoProfile", "-Command", script],
+      cwd: process.cwd(),
+      env: Bun.env,
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+
+    const exitCode = await processHandle.exited;
+    if (exitCode !== 0) {
+      throw new Error(`Failed to open path in file manager: ${normalizedTargetPath}`);
+    }
+
+    return { opened: true };
+  }
+
+  const command = process.platform === "darwin"
+    ? ["open", normalizedTargetPath]
+    : ["xdg-open", normalizedTargetPath];
 
   const processHandle = Bun.spawn({
     cmd: command,

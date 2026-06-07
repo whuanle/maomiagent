@@ -1,4 +1,5 @@
 import type { DesktopGitChangeItem } from "../../../../shared/desktop-git";
+import { resolveWorkspaceFileContainingDirectory } from "./workspace-file-location";
 
 function hasGitStatusCodeChange(value: string | undefined) {
   const normalized = value?.trim();
@@ -23,11 +24,32 @@ export type WorkspaceInspectorGitActionState = {
   canUnstage: boolean;
 };
 
+export function resolveWorkspaceInspectorFileManagerTargetPath(input: {
+  absolutePath: string;
+  nodeType?: "file" | "directory";
+}) {
+  const absolutePath = input.absolutePath.trim();
+  if (!absolutePath) {
+    return "";
+  }
+
+  if (input.nodeType === "directory") {
+    return absolutePath;
+  }
+
+  return resolveWorkspaceFileContainingDirectory({
+    absolutePath,
+  });
+}
+
 export function resolveWorkspaceInspectorGitActionState(input: {
   change?: DesktopGitChangeItem | null;
   isGitRepo?: boolean;
+  nodeType?: "file" | "directory";
 }): WorkspaceInspectorGitActionState {
-  const canUseGitActions = input.isGitRepo === true && Boolean(input.change);
+  const canUseGitActions = input.nodeType !== "directory"
+    && input.isGitRepo === true
+    && Boolean(input.change);
   if (!canUseGitActions) {
     return {
       canViewDiff: false,

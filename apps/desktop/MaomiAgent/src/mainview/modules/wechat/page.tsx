@@ -18,8 +18,6 @@ import type {
   WechatStateView,
 } from "../../../shared/desktop-wechat";
 import type { DesktopWorkspaceItem } from "../../../shared/desktop-workspace";
-import { filterSelectableDesktopWorkspaces } from "../../lib/desktop-workspace-filter";
-import { listDesktopWorkspaces } from "../../lib/desktop-workspace";
 import {
   clearWechatAccountConversations,
   fetchWechatState,
@@ -29,6 +27,10 @@ import {
   startWechatQrLogin,
   subscribeWechatMutations,
 } from "../../lib/desktop-wechat";
+import {
+  getNormalWorkspaces,
+  toWorkspaceOptions,
+} from "../../services/workspace-query-service";
 import {
   reserveWechatLoginWindow,
   type ReservedWechatLoginWindow,
@@ -228,7 +230,7 @@ export function WechatPage(props: Props) {
     try {
       const [wechatStateResult, workspaceListResult] = await Promise.allSettled([
         fetchWechatState(),
-        listDesktopWorkspaces({
+        getNormalWorkspaces({
           limit: 200,
           offset: 0,
         }),
@@ -243,7 +245,7 @@ export function WechatPage(props: Props) {
 
       commitWechatState(wechatStateResult.value);
       if (workspaceListResult.status === "fulfilled") {
-        setWorkspaces(workspaceListResult.value.items);
+        setWorkspaces(workspaceListResult.value);
       }
     } catch (error) {
       if (!isAbortLikeError(error)) {
@@ -286,17 +288,12 @@ export function WechatPage(props: Props) {
       ?? null;
   }, [activeLoginSessionKey, state?.loginSessions]);
 
-  const selectableWorkspaces = useMemo(
-    () => filterSelectableDesktopWorkspaces(workspaces),
-    [workspaces],
-  );
-
   const workspaceOptions = useMemo(
-    () => selectableWorkspaces.map((item) => ({
-      label: `${item.name} · ${item.workspaceId}`,
-      value: item.workspaceId,
+    () => toWorkspaceOptions(workspaces).map((item) => ({
+      label: item.label.replace(/ \((.+)\)$/, " · $1"),
+      value: item.value,
     })),
-    [selectableWorkspaces],
+    [workspaces],
   );
 
   const pollLoginSession = useCallback(async (sessionKey: string) => {
@@ -360,7 +357,7 @@ export function WechatPage(props: Props) {
   const handleSaveConfig = useCallback(async () => {
     try {
       setSavingConfig(true);
-      const executionWorkspaceId = resolveWechatExecutionWorkspaceId(stateRef.current, selectableWorkspaces);
+      const executionWorkspaceId = resolveWechatExecutionWorkspaceId(stateRef.current, workspaces);
       const nextState = await saveWechatConfig({
         baseUrl: draftConfig.baseUrl.trim() || undefined,
         cdnBaseUrl: draftConfig.cdnBaseUrl.trim() || undefined,
@@ -389,7 +386,7 @@ export function WechatPage(props: Props) {
     } finally {
       setSavingConfig(false);
     }
-  }, [commitWechatState, draftConfig, message, selectableWorkspaces]);
+  }, [commitWechatState, draftConfig, message, workspaces]);
 
   const handleStartLogin = useCallback(async () => {
     const loginWindow = reserveAndTrackLoginWindow();

@@ -76,20 +76,6 @@ export function ConversationWorkspaceRail(props: Props) {
             }}
           />
         </div>
-
-        <div className="chat-sidebar-actions">
-          <Button
-            className="chat-secondary-button"
-            block
-            icon={<PlusOutlined />}
-            onClick={() => {
-              void props.workspaceShell.onCreateWorkspace();
-            }}
-            disabled={workspaceControlsDisabled}
-          >
-            {isEn ? "Create workspace" : "新建工作区"}
-          </Button>
-        </div>
       </div>
 
       <div className="chat-sidebar-body">

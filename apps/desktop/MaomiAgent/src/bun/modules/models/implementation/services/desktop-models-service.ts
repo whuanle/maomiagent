@@ -98,6 +98,9 @@ type RawProviderType = {
 };
 
 const DEFAULT_DESKTOP_MODEL_RUNTIME_TIMEOUT_MS = 180_000;
+const DEFAULT_KIMI_FOR_CODING_HEADERS = {
+  "User-Agent": "KimiCLI/1.3",
+} as const;
 
 type RawProviderConfigField = {
   key?: string;
@@ -1801,6 +1804,32 @@ export class DesktopModelsService implements DesktopModelsPort {
       : undefined;
   }
 
+  private readChannelDefaultHeaders(
+    channel: Pick<DesktopModelChannelItem, "providerType">,
+  ): Record<string, string> | undefined {
+    if (channel.providerType === "kimi-for-coding") {
+      return { ...DEFAULT_KIMI_FOR_CODING_HEADERS };
+    }
+
+    return undefined;
+  }
+
+  private readResolvedChannelHeaders(
+    channel: Pick<DesktopModelChannelItem, "providerType" | "metadata">,
+  ): Record<string, string> | undefined {
+    const defaultHeaders = this.readChannelDefaultHeaders(channel);
+    const customHeaders = this.readChannelCustomHeaders(channel);
+
+    if (!defaultHeaders && !customHeaders) {
+      return undefined;
+    }
+
+    return {
+      ...(defaultHeaders ?? {}),
+      ...(customHeaders ?? {}),
+    };
+  }
+
   private scoreProviderEnvKey(key: string) {
     let score = 0;
 
@@ -1992,7 +2021,7 @@ export class DesktopModelsService implements DesktopModelsPort {
     const headers: Record<string, string> = {
       Accept: "application/json",
     };
-    const customHeaders = this.readChannelCustomHeaders(channel);
+    const customHeaders = this.readResolvedChannelHeaders(channel);
 
     if (mode === "openai" && apiKey) {
       headers.Authorization = `Bearer ${apiKey}`;
@@ -2308,7 +2337,7 @@ export class DesktopModelsService implements DesktopModelsPort {
       this.readCustomProtocolConfigValueByRole(channel, "project")
       || this.readChannelProviderConfigValueByRole(rawProvider, channel, "project")
       || undefined;
-    const headers = this.readChannelCustomHeaders(channel);
+    const headers = this.readResolvedChannelHeaders(channel);
     const modelMetadata = resolveDesktopChannelModelMetadata(
       snapshot.providers,
       channel,

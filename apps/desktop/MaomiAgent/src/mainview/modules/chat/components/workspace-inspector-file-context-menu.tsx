@@ -21,14 +21,17 @@ import {
 } from "../../../lib/desktop-window";
 import type { LanguageCode } from "../../../config/titlebar";
 import { openGitRouteWithReview } from "../../git/git-page-ui-state";
-import { resolveWorkspaceFileContainingDirectory } from "./workspace-file-location";
-import { resolveWorkspaceInspectorGitActionState } from "./workspace-inspector-file-context-menu-model";
+import {
+  resolveWorkspaceInspectorFileManagerTargetPath,
+  resolveWorkspaceInspectorGitActionState,
+} from "./workspace-inspector-file-context-menu-model";
 
 type Props = {
   language: LanguageCode;
   workspaceId?: string;
   path: string;
   absolutePath: string;
+  nodeType?: "file" | "directory";
   isGitRepo?: boolean;
   gitChange?: DesktopGitChangeItem;
   onSelect?: (path: string) => void;
@@ -62,33 +65,41 @@ async function writeClipboardText(value: string, successMessage: string, errorPr
 
 export function WorkspaceInspectorFileContextMenu(props: Props) {
   const isEn = props.language === "en-US";
-  const containingDirectoryPath = resolveWorkspaceFileContainingDirectory({
+  const nodeType = props.nodeType ?? "file";
+  const fileManagerTargetPath = resolveWorkspaceInspectorFileManagerTargetPath({
     absolutePath: props.absolutePath,
+    nodeType,
   });
   const gitActionState = resolveWorkspaceInspectorGitActionState({
     change: props.gitChange,
     isGitRepo: props.isGitRepo,
+    nodeType,
   });
-  const canOpen = typeof props.onOpen === "function";
-  const canShowInFileManager = Boolean(containingDirectoryPath) && hasDesktopWindowBridge();
-  const showGitActions = props.isGitRepo === true || Boolean(props.gitChange);
+  const canOpen = nodeType === "file" && typeof props.onOpen === "function";
+  const canShowInFileManager = Boolean(fileManagerTargetPath) && hasDesktopWindowBridge();
+  const showGitActions = nodeType === "file" && (props.isGitRepo === true || Boolean(props.gitChange));
+  const openLocationLabel = nodeType === "directory"
+    ? (isEn ? "Open Directory" : "打开目录")
+    : (isEn ? "Open Containing Folder" : "打开所在目录");
   const menuItems: NonNullable<MenuProps["items"]> = [
-    {
-      key: "open",
-      label: isEn ? "Open" : "打开",
-      icon: <FolderOpenOutlined />,
-      disabled: !canOpen,
-    },
-    {
-      key: "open-to-side",
-      label: isEn ? "Open to Side" : "侧边栏打开",
-      icon: <FolderViewOutlined />,
-      disabled: !canOpen,
-    },
-    { type: "divider" },
+    ...(nodeType === "file" ? [
+      {
+        key: "open",
+        label: isEn ? "Open" : "打开",
+        icon: <FolderOpenOutlined />,
+        disabled: !canOpen,
+      },
+      {
+        key: "open-to-side",
+        label: isEn ? "Open to Side" : "侧边栏打开",
+        icon: <FolderViewOutlined />,
+        disabled: !canOpen,
+      },
+      { type: "divider" as const },
+    ] : []),
     {
       key: "copy-relative-path",
-      label: isEn ? "Copy Relative Path" : "复制相对路径",
+      label: isEn ? "Copy Path" : "复制路径",
       icon: <CopyOutlined />,
     },
     {
@@ -99,7 +110,7 @@ export function WorkspaceInspectorFileContextMenu(props: Props) {
     },
     {
       key: "show-in-file-manager",
-      label: isEn ? "Open Containing Folder" : "打开所在目录",
+      label: openLocationLabel,
       icon: <FolderOpenOutlined />,
       disabled: !canShowInFileManager,
     },
@@ -150,8 +161,8 @@ export function WorkspaceInspectorFileContextMenu(props: Props) {
       case "copy-relative-path":
         await writeClipboardText(
           props.path,
-          isEn ? "Relative path copied" : "已复制相对路径",
-          isEn ? "Unable to copy relative path" : "复制相对路径失败",
+          isEn ? "Path copied" : "已复制路径",
+          isEn ? "Unable to copy path" : "复制路径失败",
         );
         return;
       case "copy-absolute-path":
@@ -162,15 +173,15 @@ export function WorkspaceInspectorFileContextMenu(props: Props) {
         );
         return;
       case "show-in-file-manager":
-        if (!containingDirectoryPath) {
+        if (!fileManagerTargetPath) {
           return;
         }
         try {
-          await openDesktopPathInFileManager(containingDirectoryPath);
+          await openDesktopPathInFileManager(fileManagerTargetPath);
         } catch (error) {
           antMessage.error(isEn
-            ? `Unable to open containing folder: ${getErrorText(error)}`
-            : `打开所在目录失败：${getErrorText(error)}`);
+            ? `Unable to open path: ${getErrorText(error)}`
+            : `打开路径失败：${getErrorText(error)}`);
         }
         return;
       case "git-view-diff":
@@ -213,7 +224,12 @@ export function WorkspaceInspectorFileContextMenu(props: Props) {
     >
       <div
         className="chat-inspector-tree-context-trigger"
-        onContextMenu={() => props.onSelect?.(props.path)}
+        data-allow-context-menu
+        onContextMenu={() => {
+          if (nodeType === "file") {
+            props.onSelect?.(props.path);
+          }
+        }}
       >
         {props.children}
       </div>

@@ -349,7 +349,6 @@ export const ChatPage = forwardRef<ChatPageHandle, ChatPageProps>(function ChatP
     onOpenWorkspace: handleSelectWorkspace,
     onActivateWorkspace: handleSelectWorkspace,
     onCloseWorkspace: handleCloseWorkspace,
-    onCreateWorkspace: handleOpenWorkspace,
   }), [
     handleCloseWorkspace,
     handleOpenWorkspace,

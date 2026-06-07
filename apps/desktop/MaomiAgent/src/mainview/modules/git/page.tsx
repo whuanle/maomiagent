@@ -26,8 +26,11 @@ import {
   getDesktopGitModuleSnapshot,
   hasDesktopGitBridge,
 } from "../../lib/desktop-git";
-import { filterSelectableDesktopWorkspaces } from "../../lib/desktop-workspace-filter";
-import { listDesktopWorkspaces } from "../../lib/desktop-workspace";
+import {
+  getNormalWorkspaces,
+  toWorkspaceOptions,
+  type WorkspaceSelectOption,
+} from "../../services/workspace-query-service";
 import { createGitBranchCopy } from "./branch-copy";
 import { GitBranchWorkbench } from "./components/branch-workbench";
 import { GitChangesWorkbench } from "./components/changes-workbench";
@@ -51,11 +54,6 @@ export type GitPageHandle = {
   confirmLeavePage: () => Promise<boolean>;
 };
 
-type WorkspaceOption = {
-  label: string;
-  value: string;
-};
-
 type RenderedGitTabKey = "changes" | "branches" | "commit-review";
 
 function normalizeError(error: unknown): string {
@@ -66,15 +64,8 @@ function normalizeError(error: unknown): string {
   return String(error);
 }
 
-function buildWorkspaceOptions(items: Awaited<ReturnType<typeof listDesktopWorkspaces>>["items"]): WorkspaceOption[] {
-  return items.map((item) => ({
-    label: item.name ? `${item.name} (${item.workspaceId})` : item.workspaceId,
-    value: item.workspaceId,
-  }));
-}
-
 function resolveWorkspaceId(
-  options: WorkspaceOption[],
+  options: WorkspaceSelectOption[],
   currentWorkspaceId: string | undefined,
   restoredWorkspaceId: string | undefined,
 ): string | undefined {
@@ -101,7 +92,7 @@ export const GitPage = forwardRef<GitPageHandle, Props>(function GitPage(props, 
   const copy = useMemo(() => createGitTranslator(props.language), [props.language]);
   const branchCopy = useMemo(() => createGitBranchCopy(props.language), [props.language]);
   const [bridgeReady, setBridgeReady] = useState(() => hasDesktopGitBridge());
-  const [workspaceOptions, setWorkspaceOptions] = useState<WorkspaceOption[]>([]);
+  const [workspaceOptions, setWorkspaceOptions] = useState<WorkspaceSelectOption[]>([]);
   const [workspaceRestoreReady, setWorkspaceRestoreReady] = useState(false);
   const [workspaceOptionsLoaded, setWorkspaceOptionsLoaded] = useState(false);
   const [restoredWorkspaceId, setRestoredWorkspaceId] = useState<string | undefined>(undefined);
@@ -153,13 +144,12 @@ export const GitPage = forwardRef<GitPageHandle, Props>(function GitPage(props, 
     const requestId = ++workspaceLoadRequestRef.current;
 
     try {
-      const response = await listDesktopWorkspaces({ limit: 200, offset: 0 });
+      const options = toWorkspaceOptions(await getNormalWorkspaces({ limit: 200, offset: 0 }));
 
       if (workspaceLoadCycleRef.current !== loadCycle || workspaceLoadRequestRef.current !== requestId) {
         return;
       }
 
-      const options = buildWorkspaceOptions(filterSelectableDesktopWorkspaces(response.items));
       setWorkspaceOptions(options);
       setWorkspaceId((current) => resolveWorkspaceId(options, current, restoredWorkspaceId));
       setWorkspaceOptionsLoaded(true);

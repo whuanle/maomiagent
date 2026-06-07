@@ -256,7 +256,7 @@ export function GitBranchTree(props: Props) {
           }}
           trigger={["contextMenu"]}
         >
-          <div onContextMenu={() => props.onSelectBranch(item)}>
+          <div data-allow-context-menu onContextMenu={() => props.onSelectBranch(item)}>
             {row}
           </div>
         </Dropdown>

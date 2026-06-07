@@ -928,6 +928,9 @@ describe("DesktopModelsService", () => {
         serviceConfig: {
           apiKey: "kimi-test-key",
           baseUrl: "https://api.kimi.com/coding/v1",
+          headers: {
+            "User-Agent": "KimiCLI/1.3",
+          },
           timeoutMs: 180_000,
         },
       });
@@ -1359,6 +1362,78 @@ describe("DesktopModelsService", () => {
           knownProviderModel: false,
         }],
       });
+    } finally {
+      globalThis.fetch = originalFetch;
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("adds default Kimi Coding headers during discovery when the channel omits custom headers", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "maomi-desktop-models-"));
+    const catalogPath = join(tempRoot, "data", "models.json");
+    const statePath = join(tempRoot, "desktop", "providers-state.json");
+    const originalFetch = globalThis.fetch;
+    let capturedHeaders: HeadersInit | undefined;
+
+    try {
+      await writeJson(catalogPath, TEST_CATALOG);
+      await writeJson(statePath, {
+        version: "1.0",
+        updatedAt: "2026-04-27T00:00:00.000Z",
+        channels: [
+          {
+            providerType: "kimi-for-coding",
+            channelId: "kimi_default_headers",
+            name: "Kimi Default Headers",
+            enabled: true,
+            baseUrl: "https://api.kimi.com/coding/v1",
+            metadata: {
+              config: {
+                apiKey: "test-kimi-key",
+              },
+              env: {
+                KIMI_API_KEY: "test-kimi-key",
+              },
+              protocolFamily: "openai",
+              apiStyle: "chat-completions",
+              discoveryKind: "openai-models",
+            },
+            createdAt: "2026-04-27T00:00:00.000Z",
+            updatedAt: "2026-04-27T00:00:00.000Z",
+            models: [],
+          },
+        ],
+      });
+
+      globalThis.fetch = (async (_input, init) => {
+        capturedHeaders = init?.headers;
+        return new Response(JSON.stringify({
+          data: [{
+            id: "kimi-k2.6",
+            owned_by: "kimi",
+          }],
+        }), {
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }) as typeof fetch;
+
+      const service = new DesktopModelsService(
+        createConfig({
+          "models.catalog.path": catalogPath,
+          "models.state.path": statePath,
+        }) as never,
+        createLogger() as never,
+      );
+
+      await service.discoverChannelModels("kimi-for-coding", "kimi_default_headers");
+
+      expect(capturedHeaders).toEqual(expect.objectContaining({
+        Accept: "application/json",
+        Authorization: "Bearer test-kimi-key",
+        "User-Agent": "KimiCLI/1.3",
+      }));
     } finally {
       globalThis.fetch = originalFetch;
       await rm(tempRoot, { recursive: true, force: true });
