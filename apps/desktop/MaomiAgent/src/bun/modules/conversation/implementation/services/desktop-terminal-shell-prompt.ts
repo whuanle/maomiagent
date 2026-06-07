@@ -5,6 +5,15 @@ export type DesktopTerminalPromptShell = {
   shellDisplayName: string;
 };
 
+export type DesktopTerminalCommandValidation = {
+  code: "terminal_shell_command_mismatch";
+  message: string;
+  suggestedPattern: string;
+};
+
+const CMD_INCOMPATIBLE_POWERSHELL_COMMAND_RE = /\b(?:Get-ChildItem|Get-Content|Get-Location|Set-Location|Test-Path|Select-Object|Out-File|Set-Content|Add-Content|Remove-Item|Copy-Item|Move-Item|New-Item|Write-Host)\b|(?:^|[\s;(])(?:Get|Set|Remove|Move|Copy|New|Test|Select|Write|Out|Add)-[A-Za-z][\w-]*\b|\$(?:env:[A-Za-z_][A-Za-z0-9_]*|PWD|HOME|\?)/u;
+const POWERSHELL_INCOMPATIBLE_CMD_COMMAND_RE = /\bif\s+exist\b|%[A-Za-z_][A-Za-z0-9_]*%|^\s*call\b|(?:^|[\s;(])(?:setlocal|endlocal)\b|^\s*for\s+\/[fdrl]/iu;
+
 export function normalizeDesktopTerminalPromptShell(input: {
   resolvedShellKind?: DesktopResolvedShellKind;
   shellKind?: DesktopTerminalShellKind;
@@ -50,6 +59,39 @@ export function renderDesktopTerminalExecuteDescription(shell: DesktopTerminalPr
   }
 
   return "Execute one command in an existing terminal session. Always put the literal command text in `command`, use POSIX shell syntax for the active session, quote paths with spaces, and inspect command results with `terminal_read_output` instead of embedding paging or truncation commands.";
+}
+
+export function validateDesktopTerminalCommandForShell(input: {
+  shell: DesktopTerminalPromptShell;
+  command: string;
+}): DesktopTerminalCommandValidation | undefined {
+  const command = input.command.trim();
+  if (!command) {
+    return undefined;
+  }
+
+  if (input.shell.resolvedShellKind === "cmd" && CMD_INCOMPATIBLE_POWERSHELL_COMMAND_RE.test(command)) {
+    return {
+      code: "terminal_shell_command_mismatch",
+      message: "This session is running in cmd.exe, but the command looks like PowerShell syntax. Rewrite it using cmd.exe syntax or create a PowerShell session first.",
+      suggestedPattern: "Use cmd.exe syntax such as `dir`, `type`, `if exist`, and `%VAR%` in this session.",
+    };
+  }
+
+  if (
+    (input.shell.resolvedShellKind === "powershell" || input.shell.resolvedShellKind === "pwsh")
+    && POWERSHELL_INCOMPATIBLE_CMD_COMMAND_RE.test(command)
+  ) {
+    return {
+      code: "terminal_shell_command_mismatch",
+      message: `This session is running in ${input.shell.shellDisplayName}, but the command looks like cmd.exe or batch syntax. Rewrite it using PowerShell syntax or create a cmd session first.`,
+      suggestedPattern: input.shell.resolvedShellKind === "powershell"
+        ? "Use PowerShell syntax such as `Get-ChildItem` and `cmd1; if ($?) { cmd2 }` in this session."
+        : "Use PowerShell syntax such as `Get-ChildItem` and `cmd1 && cmd2` in this session.",
+    };
+  }
+
+  return undefined;
 }
 
 function resolveShellDisplayName(kind: DesktopResolvedShellKind): string {

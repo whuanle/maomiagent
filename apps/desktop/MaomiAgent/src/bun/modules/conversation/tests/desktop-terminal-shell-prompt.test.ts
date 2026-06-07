@@ -4,6 +4,7 @@ import {
   normalizeDesktopTerminalPromptShell,
   renderDesktopTerminalCreateSessionDescription,
   renderDesktopTerminalExecuteDescription,
+  validateDesktopTerminalCommandForShell,
 } from "../implementation/services/desktop-terminal-shell-prompt";
 
 describe("desktop terminal shell prompt", () => {
@@ -62,5 +63,35 @@ describe("desktop terminal shell prompt", () => {
     expect(executeDescription).toContain("`& 'C:/Path With Spaces/tool.exe'`");
     expect(executeDescription).toContain("`terminal_read_output`");
     expect(executeDescription).not.toContain("if ($?)");
+  });
+
+  test("flags PowerShell syntax in cmd sessions", () => {
+    const shell = normalizeDesktopTerminalPromptShell({
+      resolvedShellKind: "cmd",
+      shellDisplayName: "cmd.exe",
+    });
+
+    expect(validateDesktopTerminalCommandForShell({
+      shell,
+      command: "Get-ChildItem -Force",
+    })).toEqual(expect.objectContaining({
+      code: "terminal_shell_command_mismatch",
+      suggestedPattern: expect.stringContaining("cmd.exe syntax"),
+    }));
+  });
+
+  test("flags cmd syntax in Windows PowerShell sessions", () => {
+    const shell = normalizeDesktopTerminalPromptShell({
+      resolvedShellKind: "powershell",
+      shellDisplayName: "Windows PowerShell",
+    });
+
+    expect(validateDesktopTerminalCommandForShell({
+      shell,
+      command: "if exist package.json type package.json",
+    })).toEqual(expect.objectContaining({
+      code: "terminal_shell_command_mismatch",
+      suggestedPattern: expect.stringContaining("PowerShell syntax"),
+    }));
   });
 });

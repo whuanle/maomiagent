@@ -779,6 +779,274 @@ describe("desktop conversation builtin tools", () => {
     expect(executeTool?.description).not.toContain("Get-ChildItem");
   });
 
+  test("blocks PowerShell commands when the active session resolved to cmd", async () => {
+    const executedCommands: string[] = [];
+    const bundle = createDesktopConversationBuiltinToolBundle({
+      workspaceQuery: {
+        async list() {
+          return { items: [], meta: { total: 0, limit: 20, offset: 0, hasMore: false } };
+        },
+        async get() {
+          return null;
+        },
+        async getFileContent() {
+          throw new Error("not used");
+        },
+      },
+      gitQuery: {
+        async getGitChanges() {
+          throw new Error("not used");
+        },
+        async getGitReviewDetail() {
+          throw new Error("not used");
+        },
+      },
+      terminalQuery: {
+        async getDetail() {
+          throw new Error("not used");
+        },
+      },
+      terminalCommand: {
+        async create() {
+          throw new Error("not used");
+        },
+        async execute(sessionId, input) {
+          executedCommands.push(`${sessionId}:${input.text}`);
+          return {
+            sessionId,
+            title: "cmd shell",
+            shellKind: "cmd" as const,
+            resolvedShellKind: "cmd" as const,
+            shellDisplayName: "cmd.exe",
+            status: "running" as const,
+            cwd: "E:/workspace/MaomiAgent",
+            createdAt: "2026-05-04T00:00:00.000Z",
+            updatedAt: "2026-05-04T00:00:00.000Z",
+          };
+        },
+        async close() {
+          throw new Error("not used");
+        },
+      },
+      taskBridge: {
+        async patchManagedConversationRootTask() {
+          throw new Error("not used");
+        },
+      },
+    });
+
+    const terminalExecuteHandler = bundle.toolHandlers.find((handler) => handler.descriptor.name === "terminal_execute");
+    expect(terminalExecuteHandler).toBeTruthy();
+
+    const result = await terminalExecuteHandler!.execute({
+      call: {
+        id: asToolCallId("tool_call_terminal_execute_cmd_mismatch"),
+        sessionId: asSessionId("session_builtin_tools"),
+        runId: asRunId("run_builtin_tools"),
+        turnId: asTurnId("turn_builtin_tools"),
+        messageId: asMessageId("message_assistant_1"),
+        toolName: "terminal_execute",
+        input: {
+          sessionId: "term_cmd",
+          command: "Get-ChildItem -Force",
+        },
+        status: "executing",
+        startedAt: 4,
+        updatedAt: 4,
+      },
+      context: {
+        descriptor: terminalExecuteHandler!.descriptor,
+        signal: new AbortController().signal,
+        session: {
+          id: asSessionId("session_builtin_tools"),
+          title: "Builtin tools",
+          status: "active",
+          createdAt: 1,
+          updatedAt: 1,
+          metadata: {},
+        },
+        run: {
+          id: asRunId("run_builtin_tools"),
+          sessionId: asSessionId("session_builtin_tools"),
+          status: "streaming",
+          startedAt: 2,
+          updatedAt: 2,
+          trigger: {
+            kind: "user_message",
+            refId: asMessageId("message_user_1"),
+          },
+        },
+        turn: {
+          id: asTurnId("turn_builtin_tools"),
+          sessionId: asSessionId("session_builtin_tools"),
+          runId: asRunId("run_builtin_tools"),
+          sequence: 1,
+          agentId: "desktop.primary",
+          executionProfile: {
+            id: "desktop.openai.test" as never,
+            modelId: "test-model",
+          },
+          status: "streaming",
+          startedAt: 3,
+        },
+        recentMessages: [createRecentTerminalResultMessage({
+          toolName: "terminal_create_session",
+          output: {
+            sessionId: "term_cmd",
+            title: "cmd shell",
+            shellKind: "cmd",
+            resolvedShellKind: "cmd",
+            shellDisplayName: "cmd.exe",
+            cwd: "E:/workspace/MaomiAgent",
+            status: "running",
+          },
+        })],
+      },
+    });
+
+    expect(executedCommands).toEqual([]);
+    expect(result).toEqual(expect.objectContaining({
+      kind: "failed",
+      error: expect.objectContaining({
+        code: "terminal_shell_command_mismatch",
+      }),
+    }));
+  });
+
+  test("blocks cmd batch syntax when the active session resolved to Windows PowerShell", async () => {
+    const executedCommands: string[] = [];
+    const bundle = createDesktopConversationBuiltinToolBundle({
+      workspaceQuery: {
+        async list() {
+          return { items: [], meta: { total: 0, limit: 20, offset: 0, hasMore: false } };
+        },
+        async get() {
+          return null;
+        },
+        async getFileContent() {
+          throw new Error("not used");
+        },
+      },
+      gitQuery: {
+        async getGitChanges() {
+          throw new Error("not used");
+        },
+        async getGitReviewDetail() {
+          throw new Error("not used");
+        },
+      },
+      terminalQuery: {
+        async getDetail() {
+          throw new Error("not used");
+        },
+      },
+      terminalCommand: {
+        async create() {
+          throw new Error("not used");
+        },
+        async execute(sessionId, input) {
+          executedCommands.push(`${sessionId}:${input.text}`);
+          return {
+            sessionId,
+            title: "Windows PowerShell shell",
+            shellKind: "powershell" as const,
+            resolvedShellKind: "powershell" as const,
+            shellDisplayName: "Windows PowerShell",
+            status: "running" as const,
+            cwd: "E:/workspace/MaomiAgent",
+            createdAt: "2026-05-04T00:00:00.000Z",
+            updatedAt: "2026-05-04T00:00:00.000Z",
+          };
+        },
+        async close() {
+          throw new Error("not used");
+        },
+      },
+      taskBridge: {
+        async patchManagedConversationRootTask() {
+          throw new Error("not used");
+        },
+      },
+    });
+
+    const terminalExecuteHandler = bundle.toolHandlers.find((handler) => handler.descriptor.name === "terminal_execute");
+    expect(terminalExecuteHandler).toBeTruthy();
+
+    const result = await terminalExecuteHandler!.execute({
+      call: {
+        id: asToolCallId("tool_call_terminal_execute_powershell_mismatch"),
+        sessionId: asSessionId("session_builtin_tools"),
+        runId: asRunId("run_builtin_tools"),
+        turnId: asTurnId("turn_builtin_tools"),
+        messageId: asMessageId("message_assistant_1"),
+        toolName: "terminal_execute",
+        input: {
+          sessionId: "term_ps",
+          command: "if exist package.json type package.json",
+        },
+        status: "executing",
+        startedAt: 4,
+        updatedAt: 4,
+      },
+      context: {
+        descriptor: terminalExecuteHandler!.descriptor,
+        signal: new AbortController().signal,
+        session: {
+          id: asSessionId("session_builtin_tools"),
+          title: "Builtin tools",
+          status: "active",
+          createdAt: 1,
+          updatedAt: 1,
+          metadata: {},
+        },
+        run: {
+          id: asRunId("run_builtin_tools"),
+          sessionId: asSessionId("session_builtin_tools"),
+          status: "streaming",
+          startedAt: 2,
+          updatedAt: 2,
+          trigger: {
+            kind: "user_message",
+            refId: asMessageId("message_user_1"),
+          },
+        },
+        turn: {
+          id: asTurnId("turn_builtin_tools"),
+          sessionId: asSessionId("session_builtin_tools"),
+          runId: asRunId("run_builtin_tools"),
+          sequence: 1,
+          agentId: "desktop.primary",
+          executionProfile: {
+            id: "desktop.openai.test" as never,
+            modelId: "test-model",
+          },
+          status: "streaming",
+          startedAt: 3,
+        },
+        recentMessages: [createRecentTerminalResultMessage({
+          toolName: "terminal_create_session",
+          output: {
+            sessionId: "term_ps",
+            title: "Windows PowerShell shell",
+            shellKind: "powershell",
+            resolvedShellKind: "powershell",
+            shellDisplayName: "Windows PowerShell",
+            cwd: "E:/workspace/MaomiAgent",
+            status: "running",
+          },
+        })],
+      },
+    });
+
+    expect(executedCommands).toEqual([]);
+    expect(result).toEqual(expect.objectContaining({
+      kind: "failed",
+      error: expect.objectContaining({
+        code: "terminal_shell_command_mismatch",
+      }),
+    }));
+  });
+
   test("falls back to the session workspace when the tool input carries an invalid workspaceId", async () => {
     const requestedWorkspaceIds: string[] = [];
     const bundle = createDesktopConversationBuiltinToolBundle({

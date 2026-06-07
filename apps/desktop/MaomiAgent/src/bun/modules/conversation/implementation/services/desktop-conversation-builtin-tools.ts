@@ -20,6 +20,7 @@ import {
   normalizeDesktopTerminalPromptShell,
   renderDesktopTerminalCreateSessionDescription,
   renderDesktopTerminalExecuteDescription,
+  validateDesktopTerminalCommandForShell,
 } from "./desktop-terminal-shell-prompt";
 
 type DesktopConversationBuiltinToolBundleOptions = {
@@ -1048,6 +1049,48 @@ function resolveRecentTerminalPromptShell(
   return undefined;
 }
 
+function resolveRecentTerminalPromptShellForSessionId(
+  recentMessages: readonly MessageRecordWithParts[],
+  targetSessionId: string,
+): ReturnType<typeof normalizeDesktopTerminalPromptShell> | undefined {
+  const closedSessionIds = new Set<string>();
+
+  for (let index = recentMessages.length - 1; index >= 0; index -= 1) {
+    const message = recentMessages[index];
+    if (!message) {
+      continue;
+    }
+
+    const result = readRecentToolResultOutput(message);
+    if (!result) {
+      continue;
+    }
+
+    const sessionId = readTerminalSessionIdFromOutput(result.output);
+    if (!sessionId) {
+      continue;
+    }
+
+    if (result.toolName === "terminal_close_session") {
+      closedSessionIds.add(sessionId);
+      continue;
+    }
+
+    if (sessionId !== targetSessionId || closedSessionIds.has(sessionId)) {
+      continue;
+    }
+
+    const shell = readTerminalShellFromOutput(result.output);
+    if (!shell) {
+      continue;
+    }
+
+    return normalizeDesktopTerminalPromptShell(shell);
+  }
+
+  return undefined;
+}
+
 function resolveRecentTerminalSessionId(recentMessages: readonly MessageRecordWithParts[]): string | undefined {
   const closedSessionIds = new Set<string>();
 
@@ -1101,6 +1144,26 @@ function createTerminalExecuteHandler(
         return asToolFailure("terminal_command_required", "command is required for terminal_execute.", {
           sessionId,
         });
+      }
+
+      const targetShell = resolveRecentTerminalPromptShellForSessionId(context.recentMessages, sessionId)
+        ?? (recentSessionId && recentSessionId !== sessionId
+          ? resolveRecentTerminalPromptShellForSessionId(context.recentMessages, recentSessionId)
+          : undefined);
+      if (targetShell) {
+        const validation = validateDesktopTerminalCommandForShell({
+          shell: targetShell,
+          command,
+        });
+        if (validation) {
+          return asToolFailure(validation.code, validation.message, {
+            sessionId,
+            resolvedShellKind: targetShell.resolvedShellKind,
+            shellDisplayName: targetShell.shellDisplayName,
+            command,
+            suggestedPattern: validation.suggestedPattern,
+          });
+        }
       }
 
       let session = await terminalCommand.execute(sessionId, {
