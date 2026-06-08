@@ -12,7 +12,7 @@ export function ConversationSurface(props: ConversationSurfaceProps) {
 
   const directPane = (
     <section className="chat-direct-pane is-programming">
-      <DirectSessionHeader header={props.header} />
+      {props.showHeader === false ? null : <DirectSessionHeader header={props.header} />}
 
       <div className="chat-direct-thread-scroll">
         <DirectSessionMessageList {...props.thread} />

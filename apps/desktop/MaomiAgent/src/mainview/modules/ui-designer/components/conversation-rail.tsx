@@ -275,6 +275,7 @@ export function ConversationRail(props: ConversationRailProps) {
                   thread={controller.thread}
                   interactionDock={controller.interactionDock}
                   composer={controller.composer}
+                  showHeader={false}
                 />
               )
             : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="正在准备当前对话" />}

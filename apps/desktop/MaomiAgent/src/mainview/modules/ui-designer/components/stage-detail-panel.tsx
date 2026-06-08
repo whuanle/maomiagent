@@ -6,6 +6,18 @@ type StageDetailPanelProps = {
   activeStage?: UiDesignerStageViewModel;
 };
 
+function resolveStageStatusLabel(status: UiDesignerStageViewModel["status"]) {
+  if (status === "complete") {
+    return "已完成";
+  }
+
+  if (status === "partial") {
+    return "待补充";
+  }
+
+  return "未开始";
+}
+
 export function StageDetailPanel(props: StageDetailPanelProps) {
   if (!props.activeStage) {
     return (
@@ -30,7 +42,7 @@ export function StageDetailPanel(props: StageDetailPanelProps) {
 
       <div className="ui-designer-stage-detail-header">
         <strong className="ui-designer-thread-title">{props.activeStage.title}</strong>
-        <Tag>{props.activeStage.status}</Tag>
+        <Tag>{resolveStageStatusLabel(props.activeStage.status)}</Tag>
       </div>
       <div className="ui-designer-stage-detail-summary">{props.activeStage.summary}</div>
 

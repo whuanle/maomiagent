@@ -12,5 +12,6 @@ export type ConversationSurfaceProps = {
   thread: DirectSessionThreadViewModel;
   interactionDock: DirectSessionInteractionDockViewModel;
   composer: DirectSessionComposerViewModel;
+  showHeader?: boolean;
   renderStageShell?: boolean;
 };

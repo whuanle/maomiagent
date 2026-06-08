@@ -80,8 +80,12 @@ test("ui designer page keeps the single-session shell contract", () => {
   expect(railSource).toContain("stoppingMessage: props.stoppingMessage");
   expect(railSource).toContain("onStopMessage: () => void props.stopMessage()");
   expect(railSource).toContain("interactionDock={controller.interactionDock}");
+  expect(railSource).toContain("showHeader={false}");
   expect(detailSource).toContain('data-testid="ui-designer-right-pane"');
   expect(detailSource).toContain("当前阶段");
+  expect(detailSource).toContain('return "已完成"');
+  expect(detailSource).toContain('return "待补充"');
+  expect(detailSource).toContain('return "未开始"');
   expect(detailSource).not.toContain("iframe");
   expect(detailSource).not.toContain("previewMode");
 });
