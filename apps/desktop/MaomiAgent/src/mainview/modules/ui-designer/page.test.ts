@@ -53,11 +53,11 @@ test("ui designer page keeps the single-session shell contract", () => {
   expect(hookSource).toContain("thinkingEnabled: false");
   expect(hookSource).toContain("UI_DESIGNER_CONTEXT_METADATA_KEY");
   expect(hookSource).toContain("buildUiDesignerContext");
-  expect(hookSource).toContain("buildUiDesignerDesignSpecMarkdown");
-  expect(hookSource).toContain("buildUiDesignerSourcesMarkdown");
-  expect(hookSource).toContain("projectScope");
-  expect(hookSource).toContain("重新确认项目范围");
-  expect(hookSource).toContain("补充资料来源");
+  expect(hookSource).toContain("requestStageSchema");
+  expect(hookSource).toContain("requestStageResult");
+  expect(hookSource).not.toContain("UI_DESIGNER_SCOPE_BOOTSTRAP_INTERACTION_ID");
+  expect(hookSource).not.toContain("queueRedesignPrompt");
+  expect(hookSource).not.toContain("previewMode");
   expect(hookSource).toContain("const sessionToHide = selectedSessionId");
   expect(hookSource).toContain("void conversationClient.hideSession(sessionToHide)");
   expect(hookSource).toContain("const stopMessage = useCallback(async () => {");
