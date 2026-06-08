@@ -1,14 +1,18 @@
 import { describe, expect, test } from "bun:test";
 
+import { readWorkspaceExperienceState } from "../../../components/workspace-experience-state/workspace-experience-state";
 import {
+  CHAT_WORKSPACE_TABS_STORAGE_KEY,
   closeWorkspaceTabState,
   normalizeWorkspaceTabsState,
   openWorkspaceTab,
   parseWorkspaceTabsState,
+  readWorkspaceTabsState,
   resolveConversationTargetWorkspaceId,
   resolveVisibleWorkspaceId,
   resolveWorkspaceRefreshState,
   shouldReconcileWorkspaceTabsState,
+  writeWorkspaceTabsState,
 } from "./chat-workspace-shell-state";
 
 function createWorkspace(workspaceId: string, name?: string) {
@@ -25,6 +29,103 @@ function createWorkspace(workspaceId: string, name?: string) {
 }
 
 describe("chat workspace shell state", () => {
+  test("writes chat workspace tabs into the shared workspace experience state document", () => {
+    const originalWindow = globalThis.window;
+    const storage = new Map<string, string>();
+
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        localStorage: {
+          getItem(key: string) {
+            return storage.get(key) ?? null;
+          },
+          setItem(key: string, value: string) {
+            storage.set(key, value);
+          },
+          removeItem(key: string) {
+            storage.delete(key);
+          },
+        },
+      },
+    });
+
+    try {
+      writeWorkspaceTabsState({
+        openWorkspaceIds: ["alpha", "beta"],
+        activeWorkspaceId: "beta",
+      });
+
+      expect(readWorkspaceExperienceState().chat).toEqual({
+        openWorkspaceIds: ["alpha", "beta"],
+        activeWorkspaceId: "beta",
+        workspaceSessions: {},
+      });
+      expect(readWorkspaceTabsState()).toEqual({
+        openWorkspaceIds: ["alpha", "beta"],
+        activeWorkspaceId: "beta",
+      });
+    } finally {
+      if (originalWindow === undefined) {
+        Reflect.deleteProperty(globalThis, "window");
+      } else {
+        Object.defineProperty(globalThis, "window", {
+          configurable: true,
+          value: originalWindow,
+        });
+      }
+    }
+  });
+
+  test("migrates legacy chat workspace tabs from the old localStorage key", () => {
+    const originalWindow = globalThis.window;
+    const storage = new Map<string, string>();
+
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        localStorage: {
+          getItem(key: string) {
+            return storage.get(key) ?? null;
+          },
+          setItem(key: string, value: string) {
+            storage.set(key, value);
+          },
+          removeItem(key: string) {
+            storage.delete(key);
+          },
+        },
+      },
+    });
+
+    try {
+      window.localStorage.setItem(CHAT_WORKSPACE_TABS_STORAGE_KEY, JSON.stringify({
+        openWorkspaceIds: ["alpha", "beta"],
+        activeWorkspaceId: "beta",
+      }));
+
+      expect(readWorkspaceTabsState()).toEqual({
+        openWorkspaceIds: ["alpha", "beta"],
+        activeWorkspaceId: "beta",
+      });
+      expect(window.localStorage.getItem(CHAT_WORKSPACE_TABS_STORAGE_KEY)).toBeNull();
+      expect(readWorkspaceExperienceState().chat).toEqual({
+        openWorkspaceIds: ["alpha", "beta"],
+        activeWorkspaceId: "beta",
+        workspaceSessions: {},
+      });
+    } finally {
+      if (originalWindow === undefined) {
+        Reflect.deleteProperty(globalThis, "window");
+      } else {
+        Object.defineProperty(globalThis, "window", {
+          configurable: true,
+          value: originalWindow,
+        });
+      }
+    }
+  });
+
   test("normalizes duplicate open tabs and preserves the active tab", () => {
     expect(normalizeWorkspaceTabsState({
       openWorkspaceIds: ["", "alpha", " alpha ", "beta", "beta"],

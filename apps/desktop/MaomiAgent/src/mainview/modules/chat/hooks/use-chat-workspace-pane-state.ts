@@ -51,6 +51,10 @@ import {
   waitForConversationWorkspaceSettingsSaves,
 } from "../components/conversation-workspace-settings-storage";
 import {
+  readWorkspaceExperienceState,
+  updateWorkspaceExperienceState,
+} from "../../../components/workspace-experience-state/workspace-experience-state";
+import {
   clearSessionReplying,
   hasSessionFlag,
   markSessionReplying,
@@ -151,6 +155,25 @@ function buildComposerAttachmentInputs(attachments: ChatComposerAttachment[]): D
 
 function normalizeOptionalText(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function readPreferredWorkspaceSessionId(workspaceId: string) {
+  return readWorkspaceExperienceState().chat.workspaceSessions[workspaceId]?.selectedSessionId;
+}
+
+function writePreferredWorkspaceSessionId(workspaceId: string, sessionId: string | undefined) {
+  updateWorkspaceExperienceState((current) => ({
+    ...current,
+    chat: {
+      ...current.chat,
+      workspaceSessions: {
+        ...current.chat.workspaceSessions,
+        [workspaceId]: {
+          selectedSessionId: normalizeOptionalText(sessionId),
+        },
+      },
+    },
+  }));
 }
 
 function readComposerModeMetadata(metadata: Record<string, unknown> | undefined): ChatComposerMode | undefined {
@@ -423,6 +446,10 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
   useEffect(() => {
     selectedSessionIdRef.current = selectedSessionId;
   }, [selectedSessionId]);
+
+  useEffect(() => {
+    writePreferredWorkspaceSessionId(workspaceId, selectedSessionId);
+  }, [selectedSessionId, workspaceId]);
 
   useEffect(() => {
     expandedSessionDetailSessionIdRef.current = expandedSessionDetailSessionId;
@@ -799,6 +826,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
       return;
     }
 
+    const persistedPreferredSessionId = readPreferredWorkspaceSessionId(workspaceId);
     setLoadingSessions(true);
     try {
       const response = await listDesktopConversationSessions({
@@ -813,7 +841,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
       setSelectedSessionId((currentSessionId) => resolveNextSessionId(
         visibleItems,
         currentSessionId,
-        preferredSessionId,
+        preferredSessionId ?? persistedPreferredSessionId,
       ));
     } catch (error) {
       onError("loadSessions", error);

@@ -159,6 +159,12 @@ export function writeWorkspaceExperienceState(
   return normalized;
 }
 
+export function updateWorkspaceExperienceState(
+  updater: (current: WorkspaceExperienceState) => WorkspaceExperienceState,
+): WorkspaceExperienceState {
+  return writeWorkspaceExperienceState(updater(readWorkspaceExperienceState()));
+}
+
 export function reconcileChatScene(input: {
   state: WorkspaceExperienceState;
   workspaces: Array<{ workspaceId: string }>;

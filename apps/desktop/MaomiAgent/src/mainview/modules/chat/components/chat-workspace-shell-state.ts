@@ -1,4 +1,8 @@
 import type { DesktopWorkspaceItem } from "../../../../shared/desktop-workspace";
+import {
+  readWorkspaceExperienceState,
+  updateWorkspaceExperienceState,
+} from "../../../components/workspace-experience-state/workspace-experience-state";
 
 export const CHAT_WORKSPACE_TABS_STORAGE_KEY = "maomiagent.chat.workspace-tabs.v1";
 
@@ -71,7 +75,24 @@ export function readWorkspaceTabsState(): WorkspaceTabsState {
     });
   }
 
-  return parseWorkspaceTabsState(window.localStorage.getItem(CHAT_WORKSPACE_TABS_STORAGE_KEY));
+  const state = readWorkspaceExperienceState();
+  const nextState = normalizeWorkspaceTabsState({
+    openWorkspaceIds: state.chat.openWorkspaceIds,
+    activeWorkspaceId: state.chat.activeWorkspaceId,
+  });
+  if (nextState.openWorkspaceIds.length > 0 || nextState.activeWorkspaceId) {
+    window.localStorage.removeItem(CHAT_WORKSPACE_TABS_STORAGE_KEY);
+    return nextState;
+  }
+
+  const legacyState = parseWorkspaceTabsState(window.localStorage.getItem(CHAT_WORKSPACE_TABS_STORAGE_KEY));
+  if (legacyState.openWorkspaceIds.length === 0 && !legacyState.activeWorkspaceId) {
+    return legacyState;
+  }
+
+  writeWorkspaceTabsState(legacyState);
+  window.localStorage.removeItem(CHAT_WORKSPACE_TABS_STORAGE_KEY);
+  return legacyState;
 }
 
 export function writeWorkspaceTabsState(state: WorkspaceTabsState) {
@@ -79,10 +100,16 @@ export function writeWorkspaceTabsState(state: WorkspaceTabsState) {
     return;
   }
 
-  window.localStorage.setItem(
-    CHAT_WORKSPACE_TABS_STORAGE_KEY,
-    JSON.stringify(normalizeWorkspaceTabsState(state)),
-  );
+  const normalized = normalizeWorkspaceTabsState(state);
+  updateWorkspaceExperienceState((current) => ({
+    ...current,
+    chat: {
+      ...current.chat,
+      openWorkspaceIds: normalized.openWorkspaceIds,
+      activeWorkspaceId: normalized.activeWorkspaceId,
+    },
+  }));
+  window.localStorage.removeItem(CHAT_WORKSPACE_TABS_STORAGE_KEY);
 }
 
 export function shouldReconcileWorkspaceTabsState(input: {
