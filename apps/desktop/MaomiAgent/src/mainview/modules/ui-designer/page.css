@@ -139,6 +139,11 @@
   gap: 12px;
 }
 
+.ui-designer-thread-pane > .chat-direct-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .ui-designer-thread-pane .chat-direct-thread-scroll::-webkit-scrollbar,
 .ui-designer-panel-scroll::-webkit-scrollbar,
 .ui-designer-rail-body::-webkit-scrollbar {
@@ -320,7 +325,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
+  align-items: flex-start;
   gap: 4px;
 }
 
@@ -410,6 +415,7 @@
   border: none;
   border-bottom: 1px solid color-mix(in srgb, var(--app-border-soft) 82%, transparent);
   background: transparent;
+  justify-content: flex-start;
 }
 
 .ui-designer-status-bar-label {

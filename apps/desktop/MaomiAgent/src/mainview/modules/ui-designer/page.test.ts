@@ -24,7 +24,9 @@ test("ui designer page keeps the single-session shell contract", () => {
   expect(railSource).toContain('const sessionTitle = props.selectedSession?.title?.trim() || "UI 设计方案"');
   expect(railSource).not.toContain("工作区与对话");
   expect(railSource).not.toContain("ui-designer-session-list");
-  expect(flowSource).toContain("设计包路径");
+  expect(flowSource).toContain("设计包");
+  expect(flowSource).not.toContain("流程 / 任务 / 清单");
+  expect(flowSource).not.toContain("内置阶段");
   expect(resolverSource).toContain('title: "项目范围确认"');
   expect(resolverSource).toContain('title: "技术栈确认"');
   expect(resolverSource).toContain('title: "视觉与交互基线"');
@@ -52,6 +54,7 @@ test("ui designer page keeps the single-session shell contract", () => {
   expect(flowSource).not.toContain("ui-designer-summary-block");
   expect(flowSource).not.toContain("TextArea");
   expect(flowSource).not.toContain("保存");
+  expect(flowSource).not.toContain("生成条件");
   expect(hookSource).toContain("managedExecutionEnabled: false");
   expect(hookSource).toContain("thinkingEnabled: false");
   expect(hookSource).toContain("UI_DESIGNER_CONTEXT_METADATA_KEY");

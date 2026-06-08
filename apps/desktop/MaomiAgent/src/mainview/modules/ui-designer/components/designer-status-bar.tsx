@@ -18,12 +18,13 @@ export function DesignerStatusBar(props: DesignerStatusBarProps) {
     );
   }
 
+  if (props.missingItems.length === 0) {
+    return null;
+  }
+
   return (
     <div className="ui-designer-status-bar">
-      <span className="ui-designer-status-bar-label">生成条件</span>
-      {props.missingItems.length === 0
-        ? <Tag color="success">已就绪</Tag>
-        : props.missingItems.map((item) => <Tag key={item} color="gold">{item}</Tag>)}
+      {props.missingItems.map((item) => <Tag key={item} color="gold">{item}</Tag>)}
     </div>
   );
 }

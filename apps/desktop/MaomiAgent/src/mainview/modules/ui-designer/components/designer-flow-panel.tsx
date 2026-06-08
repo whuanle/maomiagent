@@ -21,11 +21,6 @@ function resolveStageActionLabel(status: UiDesignerStageViewModel["status"]) {
 export function DesignerFlowPanel(props: DesignerFlowPanelProps) {
   return (
     <section className="ui-designer-pane ui-designer-pane-center" data-testid="ui-designer-center-pane">
-      <div className="ui-designer-pane-header">
-        <div className="ui-designer-pane-label">流程</div>
-        <h2 className="ui-designer-pane-title">流程 / 任务 / 清单</h2>
-      </div>
-
       <DesignerStatusBar
         lockReason={props.lockReason}
         missingItems={props.missingItems}
@@ -34,9 +29,8 @@ export function DesignerFlowPanel(props: DesignerFlowPanelProps) {
       <div className="ui-designer-panel-scroll">
         <div className="ui-designer-section">
           <div className="ui-designer-section-header">
-            <div className="ui-designer-section-title">流程 / 任务 / 清单</div>
             <div className="ui-designer-design-path-wrap">
-              <span className="ui-designer-status-bar-label">设计包路径</span>
+              <span className="ui-designer-status-bar-label">设计包</span>
               <span className="ui-designer-design-path">
                 {props.designPackagePath ?? "未准备"}
               </span>
@@ -45,7 +39,6 @@ export function DesignerFlowPanel(props: DesignerFlowPanelProps) {
         </div>
 
         <div className="ui-designer-section">
-          <div className="ui-designer-section-title">内置阶段</div>
           <div className="ui-designer-stage-list">
             {props.stageViewModels.map((item) => (
               <button
