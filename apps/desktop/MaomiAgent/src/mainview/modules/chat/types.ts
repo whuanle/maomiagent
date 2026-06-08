@@ -56,6 +56,13 @@ export type ChatComposerAgentOption = {
   description?: string;
 };
 
+export type ChatSlashCommandOption = {
+  key: string;
+  label: string;
+  insertText: string;
+  description?: string;
+};
+
 export type ChatComposerAttachment = {
   id: string;
   kind: DesktopConversationAttachmentKind;

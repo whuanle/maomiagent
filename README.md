@@ -61,6 +61,8 @@ npm install -g maomiagent
 安装后启动：
 
 ```bash
+maomiagent
+或者
 maomi-agent
 ```
 

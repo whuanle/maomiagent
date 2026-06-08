@@ -7,6 +7,7 @@ import {
 import type { DesktopWorkspaceItem } from "../../../../shared/desktop-workspace";
 import type { LanguageCode } from "../../../config/titlebar";
 import { useChatWorkspacePaneState } from "../hooks/use-chat-workspace-pane-state";
+import { useChatWorkspaceSlashCommands } from "../hooks/use-chat-workspace-slash-commands";
 import { useChatWorkbenchState } from "../hooks/use-chat-workbench-state";
 import type {
   ChatActionErrorType,
@@ -57,6 +58,11 @@ export const ConversationWorkspacePane = forwardRef<ConversationWorkspacePaneHan
     language: props.language,
     workspaceId: props.workspaceId,
     revealTerminalToken: props.revealTerminalToken,
+  });
+  const slashCommands = useChatWorkspaceSlashCommands({
+    active: props.conversationActive ?? props.active,
+    bridgeAvailable: props.bridgeAvailable,
+    workspaceId: props.workspaceId,
   });
   const selectedSession = useMemo(() => {
     if (!state.selectedSession) {
@@ -185,6 +191,7 @@ export const ConversationWorkspacePane = forwardRef<ConversationWorkspacePaneHan
           composerAgentOptions={state.composerAgentOptions}
           composerModelOptions={state.composerModelOptions}
           composerModelSelectOptions={state.composerModelSelectOptions}
+          slashCommands={slashCommands}
           composerAttachments={state.composerAttachments}
           selectedComposerAgentId={state.selectedComposerAgentId}
           selectedComposerModelValue={state.selectedComposerModelValue}

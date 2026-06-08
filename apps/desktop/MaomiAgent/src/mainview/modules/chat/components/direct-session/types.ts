@@ -10,6 +10,7 @@ import type {
   ChatComposerAttachment,
   ChatComposerAgentOption,
   ChatComposerModelOption,
+  ChatSlashCommandOption,
   ChatComposerSelectOptionGroup,
   ChatCopy,
   ChatOpenCodePreviewInput,
@@ -43,6 +44,7 @@ export type DirectConversationSessionPaneProps = {
   composerAgentOptions: ChatComposerAgentOption[];
   composerModelOptions: ChatComposerModelOption[];
   composerModelSelectOptions: ChatComposerSelectOptionGroup[];
+  slashCommands?: ChatSlashCommandOption[];
   composerAttachments: ChatComposerAttachment[];
   selectedComposerAgentId?: string;
   selectedComposerModelValue?: string;
@@ -165,6 +167,7 @@ export type DirectSessionComposerViewModel = {
   modelOptions: ChatComposerModelOption[];
   modelSelectOptions: ChatComposerSelectOptionGroup[];
   agentOptions: ChatComposerAgentOption[];
+  slashCommands?: ChatSlashCommandOption[];
   attachments: ChatComposerAttachment[];
   onDraftChange: (value: string) => void;
   onAttachFiles: (files: File[]) => void;

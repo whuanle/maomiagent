@@ -213,6 +213,7 @@ export function useDirectSessionPaneController(
         modelOptions: props.composerModelOptions,
         modelSelectOptions: props.composerModelSelectOptions,
         agentOptions: props.composerAgentOptions,
+        slashCommands: props.slashCommands,
         attachments: props.composerAttachments,
         onDraftChange: props.onDraftMessageChange,
         onAttachFiles: props.onComposerAttachFiles,

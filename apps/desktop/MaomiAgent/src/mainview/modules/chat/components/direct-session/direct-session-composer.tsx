@@ -5,12 +5,16 @@ import {
 } from "@ant-design/icons";
 import { Input, Select, Switch, type SelectProps } from "antd";
 import type { TextAreaRef } from "antd/es/input/TextArea";
-import { useEffect, useRef, type ClipboardEventHandler } from "react";
+import { useEffect, useMemo, useRef, useState, type ClipboardEventHandler } from "react";
 
 import { WorkspaceFileIcon } from "../workspace-file-icon";
 import { shouldFocusPrefilledDraft } from "./direct-session-composer-prefill";
 import { resolveDirectSessionComposerPopupContainer } from "./direct-session-composer-popup";
 import { resolveDirectSessionComposerSubmitState } from "./direct-session-composer-submit-state";
+import {
+  applyDirectSessionComposerSlashCommand,
+  resolveDirectSessionComposerSlashMatch,
+} from "./direct-session-composer-slash";
 import type { DirectSessionComposerViewModel } from "./types";
 
 const COMPOSER_SELECT_POPUP_WIDTH = 320;
@@ -24,6 +28,12 @@ export function DirectSessionComposer(props: Props) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textAreaRef = useRef<TextAreaRef | null>(null);
   const previousDraftRef = useRef(props.draft);
+  const pendingSelectionRef = useRef<number | null>(null);
+  const [selectionRange, setSelectionRange] = useState(() => ({
+    start: props.draft.length,
+    end: props.draft.length,
+  }));
+  const [dismissedSlashKey, setDismissedSlashKey] = useState<string | null>(null);
   const resolvePopupContainer: SelectProps["getPopupContainer"] = (triggerNode) => (
     resolveDirectSessionComposerPopupContainer(triggerNode)
   );
@@ -62,6 +72,51 @@ export function DirectSessionComposer(props: Props) {
   const showAgentSelect = props.showAgentSelect !== false;
   const showContextDivider = showAttachmentButton
     && (showModeSwitch || showModelSelect || showAgentSelect || Boolean(props.tokenBudgetUsage) || Boolean(props.contextCompressionStatus));
+  const slashMatch = useMemo(
+    () => resolveDirectSessionComposerSlashMatch({
+      draft: props.draft,
+      selectionStart: selectionRange.start,
+      commands: props.slashCommands,
+    }),
+    [props.draft, props.slashCommands, selectionRange.start],
+  );
+  const slashContextKey = slashMatch
+    ? `${slashMatch.replaceStart}:${slashMatch.replaceEnd}:${slashMatch.query}`
+    : null;
+  const visibleSlashMatch = slashMatch && dismissedSlashKey !== slashContextKey
+    ? slashMatch
+    : undefined;
+  const [activeSlashIndex, setActiveSlashIndex] = useState(0);
+
+  function updateSelectionRange(start: number, end = start) {
+    setSelectionRange({
+      start,
+      end,
+    });
+  }
+
+  function applySlashCommandSelection(commandIndex: number) {
+    if (!visibleSlashMatch) {
+      return;
+    }
+
+    const command = visibleSlashMatch.commands[commandIndex];
+    if (!command) {
+      return;
+    }
+
+    const nextState = applyDirectSessionComposerSlashCommand({
+      draft: props.draft,
+      replaceStart: visibleSlashMatch.replaceStart,
+      replaceEnd: visibleSlashMatch.replaceEnd,
+      command,
+    });
+
+    pendingSelectionRef.current = nextState.selectionStart;
+    setDismissedSlashKey(null);
+    props.onDraftChange(nextState.draft);
+    updateSelectionRange(nextState.selectionStart);
+  }
 
   function formatAttachmentSize(sizeBytes?: number) {
     if (typeof sizeBytes !== "number" || !Number.isFinite(sizeBytes) || sizeBytes <= 0) {
@@ -148,6 +203,57 @@ export function DirectSessionComposer(props: Props) {
     });
   }, [props.draft]);
 
+  useEffect(() => {
+    const maxSelection = props.draft.length;
+    setSelectionRange((current) => {
+      const start = Math.min(current.start, maxSelection);
+      const end = Math.min(current.end, maxSelection);
+      if (start === current.start && end === current.end) {
+        return current;
+      }
+
+      return { start, end };
+    });
+  }, [props.draft.length]);
+
+  useEffect(() => {
+    if (visibleSlashMatch) {
+      setActiveSlashIndex((current) => Math.min(current, visibleSlashMatch.commands.length - 1));
+      return;
+    }
+
+    setActiveSlashIndex(0);
+  }, [visibleSlashMatch]);
+
+  useEffect(() => {
+    if (slashContextKey && dismissedSlashKey && slashContextKey !== dismissedSlashKey) {
+      setDismissedSlashKey(null);
+    }
+  }, [dismissedSlashKey, slashContextKey]);
+
+  useEffect(() => {
+    const pendingSelection = pendingSelectionRef.current;
+    if (pendingSelection === null) {
+      return;
+    }
+
+    pendingSelectionRef.current = null;
+    const schedule = typeof globalThis.requestAnimationFrame === "function"
+      ? globalThis.requestAnimationFrame
+      : (callback: FrameRequestCallback) => globalThis.setTimeout(() => callback(Date.now()), 0);
+
+    schedule(() => {
+      const textArea = textAreaRef.current?.resizableTextArea?.textArea;
+      if (!textArea) {
+        return;
+      }
+
+      textArea.focus();
+      textArea.setSelectionRange(pendingSelection, pendingSelection);
+      updateSelectionRange(pendingSelection);
+    });
+  }, [props.draft]);
+
   return (
     <div className="chat-direct-composer">
         <input
@@ -212,11 +318,43 @@ export function DirectSessionComposer(props: Props) {
               disabled={props.disabled}
               placeholder={props.placeholder}
               value={props.draft}
-              onChange={(event) => props.onDraftChange(event.target.value)}
+              onChange={(event) => {
+                setDismissedSlashKey(null);
+                updateSelectionRange(event.target.selectionStart, event.target.selectionEnd);
+                props.onDraftChange(event.target.value);
+              }}
               onPaste={handleInputPaste}
+              onClick={(event) => updateSelectionRange(event.currentTarget.selectionStart, event.currentTarget.selectionEnd)}
+              onFocus={(event) => updateSelectionRange(event.currentTarget.selectionStart, event.currentTarget.selectionEnd)}
+              onKeyUp={(event) => updateSelectionRange(event.currentTarget.selectionStart, event.currentTarget.selectionEnd)}
+              onSelect={(event) => updateSelectionRange(event.currentTarget.selectionStart, event.currentTarget.selectionEnd)}
               onKeyDown={(event) => {
                 if (props.stopping) {
                   return;
+                }
+                if (visibleSlashMatch) {
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    setActiveSlashIndex((current) => (current + 1) % visibleSlashMatch.commands.length);
+                    return;
+                  }
+                  if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    setActiveSlashIndex((current) => (
+                      current - 1 + visibleSlashMatch.commands.length
+                    ) % visibleSlashMatch.commands.length);
+                    return;
+                  }
+                  if ((event.key === "Enter" || event.key === "Tab") && !event.shiftKey && !event.nativeEvent.isComposing) {
+                    event.preventDefault();
+                    applySlashCommandSelection(activeSlashIndex);
+                    return;
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setDismissedSlashKey(slashContextKey);
+                    return;
+                  }
                 }
                 if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) {
                   return;
@@ -229,6 +367,32 @@ export function DirectSessionComposer(props: Props) {
                 props.onSubmit();
               }}
             />
+            {visibleSlashMatch ? (
+              <div className="chat-direct-composer-slash-panel" role="listbox" aria-label={isEn ? "Skill commands" : "技能命令"}>
+                {visibleSlashMatch.commands.map((command, index) => (
+                  <button
+                    key={command.key}
+                    type="button"
+                    role="option"
+                    aria-selected={index === activeSlashIndex}
+                    className={`chat-direct-composer-slash-option${index === activeSlashIndex ? " is-active" : ""}`}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                    }}
+                    onMouseEnter={() => setActiveSlashIndex(index)}
+                    onClick={() => applySlashCommandSelection(index)}
+                  >
+                    <span className="chat-direct-composer-slash-option-head">
+                      <span className="chat-direct-composer-slash-option-token">/{command.insertText}</span>
+                      <span className="chat-direct-composer-slash-option-label">{command.label}</span>
+                    </span>
+                    {command.description ? (
+                      <span className="chat-direct-composer-slash-option-description">{command.description}</span>
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
           <div className="chat-direct-composer-footer">
             <div className="chat-direct-composer-context-rail">

@@ -3,6 +3,10 @@ import { describe, expect, test } from "bun:test";
 import { shouldFocusPrefilledDraft } from "./direct-session-composer-prefill";
 import { resolveDirectSessionComposerPopupContainer } from "./direct-session-composer-popup";
 import { resolveDirectSessionComposerSubmitState } from "./direct-session-composer-submit-state";
+import {
+  applyDirectSessionComposerSlashCommand,
+  resolveDirectSessionComposerSlashMatch,
+} from "./direct-session-composer-slash";
 
 describe("resolveDirectSessionComposerSubmitState", () => {
   test("uses stopping label and disables submit while a stop is pending", () => {
@@ -86,5 +90,47 @@ describe("resolveDirectSessionComposerPopupContainer", () => {
     } as HTMLElement;
 
     expect(resolveDirectSessionComposerPopupContainer(triggerNode)).toBe(hostBody);
+  });
+});
+
+describe("resolveDirectSessionComposerSlashMatch", () => {
+  const commands = [
+    { key: "imagegen", label: "Image Generator", insertText: "imagegen", description: "Generate images" },
+    { key: "playwright", label: "Playwright", insertText: "playwright", description: "Browser automation" },
+  ];
+
+  test("opens suggestions when the cursor is at a slash token", () => {
+    expect(resolveDirectSessionComposerSlashMatch({
+      draft: "/pla",
+      selectionStart: 4,
+      commands,
+    })).toEqual({
+      query: "pla",
+      replaceStart: 0,
+      replaceEnd: 4,
+      commands: [commands[1]],
+    });
+  });
+
+  test("ignores slashes inside ordinary paths", () => {
+    expect(resolveDirectSessionComposerSlashMatch({
+      draft: "See src/main.ts",
+      selectionStart: "See src/main.ts".length,
+      commands,
+    })).toBeUndefined();
+  });
+});
+
+describe("applyDirectSessionComposerSlashCommand", () => {
+  test("replaces the active slash token and keeps the cursor after the inserted command", () => {
+    expect(applyDirectSessionComposerSlashCommand({
+      draft: "Run /pla after this",
+      replaceStart: 4,
+      replaceEnd: 8,
+      command: { insertText: "playwright" },
+    })).toEqual({
+      draft: "Run /playwright after this",
+      selectionStart: 15,
+    });
   });
 });
