@@ -1,7 +1,17 @@
 {
   "name": "maomiagent-runtime-macos-x64",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": false,
+  "description": "MaomiAgent runtime bundle for macOS x64.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/whuanle/maomiagent"
+  },
+  "homepage": "https://github.com/whuanle/maomiagent",
+  "bugs": {
+    "url": "https://github.com/whuanle/maomiagent/issues"
+  },
   "files": [
     "runtime-bundles",
     "package.json"

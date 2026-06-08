@@ -1,6 +1,6 @@
 {
   "name": "maomiagent",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": false,
   "type": "module",
   "repository": {
@@ -29,9 +29,9 @@
     "extract-zip": "^2.0.1"
   },
   "optionalDependencies": {
-    "maomiagent-runtime-win-x64": "0.1.5",
-    "maomiagent-runtime-linux-x64": "0.1.5",
-    "maomiagent-runtime-macos-arm64": "0.1.5",
-    "maomiagent-runtime-macos-x64": "0.1.5"
+    "maomiagent-runtime-win-x64": "0.1.6",
+    "maomiagent-runtime-linux-x64": "0.1.6",
+    "maomiagent-runtime-macos-arm64": "0.1.6",
+    "maomiagent-runtime-macos-x64": "0.1.6"
   }
 }
