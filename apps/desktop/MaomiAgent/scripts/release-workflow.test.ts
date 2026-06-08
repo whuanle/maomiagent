@@ -54,9 +54,6 @@ describe("desktop-release workflow", () => {
     expect(workflowText).toContain("Remove existing release assets for tag");
     expect(workflowText).toContain("https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ needs.prepare-release.outputs.tag_name }}");
     expect(workflowText).toContain("Invoke-RestMethod -Headers $headers -Method Delete -Uri \"https://api.github.com/repos/${{ github.repository }}/releases/assets/$($asset.id)\"");
-    expect(workflowText).toContain(
-      "run: npm install --prefix ./packages/maomiagent-npm --ignore-scripts",
-    );
     expect(workflowText).toContain("run: node scripts/assemble-maomiagent-npm-package.mjs");
     expect(workflowText).toContain(
       "MAOMI_AGENT_NPM_ARTIFACT_ROOT: ${{ github.workspace }}/release-assets/npm",
@@ -65,6 +62,12 @@ describe("desktop-release workflow", () => {
       "MAOMI_AGENT_NPM_VERSION: ${{ needs.prepare-release.outputs.npm_version }}",
     );
     expect(workflowText).not.toContain("NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}");
+    expect(workflowText).toContain("name: Publish runtime npm packages");
+    expect(workflowText).toContain("npm publish ./packages/maomiagent-runtime-win-x64 --access public");
+    expect(workflowText).toContain("npm publish ./packages/maomiagent-runtime-linux-x64 --access public");
+    expect(workflowText).toContain("npm publish ./packages/maomiagent-runtime-macos-arm64 --access public");
+    expect(workflowText).toContain("npm publish ./packages/maomiagent-runtime-macos-x64 --access public");
+    expect(workflowText).toContain("name: Publish main npm package");
     expect(workflowText).toContain("npm publish ./packages/maomiagent-npm --access public");
     expect(workflowText).not.toContain("release-assets/*.tar.zst");
     expect(workflowText).not.toContain("release-assets/*update.json");

@@ -12,21 +12,26 @@
     "url": "https://github.com/whuanle/maomiagent/issues"
   },
   "bin": {
+    "maomiagent": "./bin/maomi-agent.js",
     "maomi-agent": "./bin/maomi-agent.js"
   },
   "files": [
     "bin",
     "lib",
-    "runtime-bundles",
     "scripts",
     "README.md",
     "package.json"
   ],
   "scripts": {
-    "prepack": "node ./scripts/postinstall.js --validate-runtime-bundles",
     "postinstall": "node ./scripts/postinstall.js"
   },
   "dependencies": {
     "extract-zip": "^2.0.1"
+  },
+  "optionalDependencies": {
+    "maomiagent-runtime-win-x64": "0.0.0-dev",
+    "maomiagent-runtime-linux-x64": "0.0.0-dev",
+    "maomiagent-runtime-macos-arm64": "0.0.0-dev",
+    "maomiagent-runtime-macos-x64": "0.0.0-dev"
   }
 }

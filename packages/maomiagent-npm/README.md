@@ -11,6 +11,12 @@ npm i -g maomiagent
 Launch MaomiAgent:
 
 ```bash
+maomiagent
+```
+
+Compatibility alias:
+
+```bash
 maomi-agent
 ```
 

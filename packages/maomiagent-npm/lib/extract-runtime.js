@@ -1,19 +1,14 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 
 import {
   resolveLaunchPath,
   resolveRuntimeBundleName,
+  resolveRuntimePackageName,
   resolveTargetPlatform,
 } from "./platform.js";
-
-export const REQUIRED_RUNTIME_BUNDLE_NAMES = [
-  "win-x64.zip",
-  "linux-x64.zip",
-  "macos-arm64-app.zip",
-  "macos-x64-app.zip",
-];
 
 let extractRuntimeLoader;
 
@@ -25,14 +20,15 @@ async function loadExtractRuntime() {
   return extractRuntimeLoader;
 }
 
-function resolveRuntimeBundlePath(packageRoot, bundleName) {
-  return path.join(packageRoot, "runtime-bundles", bundleName);
+function resolveRuntimePackageJsonPath(packageRoot, runtimePackageName) {
+  const packageRequire = createRequire(path.join(packageRoot, "package.json"));
+  return packageRequire.resolve(`${runtimePackageName}/package.json`);
 }
 
-function createMissingRuntimeBundlesError(missingBundleNames) {
+function createMissingRuntimeBundleError(target, runtimePackageName, bundleName) {
   return new Error(
-    `Missing runtime bundles: ${missingBundleNames.join(", ")}. `
-      + "The maomiagent package must be assembled before packing or publishing.",
+    `Missing runtime bundle ${bundleName} from optional dependency ${runtimePackageName} `
+      + `for ${target.os}-${target.arch}. Reinstall maomiagent on a supported platform.`,
   );
 }
 
@@ -60,31 +56,55 @@ function isReusableInstalledMarker(marker, expectedMarker) {
     && matchesTarget(marker?.target, expectedMarker.target);
 }
 
-export async function validateRuntimeBundles(packageRoot, options = {}) {
-  const bundleNames = options.target
-    ? [resolveRuntimeBundleName(options.target)]
-    : REQUIRED_RUNTIME_BUNDLE_NAMES;
-  const missingBundleNames = bundleNames.filter(
-    (bundleName) => !existsSync(resolveRuntimeBundlePath(packageRoot, bundleName)),
-  );
+function resolveInstalledRuntimeBundle(packageRoot, target, options = {}) {
+  const bundleName = resolveRuntimeBundleName(target);
+  const runtimePackageName = resolveRuntimePackageName(target);
 
-  if (missingBundleNames.length > 0) {
-    throw createMissingRuntimeBundlesError(missingBundleNames);
+  try {
+    const runtimePackageJsonPath = (options.resolveRuntimePackageJsonPath
+      ?? ((requestedPackageName) => resolveRuntimePackageJsonPath(packageRoot, requestedPackageName)))(
+      runtimePackageName,
+    );
+    const runtimePackageRoot = path.dirname(runtimePackageJsonPath);
+
+    return {
+      bundleName,
+      runtimePackageName,
+      bundlePath: path.join(runtimePackageRoot, "runtime-bundles", bundleName),
+    };
+  } catch {
+    return {
+      bundleName,
+      runtimePackageName,
+      bundlePath: null,
+    };
+  }
+}
+
+export async function validateRuntimeBundles(packageRoot, options = {}) {
+  const target = options.target ?? resolveTargetPlatform();
+  const runtimeBundle = resolveInstalledRuntimeBundle(packageRoot, target, options);
+
+  if (!runtimeBundle.bundlePath || !existsSync(runtimeBundle.bundlePath)) {
+    throw createMissingRuntimeBundleError(
+      target,
+      runtimeBundle.runtimePackageName,
+      runtimeBundle.bundleName,
+    );
   }
 
-  return bundleNames.map((bundleName) => resolveRuntimeBundlePath(packageRoot, bundleName));
+  return [runtimeBundle.bundlePath];
 }
 
 export async function ensureRuntimeExtracted(packageRoot, options = {}) {
   const target = options.target ?? resolveTargetPlatform();
   const packageVersion = options.packageVersion ?? await readPackageVersion(packageRoot);
-  const bundleName = resolveRuntimeBundleName(target);
   const runtimeRoot = path.join(packageRoot, "runtime", "active", `${target.os}-${target.arch}`);
-  const bundlePath = resolveRuntimeBundlePath(packageRoot, bundleName);
   const markerPath = path.join(runtimeRoot, ".installed.json");
   const launchPath = resolveLaunchPath(runtimeRoot, target);
+  const runtimeBundle = resolveInstalledRuntimeBundle(packageRoot, target, options);
   const expectedMarker = {
-    bundleName,
+    bundleName: runtimeBundle.bundleName,
     packageVersion,
     target,
   };
@@ -97,16 +117,19 @@ export async function ensureRuntimeExtracted(packageRoot, options = {}) {
     }
   }
 
-  await validateRuntimeBundles(packageRoot, { target });
+  await validateRuntimeBundles(packageRoot, {
+    target,
+    resolveRuntimePackageJsonPath: options.resolveRuntimePackageJsonPath,
+  });
   await rm(runtimeRoot, { recursive: true, force: true });
   await mkdir(runtimeRoot, { recursive: true });
 
   const extractRuntime = options.extractRuntime ?? await loadExtractRuntime();
-  await extractRuntime(bundlePath, { dir: runtimeRoot });
+  await extractRuntime(runtimeBundle.bundlePath, { dir: runtimeRoot });
   await writeFile(
     markerPath,
     `${JSON.stringify({
-      bundleName,
+      bundleName: runtimeBundle.bundleName,
       installedAt: new Date().toISOString(),
       packageVersion,
       target,
@@ -116,7 +139,7 @@ export async function ensureRuntimeExtracted(packageRoot, options = {}) {
 
   const marker = await readInstalledMarker(markerPath);
   if (!isReusableInstalledMarker(marker, expectedMarker) || !existsSync(launchPath)) {
-    throw new Error(`Extracted runtime is incomplete for ${bundleName}.`);
+    throw new Error(`Extracted runtime is incomplete for ${runtimeBundle.bundleName}.`);
   }
 
   return { runtimeRoot, target };

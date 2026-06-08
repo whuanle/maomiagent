@@ -8,6 +8,7 @@ const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
   repository?: { type?: string; url?: string };
   homepage?: string;
   bugs?: { url?: string };
+  bin?: Record<string, string>;
 };
 
 describe("maomiagent package manifest", () => {
@@ -19,6 +20,13 @@ describe("maomiagent package manifest", () => {
     expect(packageJson.homepage).toBe("https://github.com/whuanle/maomiagent");
     expect(packageJson.bugs).toEqual({
       url: "https://github.com/whuanle/maomiagent/issues",
+    });
+  });
+
+  test("exposes both the primary and compatibility CLI names", () => {
+    expect(packageJson.bin).toEqual({
+      maomiagent: "./bin/maomi-agent.js",
+      "maomi-agent": "./bin/maomi-agent.js",
     });
   });
 });

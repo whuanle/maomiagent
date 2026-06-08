@@ -186,14 +186,18 @@ jobs:
           merge-multiple: true
           path: release-assets
 
-      - name: Install npm package dependencies
-        run: npm install --prefix ./packages/maomiagent-npm --ignore-scripts
-
       - name: Assemble npm package
         env:
           MAOMI_AGENT_NPM_ARTIFACT_ROOT: ${{ github.workspace }}/release-assets/npm
           MAOMI_AGENT_NPM_VERSION: ${{ needs.prepare-release.outputs.npm_version }}
         run: node scripts/assemble-maomiagent-npm-package.mjs
 
-      - name: Publish npm package
+      - name: Publish runtime npm packages
+        run: |
+          npm publish ./packages/maomiagent-runtime-win-x64 --access public
+          npm publish ./packages/maomiagent-runtime-linux-x64 --access public
+          npm publish ./packages/maomiagent-runtime-macos-arm64 --access public
+          npm publish ./packages/maomiagent-runtime-macos-x64 --access public
+
+      - name: Publish main npm package
         run: npm publish ./packages/maomiagent-npm --access public

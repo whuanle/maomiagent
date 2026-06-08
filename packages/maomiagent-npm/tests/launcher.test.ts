@@ -11,6 +11,7 @@ import { launchGui } from "../lib/launch-gui.js";
 import {
   resolveLaunchPath,
   resolveRuntimeBundleName,
+  resolveRuntimePackageName,
   resolveTargetPlatform,
 } from "../lib/platform.js";
 
@@ -66,6 +67,17 @@ describe("resolveRuntimeBundleName", () => {
   });
 });
 
+describe("resolveRuntimePackageName", () => {
+  test("maps macOS arm64 to maomiagent-runtime-macos-arm64", () => {
+    expect(
+      resolveRuntimePackageName({
+        os: "macos",
+        arch: "arm64",
+      }),
+    ).toBe("maomiagent-runtime-macos-arm64");
+  });
+});
+
 describe("launchGui", () => {
   test("prints the launch path and skips spawning during dry runs", async () => {
     tempRoot = await mkdtemp(path.join(os.tmpdir(), "maomiagent-launcher-"));
@@ -95,11 +107,28 @@ describe("launchGui", () => {
 });
 
 describe("ensureRuntimeExtracted", () => {
-  test("fails clearly when required runtime bundles are missing", async () => {
+  test("fails clearly when the optional runtime package is missing", async () => {
     tempRoot = await mkdtemp(path.join(os.tmpdir(), "maomiagent-runtime-bundles-"));
 
-    await expect(validateRuntimeBundles(tempRoot)).rejects.toThrow(
-      "Missing runtime bundles: win-x64.zip, linux-x64.zip, macos-arm64-app.zip, macos-x64-app.zip. The maomiagent package must be assembled before packing or publishing.",
+    await writeFile(
+      path.join(tempRoot, "package.json"),
+      JSON.stringify({
+        name: "maomiagent",
+        version: "1.0.0",
+      }, null, 2),
+      "utf8",
+    );
+
+    await expect(validateRuntimeBundles(tempRoot, {
+      target: {
+        os: "linux",
+        arch: "x64",
+      },
+      resolveRuntimePackageJsonPath: () => {
+        throw new Error("not installed");
+      },
+    })).rejects.toThrow(
+      "Missing runtime bundle linux-x64.zip from optional dependency maomiagent-runtime-linux-x64 for linux-x64. Reinstall maomiagent on a supported platform.",
     );
   });
 
@@ -111,14 +140,28 @@ describe("ensureRuntimeExtracted", () => {
       arch: "x64",
     };
     const bundleName = resolveRuntimeBundleName(target);
-    const bundlePath = path.join(tempRoot, "runtime-bundles", bundleName);
+    const runtimePackageRoot = path.join(
+      tempRoot,
+      "node_modules",
+      resolveRuntimePackageName(target),
+    );
+    const bundlePath = path.join(runtimePackageRoot, "runtime-bundles", bundleName);
     const runtimeRoot = path.join(tempRoot, "runtime", "active", `${target.os}-${target.arch}`);
     const launchPath = resolveLaunchPath(runtimeRoot, target);
     const markerPath = path.join(runtimeRoot, ".installed.json");
     const packageJsonPath = path.join(tempRoot, "package.json");
+    const runtimePackageJsonPath = path.join(runtimePackageRoot, "package.json");
     let extractCalls = 0;
 
     await mkdir(path.dirname(bundlePath), { recursive: true });
+    await writeFile(
+      runtimePackageJsonPath,
+      JSON.stringify({
+        name: resolveRuntimePackageName(target),
+        version: "1.0.0",
+      }, null, 2),
+      "utf8",
+    );
     await writeFile(
       packageJsonPath,
       JSON.stringify({
@@ -140,6 +183,7 @@ describe("ensureRuntimeExtracted", () => {
     const firstInstall = await ensureRuntimeExtracted(tempRoot, {
       target,
       extractRuntime,
+      resolveRuntimePackageJsonPath: () => runtimePackageJsonPath,
     });
 
     expect(firstInstall).toEqual({
@@ -156,6 +200,7 @@ describe("ensureRuntimeExtracted", () => {
     const secondInstall = await ensureRuntimeExtracted(tempRoot, {
       target,
       extractRuntime,
+      resolveRuntimePackageJsonPath: () => runtimePackageJsonPath,
     });
 
     expect(secondInstall).toEqual({
@@ -176,6 +221,7 @@ describe("ensureRuntimeExtracted", () => {
     const thirdInstall = await ensureRuntimeExtracted(tempRoot, {
       target,
       extractRuntime,
+      resolveRuntimePackageJsonPath: () => runtimePackageJsonPath,
     });
 
     expect(thirdInstall).toEqual({
@@ -189,6 +235,7 @@ describe("ensureRuntimeExtracted", () => {
     const fourthInstall = await ensureRuntimeExtracted(tempRoot, {
       target,
       extractRuntime,
+      resolveRuntimePackageJsonPath: () => runtimePackageJsonPath,
     });
 
     expect(fourthInstall).toEqual({

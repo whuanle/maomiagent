@@ -1,0 +1,15 @@
+{
+  "name": "maomiagent-runtime-linux-x64",
+  "version": "0.0.0-dev",
+  "private": false,
+  "files": [
+    "runtime-bundles",
+    "package.json"
+  ],
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ]
+}

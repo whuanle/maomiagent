@@ -2,37 +2,48 @@ import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
-const RUNTIME_BUNDLES = [
-  "win-x64.zip",
-  "linux-x64.zip",
-  "macos-arm64-app.zip",
-  "macos-x64-app.zip",
-];
+import { RUNTIME_PACKAGE_LAYOUTS } from "../packages/maomiagent-npm/lib/runtime-package-metadata.js";
 
 export async function assembleMaomiAgentNpmPackage({
   artifactRoot,
   packageRoot,
+  runtimePackageRoots,
   version,
 }) {
   const resolvedArtifactRoot = path.resolve(artifactRoot);
-  const resolvedPackageRoot = path.resolve(packageRoot);
-  const runtimeBundleRoot = path.join(resolvedPackageRoot, "runtime-bundles");
-  const packageJsonPath = path.join(resolvedPackageRoot, "package.json");
+  const resolvedMainPackageRoot = path.resolve(packageRoot);
+  const resolvedRuntimePackageRoots = runtimePackageRoots ?? Object.fromEntries(
+    RUNTIME_PACKAGE_LAYOUTS.map((layout) => [
+      layout.packageName,
+      path.resolve(resolvedMainPackageRoot, "..", layout.packageDirectoryName),
+    ]),
+  );
+  const mainPackageJsonPath = path.join(resolvedMainPackageRoot, "package.json");
+  const mainPackageJson = JSON.parse(await readFile(mainPackageJsonPath, "utf8"));
 
-  await rm(runtimeBundleRoot, { recursive: true, force: true });
-  await mkdir(runtimeBundleRoot, { recursive: true });
+  mainPackageJson.version = version;
+  mainPackageJson.optionalDependencies = Object.fromEntries(
+    RUNTIME_PACKAGE_LAYOUTS.map((layout) => [layout.packageName, version]),
+  );
+  await writeFile(mainPackageJsonPath, `${JSON.stringify(mainPackageJson, null, 2)}\n`, "utf8");
 
-  for (const bundleName of RUNTIME_BUNDLES) {
+  for (const layout of RUNTIME_PACKAGE_LAYOUTS) {
+    const runtimePackageRoot = resolvedRuntimePackageRoots[layout.packageName];
+    const runtimeBundleRoot = path.join(runtimePackageRoot, "runtime-bundles");
+    const runtimePackageJsonPath = path.join(runtimePackageRoot, "package.json");
+    const runtimePackageJson = JSON.parse(await readFile(runtimePackageJsonPath, "utf8"));
+
+    await rm(runtimeBundleRoot, { recursive: true, force: true });
+    await mkdir(runtimeBundleRoot, { recursive: true });
     await cp(
-      path.join(resolvedArtifactRoot, bundleName),
-      path.join(runtimeBundleRoot, bundleName),
+      path.join(resolvedArtifactRoot, layout.bundleName),
+      path.join(runtimeBundleRoot, layout.bundleName),
       { force: true },
     );
-  }
 
-  const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
-  packageJson.version = version;
-  await writeFile(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`, "utf8");
+    runtimePackageJson.version = version;
+    await writeFile(runtimePackageJsonPath, `${JSON.stringify(runtimePackageJson, null, 2)}\n`, "utf8");
+  }
 }
 
 async function runCli() {

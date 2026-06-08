@@ -1,5 +1,9 @@
 import path from "node:path";
 
+import {
+  resolveRuntimePackageLayout,
+} from "./runtime-package-metadata.js";
+
 export function resolveTargetPlatform(platform = process.platform, arch = process.arch) {
   if (platform === "win32" && arch === "x64") {
     return { os: "win", arch: "x64" };
@@ -21,11 +25,21 @@ export function resolveTargetPlatform(platform = process.platform, arch = proces
 }
 
 export function resolveRuntimeBundleName(target) {
-  if (target.os === "macos") {
-    return `macos-${target.arch}-app.zip`;
+  const layout = resolveRuntimePackageLayout(target);
+  if (!layout) {
+    throw new Error(`Unsupported MaomiAgent runtime bundle target: ${target.os}/${target.arch}`);
   }
 
-  return `${target.os}-${target.arch}.zip`;
+  return layout.bundleName;
+}
+
+export function resolveRuntimePackageName(target) {
+  const layout = resolveRuntimePackageLayout(target);
+  if (!layout) {
+    throw new Error(`Unsupported MaomiAgent runtime package target: ${target.os}/${target.arch}`);
+  }
+
+  return layout.packageName;
 }
 
 export function resolveLaunchPath(runtimeRoot, target) {
