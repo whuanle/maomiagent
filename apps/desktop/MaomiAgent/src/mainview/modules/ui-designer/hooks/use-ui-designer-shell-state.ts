@@ -59,6 +59,13 @@ import {
   buildDesktopRuntimeModelOptions,
   resolveDesktopRuntimeSelectedValue,
 } from "../../models/services/runtime-selection";
+import type { UiDesignerInteractionSchema } from "../components/stage-dialog";
+import { normalizeStageResult } from "../services/stage-result-normalizer";
+import {
+  requestStageResult,
+  requestStageSchema,
+} from "../services/stage-schema-service";
+import { resolveStageViewModels } from "../services/stage-view-model-resolver";
 
 type UiDesignerDesignFiles = {
   designSpecMarkdown: string;
@@ -728,6 +735,15 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
   const [composerModelSelectOptions, setComposerModelSelectOptions] = useState<ChatComposerSelectOptionGroup[]>([]);
   const [selectedComposerModelValue, setSelectedComposerModelValueState] = useState<string>();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [stageDialogState, setStageDialogState] = useState<{
+    stageKey: string | null;
+    schema: UiDesignerInteractionSchema | null;
+    submitting: boolean;
+  }>({
+    stageKey: null,
+    schema: null,
+    submitting: false,
+  });
 
   const selectedWorkspace = useMemo(
     () => workspaces.find((item) => item.workspaceId === workspaceId),
@@ -749,6 +765,25 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
   const layouts = useMemo(() => parseJsonObject(designFiles.layoutsJson), [designFiles.layoutsJson]);
   const pages = useMemo(() => parseJsonObject(designFiles.pagesJson), [designFiles.pagesJson]);
   const sourcesMarkdown = designFiles.sourcesMarkdown;
+  const stageViewModels = useMemo(() => resolveStageViewModels({
+    scope,
+    stack,
+    theme,
+    patterns,
+    layouts,
+    pages,
+    designSpecMarkdown: designFiles.designSpecMarkdown,
+    sourcesMarkdown,
+  }), [
+    designFiles.designSpecMarkdown,
+    layouts,
+    pages,
+    patterns,
+    scope,
+    sourcesMarkdown,
+    stack,
+    theme,
+  ]);
   const bootstrapMessageCount = selectedSessionDetail?.messages.length ?? 0;
   const bootstrapPendingCount = selectedSessionDetail?.pendingInteractions.length ?? 0;
   const scopeBootstrapInteraction = useMemo<ConversationInteractionEntry | null>(() => {
@@ -2387,6 +2422,66 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     setDraftMessage(nextDraft);
   }, []);
 
+  const openStageDialog = useCallback(async (stageKey: string) => {
+    try {
+      const schema = await requestStageSchema(stageKey as Parameters<typeof requestStageSchema>[0]);
+      setStageDialogState({
+        stageKey,
+        schema,
+        submitting: false,
+      });
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }, []);
+
+  const closeStageDialog = useCallback(() => {
+    setStageDialogState({
+      stageKey: null,
+      schema: null,
+      submitting: false,
+    });
+  }, []);
+
+  const submitStageDialog = useCallback(async (values: Record<string, unknown>) => {
+    if (!workspaceId || !stageDialogState.stageKey) {
+      return;
+    }
+
+    setStageDialogState((current) => current.schema
+      ? { ...current, submitting: true }
+      : current);
+
+    try {
+      const stageResult = await requestStageResult({
+        stageKey: stageDialogState.stageKey as Parameters<typeof requestStageResult>[0]["stageKey"],
+        values,
+      });
+      const normalized = normalizeStageResult(stageResult);
+
+      if (Object.keys(normalized.files).length > 0) {
+        const saved = await saveDesktopUiDesignerDesignPackage({
+          workspaceId,
+          files: normalized.files,
+        });
+        setDesignerState(saved.state);
+        setPreviewMode(saved.state.preview.mode);
+        await reloadDesignFiles(workspaceId);
+      }
+
+      setStageDialogState({
+        stageKey: null,
+        schema: null,
+        submitting: false,
+      });
+    } catch (error) {
+      setStageDialogState((current) => current.schema
+        ? { ...current, submitting: false }
+        : current);
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  }, [reloadDesignFiles, stageDialogState.stageKey, workspaceId]);
+
   return {
     bridgeAvailable,
     canResetConversation,
@@ -2422,6 +2517,8 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     selectedSessionDetail,
     selectedWorkspace,
     sendingMessage,
+    stageDialogState,
+    stageViewModels,
     stoppingMessage: Boolean(selectedSessionId && stoppingSessionId === selectedSessionId),
     sourcesMarkdown,
     stack,
@@ -2435,12 +2532,15 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     reloadWorkspaces,
     selectWorkspace,
     attachComposerFiles,
+    closeStageDialog,
+    openStageDialog,
     removeComposerAttachment,
     resetConversation,
     answerInteraction,
     rejectInteraction,
     sendMessage,
     stopMessage,
+    submitStageDialog,
     setDraftMessage,
     setPreviewMode,
     setSelectedComposerModelValue,

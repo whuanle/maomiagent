@@ -1,10 +1,13 @@
 import { Alert, Splitter } from "antd";
+import { useMemo, useState } from "react";
 
 import type { UiDesignerPageProps } from "../types";
 import { useUiDesignerShellState } from "../hooks/use-ui-designer-shell-state";
+import type { UiDesignerStageKey } from "../services/stage-view-model-resolver";
 import { ConversationRail } from "./conversation-rail";
 import { DesignerFlowPanel } from "./designer-flow-panel";
-import { DesignerPreviewPanel } from "./designer-preview-panel";
+import { StageDialog } from "./stage-dialog";
+import { StageDetailPanel } from "./stage-detail-panel";
 
 type UiDesignerWorkspaceShellProps = UiDesignerPageProps;
 
@@ -12,6 +15,11 @@ export function UiDesignerWorkspaceShell(props: UiDesignerWorkspaceShellProps) {
   const state = useUiDesignerShellState({
     active: props.active,
   });
+  const [activeStageKey, setActiveStageKey] = useState<UiDesignerStageKey>("projectScope");
+  const activeStage = useMemo(
+    () => state.stageViewModels.find((item) => item.stageKey === activeStageKey) ?? state.stageViewModels[0],
+    [activeStageKey, state.stageViewModels],
+  );
 
   return (
     <div
@@ -36,12 +44,30 @@ export function UiDesignerWorkspaceShell(props: UiDesignerWorkspaceShellProps) {
           <ConversationRail {...state} language={props.language} />
         </Splitter.Panel>
         <Splitter.Panel min={420} defaultSize="40%">
-          <DesignerFlowPanel {...state} />
+          <DesignerFlowPanel
+            activeStageKey={activeStage?.stageKey ?? "projectScope"}
+            stageViewModels={state.stageViewModels}
+            designPackagePath={state.designerState?.designPackagePath}
+            lockReason={state.designerState?.lockReason}
+            missingItems={state.designerState?.readiness.missing ?? []}
+            onSelectStage={setActiveStageKey}
+            onStartStage={(stageKey) => {
+              setActiveStageKey(stageKey);
+              void state.openStageDialog(stageKey);
+            }}
+          />
         </Splitter.Panel>
         <Splitter.Panel min={320} defaultSize="30%">
-          <DesignerPreviewPanel {...state} />
+          <StageDetailPanel activeStage={activeStage} />
         </Splitter.Panel>
       </Splitter>
+      <StageDialog
+        open={Boolean(state.stageDialogState.schema)}
+        schema={state.stageDialogState.schema}
+        submitting={state.stageDialogState.submitting}
+        onCancel={state.closeStageDialog}
+        onSubmit={(values) => void state.submitStageDialog(values)}
+      />
     </div>
   );
 }

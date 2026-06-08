@@ -46,11 +46,6 @@ type ConversationRailProps = Pick<
   | "resetConversation"
   | "removeComposerAttachment"
   | "replyingInteractionId"
-  | "scopeBootstrapInteraction"
-  | "stackBootstrapInteraction"
-  | "themeBootstrapInteraction"
-  | "pagesBootstrapInteraction"
-  | "specBootstrapInteraction"
   | "sendMessage"
   | "answerInteraction"
   | "rejectInteraction"
@@ -233,57 +228,6 @@ export function ConversationRail(props: ConversationRailProps) {
       showAgentSelect: false,
     },
   });
-  const interactionDock = props.scopeBootstrapInteraction
-    ? {
-        ...controller.interactionDock,
-        interactions: [
-          props.scopeBootstrapInteraction,
-          ...(props.stackBootstrapInteraction ? [props.stackBootstrapInteraction] : []),
-          ...(props.themeBootstrapInteraction ? [props.themeBootstrapInteraction] : []),
-          ...(props.pagesBootstrapInteraction ? [props.pagesBootstrapInteraction] : []),
-          ...(props.specBootstrapInteraction ? [props.specBootstrapInteraction] : []),
-          ...controller.interactionDock.interactions,
-        ],
-      }
-    : props.stackBootstrapInteraction
-      ? {
-          ...controller.interactionDock,
-          interactions: [
-            props.stackBootstrapInteraction,
-            ...(props.themeBootstrapInteraction ? [props.themeBootstrapInteraction] : []),
-            ...(props.pagesBootstrapInteraction ? [props.pagesBootstrapInteraction] : []),
-            ...(props.specBootstrapInteraction ? [props.specBootstrapInteraction] : []),
-            ...controller.interactionDock.interactions,
-          ],
-        }
-      : props.themeBootstrapInteraction
-        ? {
-            ...controller.interactionDock,
-            interactions: [
-              props.themeBootstrapInteraction,
-              ...(props.pagesBootstrapInteraction ? [props.pagesBootstrapInteraction] : []),
-              ...(props.specBootstrapInteraction ? [props.specBootstrapInteraction] : []),
-              ...controller.interactionDock.interactions,
-            ],
-          }
-      : props.pagesBootstrapInteraction
-        ? {
-            ...controller.interactionDock,
-            interactions: [
-              props.pagesBootstrapInteraction,
-              ...(props.specBootstrapInteraction ? [props.specBootstrapInteraction] : []),
-              ...controller.interactionDock.interactions,
-            ],
-          }
-      : props.specBootstrapInteraction
-        ? {
-            ...controller.interactionDock,
-            interactions: [
-              props.specBootstrapInteraction,
-              ...controller.interactionDock.interactions,
-            ],
-          }
-      : controller.interactionDock;
 
   return (
     <section className="ui-designer-pane ui-designer-pane-left" data-testid="ui-designer-left-pane">
@@ -326,7 +270,7 @@ export function ConversationRail(props: ConversationRailProps) {
                   session={controller.session}
                   header={controller.header}
                   thread={controller.thread}
-                  interactionDock={interactionDock}
+                  interactionDock={controller.interactionDock}
                   composer={controller.composer}
                 />
               )

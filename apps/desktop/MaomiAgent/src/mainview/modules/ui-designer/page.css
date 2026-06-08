@@ -308,17 +308,27 @@
 }
 
 .ui-designer-stage-item {
+  width: 100%;
   display: flex;
   align-items: flex-start;
   gap: 10px;
   min-height: 42px;
   padding-block: 8px;
+  padding-inline: 0;
+  border: none;
   border-bottom: 1px solid color-mix(in srgb, var(--app-border-soft) 74%, transparent);
+  background: transparent;
   color: var(--app-text-primary);
+  text-align: left;
+  cursor: pointer;
 }
 
 .ui-designer-stage-item:last-child {
   border-bottom: none;
+}
+
+.ui-designer-stage-item.is-active {
+  background: color-mix(in srgb, var(--app-accent, #1677ff) 8%, transparent);
 }
 
 .ui-designer-stage-item-title {
@@ -385,6 +395,89 @@
   line-height: 1;
   font-weight: 700;
   color: var(--app-text-secondary);
+}
+
+.ui-designer-stage-detail-header,
+.ui-designer-stage-detail-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ui-designer-stage-detail-header {
+  padding: 12px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--app-border-soft) 82%, transparent);
+}
+
+.ui-designer-stage-detail-summary {
+  padding: 12px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--app-border-soft) 82%, transparent);
+  color: var(--app-text-primary);
+}
+
+.ui-designer-stage-detail-section {
+  padding: 12px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--app-border-soft) 82%, transparent);
+}
+
+.ui-designer-stage-detail-list {
+  display: grid;
+  gap: 12px;
+  padding-top: 12px;
+}
+
+.ui-designer-stage-detail-value {
+  max-width: 65%;
+  text-align: right;
+  word-break: break-word;
+  color: var(--app-text-primary);
+}
+
+.ui-designer-stage-detail-value.is-emphasis {
+  color: var(--app-accent, #1677ff);
+}
+
+.ui-designer-stage-detail-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ui-designer-stage-dialog {
+  padding-top: 56px;
+}
+
+.ui-designer-stage-dialog .ant-modal-content {
+  max-height: 80vh;
+  overflow: hidden;
+}
+
+.ui-designer-stage-dialog-body {
+  display: grid;
+  gap: 12px;
+}
+
+.ui-designer-stage-dialog-description {
+  margin: 0;
+  color: var(--app-text-primary);
+}
+
+.ui-designer-stage-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.ui-designer-stage-form {
+  display: grid;
+  gap: 12px;
+}
+
+.ui-designer-stage-form-field {
+  display: grid;
+  gap: 8px;
 }
 
 .ui-designer-preview-meta {
