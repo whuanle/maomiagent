@@ -5,6 +5,7 @@ import {
   Button,
   Empty,
   Select,
+  Tag,
 } from "antd";
 import {
   ConversationSurface,
@@ -178,6 +179,8 @@ export function ConversationRail(props: ConversationRailProps) {
       }
     : undefined;
   const copy = createUiDesignerChatCopy(props.language);
+  const sessionTitle = props.selectedSession?.title?.trim() || "UI 设计方案";
+  const sessionStatusLabel = copy.statusLabel(props.selectedSession?.status ?? "idle");
   const controller = useConversationSurfaceController({
     bridgeAvailable: props.bridgeAvailable,
     loadingSessions: props.loadingSessions,
@@ -231,9 +234,9 @@ export function ConversationRail(props: ConversationRailProps) {
 
   return (
     <section className="ui-designer-pane ui-designer-pane-left" data-testid="ui-designer-left-pane">
-      <div className="ui-designer-pane-header">
-        <div className="ui-designer-pane-label">对话</div>
-        <h2 className="ui-designer-pane-title">工作区与对话</h2>
+      <div className="ui-designer-session-summary" data-testid="ui-designer-session-summary">
+        <strong className="ui-designer-session-summary-title">{sessionTitle}</strong>
+        <Tag className="ui-designer-session-summary-status">{sessionStatusLabel}</Tag>
       </div>
 
       <div className="ui-designer-toolbar">

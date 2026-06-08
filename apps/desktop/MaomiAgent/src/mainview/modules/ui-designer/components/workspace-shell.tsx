@@ -20,6 +20,10 @@ export function UiDesignerWorkspaceShell(props: UiDesignerWorkspaceShellProps) {
     () => state.stageViewModels.find((item) => item.stageKey === activeStageKey) ?? state.stageViewModels[0],
     [activeStageKey, state.stageViewModels],
   );
+  const knownStageKeys = useMemo(
+    () => new Set(state.stageViewModels.map((item) => item.stageKey)),
+    [state.stageViewModels],
+  );
 
   return (
     <div
@@ -66,7 +70,13 @@ export function UiDesignerWorkspaceShell(props: UiDesignerWorkspaceShellProps) {
         schema={state.stageDialogState.schema}
         submitting={state.stageDialogState.submitting}
         onCancel={state.closeStageDialog}
-        onSubmit={(values) => void state.submitStageDialog(values)}
+        onSubmit={(values) => {
+          void state.submitStageDialog(values).then((nextStageKey) => {
+            if (nextStageKey && knownStageKeys.has(nextStageKey as UiDesignerStageKey)) {
+              setActiveStageKey(nextStageKey as UiDesignerStageKey);
+            }
+          });
+        }}
       />
     </div>
   );

@@ -1611,11 +1611,13 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
         schema: null,
         submitting: false,
       });
+      return normalized.nextSuggestedStage;
     } catch (error) {
       setStageDialogState((current) => current.schema
         ? { ...current, submitting: false }
         : current);
       setErrorMessage(error instanceof Error ? error.message : String(error));
+      return undefined;
     }
   }, [
     designFiles,

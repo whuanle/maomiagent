@@ -20,6 +20,9 @@ test("ui designer page keeps the single-session shell contract", () => {
   expect(railSource).toContain("ConversationSurface");
   expect(railSource).not.toContain("ChatConversationPane");
   expect(railSource).toContain("重置对话");
+  expect(railSource).toContain('data-testid="ui-designer-session-summary"');
+  expect(railSource).toContain('const sessionTitle = props.selectedSession?.title?.trim() || "UI 设计方案"');
+  expect(railSource).not.toContain("工作区与对话");
   expect(railSource).not.toContain("ui-designer-session-list");
   expect(flowSource).toContain("设计包路径");
   expect(resolverSource).toContain('title: "项目范围确认"');
@@ -68,7 +71,10 @@ test("ui designer page keeps the single-session shell contract", () => {
   expect(hookSource).toContain("stageDialogState");
   expect(hookSource).toContain("openStageDialog");
   expect(hookSource).toContain("submitStageDialog");
+  expect(hookSource).toContain("return normalized.nextSuggestedStage");
   expect(hookSource).toContain("stageViewModels,");
+  expect(shellSource).toContain("knownStageKeys");
+  expect(shellSource).toContain("state.submitStageDialog(values).then((nextStageKey) => {");
   expect(railSource).toContain("workspaceAvatarSettings: props.workspaceSettings");
   expect(railSource).not.toContain("props.specBootstrapInteraction");
   expect(railSource).toContain("stoppingMessage: props.stoppingMessage");
