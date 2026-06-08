@@ -1530,9 +1530,31 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     workspaceSettings.selectedModelId,
   ]);
 
+  const resolveCurrentStageModelSelection = useCallback(() => {
+    const selectedModel = composerModelOptions.find((item) => item.value === selectedComposerModelValue);
+    return {
+      selectedChannelId: selectedModel?.channelId,
+      selectedModelId: selectedModel?.modelId,
+    };
+  }, [composerModelOptions, selectedComposerModelValue]);
+
   const openStageDialog = useCallback(async (stageKey: string) => {
+    if (!workspaceId) {
+      return;
+    }
+
     try {
-      const schema = await requestStageSchema(stageKey as Parameters<typeof requestStageSchema>[0]);
+      const schema = await requestStageSchema({
+        stageKey: stageKey as Parameters<typeof requestStageSchema>[0]["stageKey"],
+        context: buildUiDesignerContext({
+          workspaceId,
+          selectedWorkspace,
+          designerState,
+          designFiles,
+          focusBlock: stageKey,
+        }),
+        ...resolveCurrentStageModelSelection(),
+      });
       setStageDialogState({
         stageKey,
         schema,
@@ -1541,7 +1563,7 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     }
-  }, []);
+  }, [designFiles, designerState, resolveCurrentStageModelSelection, selectedWorkspace, workspaceId]);
 
   const closeStageDialog = useCallback(() => {
     setStageDialogState({
@@ -1564,6 +1586,14 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
       const stageResult = await requestStageResult({
         stageKey: stageDialogState.stageKey as Parameters<typeof requestStageResult>[0]["stageKey"],
         values,
+        context: buildUiDesignerContext({
+          workspaceId,
+          selectedWorkspace,
+          designerState,
+          designFiles,
+          focusBlock: stageDialogState.stageKey,
+        }),
+        ...resolveCurrentStageModelSelection(),
       });
       const normalized = normalizeStageResult(stageResult);
 
@@ -1587,7 +1617,15 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
         : current);
       setErrorMessage(error instanceof Error ? error.message : String(error));
     }
-  }, [reloadDesignFiles, stageDialogState.stageKey, workspaceId]);
+  }, [
+    designFiles,
+    designerState,
+    reloadDesignFiles,
+    resolveCurrentStageModelSelection,
+    selectedWorkspace,
+    stageDialogState.stageKey,
+    workspaceId,
+  ]);
 
   return {
     bridgeAvailable,

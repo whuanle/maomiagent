@@ -77,6 +77,7 @@ export function StageFormRenderer(props: StageFormRendererProps) {
             <Select
               value={typeof props.values[field.key] === "string" ? props.values[field.key] as string : undefined}
               options={field.options}
+              style={{ width: "100%" }}
               disabled={props.disabled}
               placeholder={field.placeholder}
               onChange={(value) => props.onChange(field.key, value)}
@@ -87,6 +88,7 @@ export function StageFormRenderer(props: StageFormRendererProps) {
               mode="multiple"
               value={Array.isArray(props.values[field.key]) ? props.values[field.key] as string[] : []}
               options={field.options}
+              style={{ width: "100%" }}
               disabled={props.disabled}
               placeholder={field.placeholder}
               onChange={(value) => props.onChange(field.key, value)}
