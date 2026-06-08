@@ -16,6 +16,7 @@ import type {
   ChatOpenWorkspaceFilePreviewInput,
   ChatSelectedSessionView,
 } from "../../types";
+import type { DesktopConversationSessionItem } from "../../../../../shared/desktop-conversation";
 import type { FrontEndProjectedConversationSessionPreviewWindow } from "./direct-session-session-detail-projection";
 
 export type DirectSessionTone = "success" | "running" | "warning" | "error";
@@ -33,6 +34,7 @@ export type DirectConversationSessionPaneProps = {
   selectedWorkspace?: DesktopWorkspaceItem;
   workspaceAvatarSettings?: ConversationAvatarSettings;
   selectedSession?: ChatSelectedSessionView;
+  sessionSummaries: DesktopConversationSessionItem[];
   creatingSession: boolean;
   renamingSessionId: string | null;
   draftMessage: string;
@@ -145,6 +147,7 @@ export type DirectSessionComposerViewModel = {
   disableAgentSelect?: boolean;
   tokenBudgetUsage?: {
     percent: number;
+    thresholdUsagePercent?: number;
     usedTokens: number;
     limitTokens: number;
     status: "normal" | "warning" | "critical";
@@ -152,6 +155,7 @@ export type DirectSessionComposerViewModel = {
     ariaLabel: string;
     thresholdPercent?: number;
     thresholdLabel?: string;
+    detailLabel?: string;
   };
   contextCompressionStatus?: {
     tone: "info" | "warning" | "success" | "error";

@@ -1,3 +1,5 @@
+import { useEffect, useMemo, useRef } from "react";
+
 import { DirectSessionComposer } from "../../../modules/chat/components/direct-session/direct-session-composer";
 import { DirectSessionHeader } from "../../../modules/chat/components/direct-session/direct-session-header";
 import { ConversationSessionInteractionDock } from "../../../modules/chat/components/direct-session/conversation-interaction-dock";
@@ -10,6 +12,32 @@ export function ConversationSurface(props: ConversationSurfaceProps) {
     return null;
   }
 
+  const interactionDockRef = useRef<HTMLDivElement | null>(null);
+  const interactionSignature = useMemo(
+    () => props.interactionDock.interactions.map((interaction) => interaction.interactionId).join("|"),
+    [props.interactionDock.interactions],
+  );
+  const lastInteractionSignatureRef = useRef("");
+
+  useEffect(() => {
+    if (!interactionSignature || interactionSignature === lastInteractionSignatureRef.current) {
+      return;
+    }
+
+    lastInteractionSignatureRef.current = interactionSignature;
+    const dockNode = interactionDockRef.current;
+    if (!dockNode) {
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      dockNode.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      });
+    });
+  }, [interactionSignature]);
+
   const directPane = (
     <section className="chat-direct-pane is-programming">
       {props.showHeader === false ? null : <DirectSessionHeader header={props.header} />}
@@ -20,7 +48,9 @@ export function ConversationSurface(props: ConversationSurfaceProps) {
 
       <div className="chat-direct-composer-shell">
         <div className={`chat-direct-composer-stack${props.interactionDock.interactions.length > 0 ? " has-dock" : ""}`}>
-          <ConversationSessionInteractionDock {...props.interactionDock} />
+          <div ref={interactionDockRef}>
+            <ConversationSessionInteractionDock {...props.interactionDock} />
+          </div>
           <DirectSessionComposer {...props.composer} />
         </div>
       </div>

@@ -15,6 +15,7 @@ import {
 } from "./direct-session-context-budget";
 import { readProjectedConversationSessionPreviewWindow } from "./direct-session-session-detail-projection";
 import { resolveManagedSessionIndicator } from "../managed-session-status";
+import { hasManagedTakeoverChildSession } from "../../hooks/managed-takeover";
 
 function extractPathLeaf(path: string) {
   const normalized = path.trim();
@@ -129,6 +130,13 @@ export function useDirectSessionPaneController(
       session?.status ?? "idle",
       detail?.metadata ?? session?.metadata,
       props.language,
+      {
+        suppressAwaitingConfirmation: Boolean(session && hasManagedTakeoverChildSession({
+          sourceSession: session,
+          sessions: props.sessionSummaries,
+          metadata: detail?.metadata,
+        })),
+      },
     );
 
     return {

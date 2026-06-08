@@ -73,6 +73,7 @@ export const ConversationWorkspacePane = forwardRef<ConversationWorkspacePaneHan
   ]);
   const railItems = useConversationSessionRailItems({
     sessions: state.sessions,
+    executionOverlays: state.executionOverlays,
     language: props.language,
     copy: props.copy,
     archivingSessionId: state.archivingSessionId,

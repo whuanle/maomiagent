@@ -1699,6 +1699,37 @@ function formatVisibleMessages(messages: readonly MessageRecordWithParts[]) {
   });
 }
 
+export function buildDesktopConversationContinuationPolicyBlock(input: {
+  run: Pick<RunRecord, "trigger">;
+  visibleMessages: readonly MessageRecordWithParts[];
+}): string | undefined {
+  if (input.run.trigger.kind !== "tool_result" && input.run.trigger.kind !== "system_continue") {
+    return undefined;
+  }
+
+  const latestUserMessage = extractLatestUserMessage(input.visibleMessages);
+  const latestUserPreview = extractMessageText(latestUserMessage)
+    ?? extractMessagePreview(latestUserMessage?.parts ?? []);
+  const lines = [
+    "Continuation facts:",
+    `- Trigger: ${input.run.trigger.kind}.`,
+    "- This run is a continuation from prior conversation state and recent tool or system results.",
+    "- There is no new user message attached to this run.",
+    "- Do not claim that the user said something, said nothing, changed goals, or asked a new question in this turn unless a visible user message explicitly shows it.",
+    "- Describe only confirmed facts: the established user goal, completed actions, changed artifacts, latest findings, and the next step.",
+  ];
+
+  if (latestUserMessage) {
+    lines.push(`- Latest confirmed user message id: ${latestUserMessage.message.id}.`);
+  }
+
+  if (latestUserPreview) {
+    lines.push(`- Latest confirmed user message preview: ${latestUserPreview}`);
+  }
+
+  return lines.join("\n");
+}
+
 function formatCheckpointSummaries(checkpoints: ReadonlyArray<{
   kind: string;
   createdAt: number;
@@ -2883,12 +2914,30 @@ class DesktopConversationRuntimeContextContributor implements ContextContributor
             toolCount: tools.length,
           },
         },
+        ...(() => {
+          const continuationPolicyBlock = buildDesktopConversationContinuationPolicyBlock({
+            run: input.run,
+            visibleMessages: input.visibleMessages,
+          });
+          return continuationPolicyBlock
+            ? [{
+                id: "desktop-runtime-continuation-policy",
+                kind: "system" as const,
+                content: continuationPolicyBlock,
+                priority: 97,
+                metadata: {
+                  source: "desktop.runtime.continuation-policy",
+                  trigger: input.run.trigger.kind,
+                },
+              }]
+            : [];
+        })(),
         ...(settings.composerMode === "plan"
           ? [{
               id: "desktop-runtime-plan-mode",
               kind: "system" as const,
               content: buildPlanModeReminderBlock(planState),
-              priority: 97,
+              priority: 96,
               metadata: {
                 source: "desktop.runtime.plan-mode",
               },
@@ -2899,7 +2948,7 @@ class DesktopConversationRuntimeContextContributor implements ContextContributor
               id: "desktop-runtime-settings",
               kind: "system" as const,
               content: buildConversationRuntimeSettingsLines(settings).join("\n"),
-              priority: 96,
+              priority: 95,
               metadata: {
                 source: "desktop.runtime.settings",
               },

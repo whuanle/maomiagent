@@ -5,14 +5,10 @@ import {
   Button,
   Empty,
   Select,
-  Tag,
 } from "antd";
-import {
-  ConversationSurface,
-  useConversationSurfaceController,
-} from "../../../components/shared/conversation-surface";
 import { UI_DESIGNER_AGENT_ID } from "../../../../shared/conversation/managed-execution";
 import type { LanguageCode } from "../../../config/titlebar";
+import { ChatConversationPane } from "../../chat/components/ChatConversationPane";
 import type { ChatCopy, ChatSelectedSessionView } from "../../chat/types";
 
 import type { UiDesignerShellState } from "../hooks/use-ui-designer-shell-state";
@@ -34,6 +30,7 @@ type ConversationRailProps = Pick<
   | "selectedComposerModelValue"
   | "selectedSession"
   | "selectedSessionDetail"
+  | "sessions"
   | "sendingMessage"
   | "stoppingMessage"
   | "selectedWorkspace"
@@ -179,66 +176,9 @@ export function ConversationRail(props: ConversationRailProps) {
       }
     : undefined;
   const copy = createUiDesignerChatCopy(props.language);
-  const sessionTitle = props.selectedSession?.title?.trim() || "UI 设计方案";
-  const sessionStatusLabel = copy.statusLabel(props.selectedSession?.status ?? "idle");
-  const controller = useConversationSurfaceController({
-    bridgeAvailable: props.bridgeAvailable,
-    loadingSessions: props.loadingSessions,
-    loadingSessionDetail: props.loadingSessionDetail,
-    modelsBridgeAvailable: props.modelsBridgeAvailable,
-    selectedWorkspace: props.selectedWorkspace,
-    workspaceAvatarSettings: props.workspaceSettings,
-    selectedSession: selectedSessionView,
-    creatingSession: props.creatingSession,
-    renamingSessionId: null,
-    draftMessage: props.draftMessage,
-    sendingMessage: props.sendingMessage,
-    stoppingMessage: props.stoppingMessage,
-    composerAgentOptions: [],
-    composerModelOptions: props.composerModelOptions,
-    composerModelSelectOptions: props.composerModelSelectOptions,
-    composerAttachments: props.composerAttachments,
-    selectedComposerAgentId: UI_DESIGNER_AGENT_ID,
-    selectedComposerModelValue: props.selectedComposerModelValue,
-    composerMode: "agent",
-    replyingInteractionId: props.replyingInteractionId,
-    language: props.language,
-    copy,
-    onCreateSession: () => void props.createSession(),
-    onRenameSession: NOOP,
-    onOpenWorkspace: NOOP,
-    onDraftMessageChange: props.setDraftMessage,
-    onComposerAttachFiles: props.attachComposerFiles,
-    onComposerRemoveAttachment: props.removeComposerAttachment,
-    onComposerAgentChange: NOOP,
-    onComposerModelChange: props.setSelectedComposerModelValue,
-    onComposerModeChange: NOOP,
-    onSendMessage: () => void props.sendMessage(),
-    onStopMessage: () => void props.stopMessage(),
-    onAnswerInteraction: (interactionId, response) => void props.answerInteraction(interactionId, response),
-    onApproveInteraction: (interactionId, decision) => void props.answerInteraction(interactionId, {
-      kind: "permission",
-      decision,
-    }),
-    onRejectInteraction: (interactionId) => void props.rejectInteraction(interactionId),
-    onOpenCodePreview: NOOP,
-    onOpenWorkspaceFilePreview: NOOP,
-    allowRenameSession: false,
-    composerPresentation: {
-      showAttachmentButton: true,
-      showModeSwitch: false,
-      showModelSelect: true,
-      showAgentSelect: false,
-    },
-  });
 
   return (
     <section className="ui-designer-pane ui-designer-pane-left" data-testid="ui-designer-left-pane">
-      <div className="ui-designer-session-summary" data-testid="ui-designer-session-summary">
-        <strong className="ui-designer-session-summary-title">{sessionTitle}</strong>
-        <Tag className="ui-designer-session-summary-status">{sessionStatusLabel}</Tag>
-      </div>
-
       <div className="ui-designer-toolbar">
         <Select
           className="ui-designer-workspace-select"
@@ -266,20 +206,72 @@ export function ConversationRail(props: ConversationRailProps) {
       </div>
 
       <div className="ui-designer-rail-body">
-        <div className="ui-designer-thread ui-designer-thread-pane">
+        <section className="chat-stage">
           {selectedSessionView
             ? (
-                <ConversationSurface
-                  session={controller.session}
-                  header={controller.header}
-                  thread={controller.thread}
-                  interactionDock={controller.interactionDock}
-                  composer={controller.composer}
-                  showHeader={false}
-                />
+                <div className="chat-session-stage-stack">
+                  <div className="chat-session-stage-host" data-active="true">
+                    <ChatConversationPane
+                      bridgeAvailable={props.bridgeAvailable}
+                      loadingSessions={props.loadingSessions}
+                      loadingSessionDetail={props.loadingSessionDetail}
+                      modelsBridgeAvailable={props.modelsBridgeAvailable}
+                      selectedWorkspace={props.selectedWorkspace}
+                      workspaceAvatarSettings={props.workspaceSettings}
+                      selectedSession={selectedSessionView}
+                      sessionSummaries={props.sessions}
+                      creatingSession={props.creatingSession}
+                      renamingSessionId={null}
+                      draftMessage={props.draftMessage}
+                      sendingMessage={props.sendingMessage}
+                      stoppingMessage={props.stoppingMessage}
+                      composerAgentOptions={[]}
+                      composerModelOptions={props.composerModelOptions}
+                      composerModelSelectOptions={props.composerModelSelectOptions}
+                      composerAttachments={props.composerAttachments}
+                      selectedComposerAgentId={UI_DESIGNER_AGENT_ID}
+                      selectedComposerModelValue={props.selectedComposerModelValue}
+                      composerMode="agent"
+                      replyingInteractionId={props.replyingInteractionId}
+                      language={props.language}
+                      copy={copy}
+                      onCreateSession={() => void props.createSession()}
+                      onRenameSession={NOOP}
+                      onOpenWorkspace={NOOP}
+                      onDraftMessageChange={props.setDraftMessage}
+                      onComposerAttachFiles={props.attachComposerFiles}
+                      onComposerRemoveAttachment={props.removeComposerAttachment}
+                      onComposerAgentChange={NOOP}
+                      onComposerModelChange={props.setSelectedComposerModelValue}
+                      onComposerModeChange={NOOP}
+                      onSendMessage={() => void props.sendMessage()}
+                      onStopMessage={() => void props.stopMessage()}
+                      onAnswerInteraction={(interactionId, response) => void props.answerInteraction(interactionId, response)}
+                      onApproveInteraction={(interactionId, decision) => void props.answerInteraction(interactionId, {
+                        kind: "permission",
+                        decision,
+                      })}
+                      onRejectInteraction={(interactionId) => void props.rejectInteraction(interactionId)}
+                      onOpenCodePreview={NOOP}
+                      onOpenWorkspaceFilePreview={NOOP}
+                      renderStageShell={false}
+                      allowRenameSession={false}
+                      composerPresentation={{
+                        showAttachmentButton: true,
+                        showModeSwitch: false,
+                        showModelSelect: true,
+                        showAgentSelect: false,
+                      }}
+                    />
+                  </div>
+                </div>
               )
-            : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="正在准备当前对话" />}
-        </div>
+            : (
+                <div className="chat-stage-body">
+                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="正在准备当前对话" />
+                </div>
+              )}
+        </section>
       </div>
     </section>
   );

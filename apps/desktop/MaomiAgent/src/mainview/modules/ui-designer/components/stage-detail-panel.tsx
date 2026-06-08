@@ -1,4 +1,5 @@
 import { Empty, Tag } from "antd";
+import type { ReactNode } from "react";
 
 import type { UiDesignerStageViewModel } from "../services/stage-view-model-resolver";
 
@@ -16,6 +17,26 @@ function resolveStageStatusLabel(status: UiDesignerStageViewModel["status"]) {
   }
 
   return "未开始";
+}
+
+function renderDetailValue(item: UiDesignerStageViewModel["sections"][number]["items"][number]): ReactNode {
+  if (Array.isArray(item.value)) {
+    return (
+      <div className="ui-designer-stage-detail-value-list">
+        {item.value.map((value) => (
+          <div key={`${item.label}-${value}`} className="ui-designer-stage-detail-value-line">
+            {value}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (typeof item.value === "boolean") {
+    return item.value ? "是" : "否";
+  }
+
+  return item.value;
 }
 
 export function StageDetailPanel(props: StageDetailPanelProps) {
@@ -52,12 +73,12 @@ export function StageDetailPanel(props: StageDetailPanelProps) {
             <div className="ui-designer-section-title">{section.title}</div>
             <div className="ui-designer-stage-detail-list">
               {section.items.map((item) => (
-                <div key={`${section.key}-${item.label}`} className="ui-designer-stage-detail-row">
-                  <span className="ui-designer-status-bar-label">{item.label}</span>
-                  <strong className={item.emphasis ? "ui-designer-stage-detail-value is-emphasis" : "ui-designer-stage-detail-value"}>
-                    {Array.isArray(item.value) ? item.value.join(" / ") : String(item.value)}
-                  </strong>
-                </div>
+                <article key={`${section.key}-${item.label}`} className="ui-designer-stage-detail-item">
+                  <div className="ui-designer-stage-detail-item-label">{item.label}</div>
+                  <div className={item.emphasis ? "ui-designer-stage-detail-value is-emphasis" : "ui-designer-stage-detail-value"}>
+                    {renderDetailValue(item)}
+                  </div>
+                </article>
               ))}
             </div>
           </section>

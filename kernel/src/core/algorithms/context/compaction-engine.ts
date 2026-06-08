@@ -196,19 +196,77 @@ function resolveReplaySourceMessage(input: {
   return source
 }
 
-function buildCompactionPrompt(input: {
+function extractCompactionMessagePreview(message: MessageRecordWithParts | undefined): string | undefined {
+  if (!message) {
+    return undefined
+  }
+
+  const text = message.parts
+    .flatMap((part) => part.type === "text" && typeof part.text === "string" && part.text.trim() ? [part.text.trim()] : [])
+    .join("\n")
+    .trim()
+  if (text) {
+    return text.length > 240 ? `${text.slice(0, 237)}...` : text
+  }
+
+  const fallback = message.parts.map((part) => `[${part.type}]`).join(" ").trim()
+  if (!fallback) {
+    return undefined
+  }
+
+  return fallback.length > 240 ? `${fallback.slice(0, 237)}...` : fallback
+}
+
+function extractLatestUserMessage(messages: readonly MessageRecordWithParts[]): MessageRecordWithParts | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const candidate = messages[index]
+    if (candidate?.message.role === "user") {
+      return candidate
+    }
+  }
+
+  return undefined
+}
+
+export function buildCompactionPrompt(input: {
   template: string
   reason: CompactionReason
+  run: RunRecord
+  contextView: ContextView
 }): string {
+  const latestUserMessage = extractLatestUserMessage(input.contextView.visibleMessages)
+  const latestUserPreview = extractCompactionMessagePreview(latestUserMessage)
+  const promptSuffix: string[] = []
+
+  if (input.run.trigger.kind === "tool_result" || input.run.trigger.kind === "system_continue") {
+    promptSuffix.push(
+      "This compaction was triggered during a continuation turn, not by a new user message.",
+      "Do not write that the user said something, said nothing, changed goals, or asked a new question in this turn unless a visible user message explicitly shows it.",
+      "Summarize only confirmed facts: the established goal, completed work, tool or system outcomes, changed artifacts, and the next step.",
+    )
+    if (latestUserMessage) {
+      promptSuffix.push(`Latest confirmed user message id: ${latestUserMessage.message.id}.`)
+    }
+    if (latestUserPreview) {
+      promptSuffix.push(`Latest confirmed user message preview: ${latestUserPreview}`)
+    }
+  } else if (input.run.trigger.kind === "user_message") {
+    promptSuffix.push(
+      "If you describe the latest user intent, base it only on the visible user message content and avoid adding claims that are not explicitly supported.",
+    )
+  }
+
   if (input.reason === "context_overflow") {
-    return `${input.template}\n\nThe previous request exceeded the model context window. Preserve the latest actionable user intent for replay, and note that attachments or older tool outputs may already have been reduced before summarization.`
+    promptSuffix.push(
+      "The previous request exceeded the model context window. Preserve the latest actionable user intent for replay, and note that attachments or older tool outputs may already have been reduced before summarization.",
+    )
+  } else if (input.reason === "budget_exceeded") {
+    promptSuffix.push(
+      "The previous request exceeded the prompt budget. Prefer the most actionable continuation state, and keep the summary compact enough to fit on the next attempt.",
+    )
   }
 
-  if (input.reason === "budget_exceeded") {
-    return `${input.template}\n\nThe previous request exceeded the prompt budget. Prefer the most actionable continuation state, and keep the summary compact enough to fit on the next attempt.`
-  }
-
-  return input.template
+  return promptSuffix.length > 0 ? `${input.template}\n\n${promptSuffix.join("\n")}` : input.template
 }
 
 function validateSummaryText(text: string): string {
@@ -270,6 +328,8 @@ export class CompactionEngine {
       prompt: buildCompactionPrompt({
         template: this.promptTemplate,
         reason,
+        run: input.run,
+        contextView: preparedContextView,
       }),
       reason,
     }))

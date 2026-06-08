@@ -1,3 +1,4 @@
+import type { InteractionFormField } from "#maomiagent/kernel/core";
 import { Button, Input, Select, Switch } from "antd";
 import { useMemo, useState } from "react";
 
@@ -73,6 +74,44 @@ function normalizeSubmittedFieldValues(values: Record<string, InteractionFormDra
   return normalizedValues;
 }
 
+function renderRecommendedOptions(input: {
+  field: InteractionFormField;
+  fieldValue: InteractionFormDraftValue;
+  replying: boolean;
+  onSelect: (value: string) => void;
+}) {
+  if (input.field.kind !== "text" || !input.field.recommendedOptions?.length) {
+    return null;
+  }
+
+  const selectedValue = typeof input.fieldValue === "string" ? input.fieldValue.trim() : "";
+
+  return (
+    <div className="chat-assistant-interaction-option-grid">
+      {input.field.recommendedOptions.map((option) => {
+        const selected = selectedValue === option.value;
+        return (
+          <Button
+            key={`${input.field.key}:${option.value}`}
+            type={selected ? "primary" : "default"}
+            size="small"
+            className={`chat-assistant-interaction-action chat-assistant-interaction-option${selected ? " is-selected" : ""}`}
+            disabled={input.replying}
+            onClick={() => input.onSelect(option.value)}
+          >
+            <span className="chat-assistant-interaction-option-text">
+              <span className="chat-assistant-interaction-option-label">{option.label}</span>
+              {option.description ? (
+                <span className="chat-assistant-interaction-option-description">{option.description}</span>
+              ) : null}
+            </span>
+          </Button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function AssistantInteractionFormCard(props: Props) {
   if (props.interaction.request.kind !== "form") {
     return null;
@@ -132,18 +171,31 @@ export function AssistantInteractionFormCard(props: Props) {
                   </div>
                 ) : null}
                 {field.kind === "text" ? (
-                  <Input
-                    disabled={props.replying}
-                    placeholder={field.placeholder}
-                    value={typeof fieldValue === "string" ? fieldValue : ""}
-                    onChange={(event) => {
-                      const nextValue = event.target.value;
-                      setFieldValues((current) => ({
-                        ...current,
-                        [field.key]: nextValue,
-                      }));
-                    }}
-                  />
+                  <>
+                    {renderRecommendedOptions({
+                      field,
+                      fieldValue,
+                      replying: props.replying,
+                      onSelect: (nextValue) => {
+                        setFieldValues((current) => ({
+                          ...current,
+                          [field.key]: nextValue,
+                        }));
+                      },
+                    })}
+                    <Input
+                      disabled={props.replying}
+                      placeholder={field.placeholder}
+                      value={typeof fieldValue === "string" ? fieldValue : ""}
+                      onChange={(event) => {
+                        const nextValue = event.target.value;
+                        setFieldValues((current) => ({
+                          ...current,
+                          [field.key]: nextValue,
+                        }));
+                      }}
+                    />
+                  </>
                 ) : null}
                 {field.kind === "textarea" ? (
                   <Input.TextArea

@@ -1,64 +1,121 @@
+import type {
+  FormInteractionRequest,
+  FormInteractionResponse,
+} from "#maomiagent/kernel/core";
 import { Button, Modal } from "antd";
 import { useEffect, useMemo, useState } from "react";
 
-import type { UiDesignerStageKey } from "../services/stage-view-model-resolver";
-import { StageFormRenderer, type UiDesignerInteractionField } from "./stage-form-renderer";
+import type { LanguageCode } from "../../../config/titlebar";
+import { StageFormRenderer } from "./stage-form-renderer";
 
-export type UiDesignerInteractionSchema = {
-  stageKey: UiDesignerStageKey;
-  title: string;
-  description?: string;
-  submitLabel: string;
-  cancelLabel: string;
-  allowSkip: boolean;
-  fields: UiDesignerInteractionField[];
-};
+type InteractionFormDraftValue = string | readonly string[] | boolean | undefined;
 
 type StageDialogProps = {
   open: boolean;
-  schema: UiDesignerInteractionSchema | null;
+  language: LanguageCode;
+  request: FormInteractionRequest | null;
   submitting: boolean;
   onCancel: () => void;
-  onSubmit: (values: Record<string, unknown>) => void;
+  onSubmit: (response: FormInteractionResponse) => void;
 };
 
-function buildInitialValues(fields: UiDesignerInteractionField[]) {
-  return Object.fromEntries(fields.map((field) => [
-    field.key,
-    field.defaultValue ?? (field.kind === "multiSelect" ? [] : field.kind === "boolean" ? false : ""),
-  ]));
+function buildInitialValues(fields: FormInteractionRequest["fields"]) {
+  return Object.fromEntries(fields.map((field) => {
+    if (Array.isArray(field.value)) {
+      return [field.key, [...field.value]];
+    }
+
+    return [field.key, field.value];
+  })) as Record<string, InteractionFormDraftValue>;
+}
+
+function isMissingRequiredValue(value: InteractionFormDraftValue) {
+  if (typeof value === "boolean") {
+    return false;
+  }
+
+  if (Array.isArray(value)) {
+    return value.length === 0;
+  }
+
+  return typeof value !== "string" || value.trim().length === 0;
+}
+
+function normalizeSubmittedFieldValues(values: Record<string, InteractionFormDraftValue>) {
+  const normalizedValues: Record<string, string | readonly string[] | boolean> = {};
+
+  for (const [key, value] of Object.entries(values)) {
+    if (typeof value === "boolean") {
+      normalizedValues[key] = value;
+      continue;
+    }
+
+    if (Array.isArray(value)) {
+      if (value.length > 0) {
+        normalizedValues[key] = value;
+      }
+      continue;
+    }
+
+    if (typeof value === "string") {
+      const normalized = value.trim();
+      if (normalized) {
+        normalizedValues[key] = normalized;
+      }
+    }
+  }
+
+  return normalizedValues;
 }
 
 export function StageDialog(props: StageDialogProps) {
-  const schema = props.schema;
+  const request = props.request;
   const initialValues = useMemo(
-    () => (schema ? buildInitialValues(schema.fields) : {}),
-    [schema],
+    () => (request ? buildInitialValues(request.fields) : {}),
+    [request],
   );
-  const [values, setValues] = useState<Record<string, unknown>>(initialValues);
+  const [values, setValues] = useState<Record<string, InteractionFormDraftValue>>(initialValues);
 
   useEffect(() => {
     setValues(initialValues);
   }, [initialValues]);
 
+  const missingRequiredFields = useMemo(() => {
+    if (!request) {
+      return [];
+    }
+
+    return request.fields.filter((field) => field.required && isMissingRequiredValue(values[field.key]));
+  }, [request, values]);
+
+  const submitLabel = request?.submitLabel ?? (props.language === "en-US" ? "Submit" : "提交");
+  const rejectLabel = request?.rejectLabel ?? (props.language === "en-US" ? "Cancel" : "取消");
+  const actions = request?.actions?.length
+    ? request.actions
+    : [{ id: "submit", label: submitLabel, kind: "submit" as const }];
+
   return (
     <Modal
-      open={props.open && Boolean(schema)}
-      title={schema?.title}
+      open={props.open && Boolean(request)}
+      title={request?.title}
       onCancel={props.onCancel}
       footer={null}
       width={720}
+      style={{ top: 72 }}
       className="ui-designer-stage-dialog"
       styles={{ body: { maxHeight: "80vh", overflow: "auto", paddingTop: 8 } }}
       destroyOnHidden
+      maskClosable={!props.submitting}
+      closable={!props.submitting}
+      keyboard={!props.submitting}
     >
-      {schema ? (
+      {request ? (
         <div className="ui-designer-stage-dialog-body">
-          {schema.description ? (
-            <p className="ui-designer-stage-dialog-description">{schema.description}</p>
+          {request.description ? (
+            <p className="ui-designer-stage-dialog-description">{request.description}</p>
           ) : null}
           <StageFormRenderer
-            fields={schema.fields}
+            fields={request.fields}
             values={values}
             disabled={props.submitting}
             onChange={(key, value) => {
@@ -68,10 +125,29 @@ export function StageDialog(props: StageDialogProps) {
               }));
             }}
           />
+          {missingRequiredFields.length > 0 ? (
+            <div className="ui-designer-stage-dialog-note">请先补全必填项。</div>
+          ) : null}
           <div className="ui-designer-stage-dialog-actions">
-            <Button onClick={props.onCancel}>{schema.cancelLabel}</Button>
-            <Button type="primary" loading={props.submitting} onClick={() => props.onSubmit(values)}>
-              {schema.submitLabel}
+            {actions.map((action) => (
+              <Button
+                key={action.id}
+                type={action.kind === "submit" ? "primary" : "default"}
+                danger={action.kind === "danger"}
+                ghost={action.kind === "link"}
+                disabled={props.submitting || (action.kind === "submit" && missingRequiredFields.length > 0)}
+                loading={action.kind === "submit" ? props.submitting : false}
+                onClick={() => props.onSubmit({
+                  kind: "form",
+                  values: normalizeSubmittedFieldValues(values),
+                  ...(action.id !== "submit" ? { actionId: action.id } : {}),
+                })}
+              >
+                {action.label}
+              </Button>
+            ))}
+            <Button disabled={props.submitting} onClick={props.onCancel}>
+              {rejectLabel}
             </Button>
           </div>
         </div>

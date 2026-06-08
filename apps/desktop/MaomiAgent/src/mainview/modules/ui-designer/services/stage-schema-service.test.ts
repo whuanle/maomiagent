@@ -143,3 +143,15 @@ test("normalizeStageResultResponse rejects mismatched artifact key", () => {
     nextSuggestedStage: "",
   }, "theme")).toThrow("错误的阶段产物类型");
 });
+
+test("normalizeStageSchemaResponse surfaces quota errors instead of generic empty form errors", () => {
+  expect(() => normalizeStageSchemaResponse({
+    stageKey: "stack",
+    title: "You've reached your usage limit for this period.",
+    description: "Your quota will be refreshed in the next period.",
+    submitLabel: "",
+    cancelLabel: "",
+    allowSkip: false,
+    fields: [],
+  }, "stack")).toThrow("当前模型额度已用尽");
+});

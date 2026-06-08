@@ -15,6 +15,16 @@ describe("resolveManagedSessionIndicator", () => {
     });
   });
 
+  test("suppresses ready state when the source session has already handed off to managed execution", () => {
+    expect(resolveManagedSessionIndicator("idle", {
+      linkedRootTaskId: "managed-root-session-1",
+      managedExecutionStage: "ready",
+      phase: "awaiting_task_confirmation",
+    }, "zh-CN", {
+      suppressAwaitingConfirmation: true,
+    })).toBeUndefined();
+  });
+
   test("maps intake-locked managed metadata to an intake indicator", () => {
     expect(resolveManagedSessionIndicator("idle", {
       linkedRootTaskId: "managed-root-session-1",
@@ -36,6 +46,26 @@ describe("resolveManagedSessionIndicator", () => {
       badgeTone: "running",
       statusTone: "running",
     });
+  });
+
+  test("prefers running over stale ready metadata while the session is still active", () => {
+    expect(resolveManagedSessionIndicator("active", {
+      linkedRootTaskId: "managed-root-session-1",
+      managedExecutionStage: "ready",
+      phase: "awaiting_task_confirmation",
+    }, "zh-CN")).toEqual({
+      label: "执行中",
+      badgeTone: "running",
+      statusTone: "running",
+    });
+  });
+
+  test("does not keep showing a running badge after the session is no longer active", () => {
+    expect(resolveManagedSessionIndicator("idle", {
+      linkedRootTaskId: "managed-root-session-1",
+      managedExecutionStage: "running",
+      phase: "executing_plan",
+    }, "zh-CN")).toBeUndefined();
   });
 
   test("maps retrying managed execution metadata to a retry indicator", () => {

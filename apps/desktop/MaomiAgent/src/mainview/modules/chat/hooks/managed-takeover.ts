@@ -14,12 +14,34 @@ export type ManagedTakeoverLaunchPlan = {
   existingSessionId?: string;
 };
 
+export type ManagedTakeoverLaunchBehavior =
+  | "create_and_open"
+  | "keep_current_session";
+
 function trimText(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function readRootTaskId(metadata: Record<string, unknown> | undefined): string | undefined {
   return trimText(metadata?.linkedRootTaskId) ?? trimText(metadata?.rootTaskId);
+}
+
+function findExistingManagedTakeoverSession(input: {
+  sourceSession: Pick<DesktopConversationSessionItem, "sessionId" | "metadata">;
+  sessions: readonly DesktopConversationSessionItem[];
+  metadata?: Record<string, unknown>;
+}) {
+  const metadata = input.metadata ?? input.sourceSession.metadata;
+  const rootTaskId = readRootTaskId(metadata);
+  if (!rootTaskId) {
+    return undefined;
+  }
+
+  return input.sessions.find((item) =>
+    item.parentSessionId === input.sourceSession.sessionId
+    && item.status !== "archived"
+    && readRootTaskId(item.metadata) === rootTaskId
+    && item.metadata?.rootTask !== true);
 }
 
 function readManagedExecutionStage(metadata: Record<string, unknown> | undefined): string | undefined {
@@ -59,11 +81,7 @@ export function resolveManagedTakeoverLaunchPlan(input: {
     return undefined;
   }
 
-  const existingSession = input.sessions.find((item) =>
-    item.parentSessionId === input.sourceSession.sessionId
-    && item.status !== "archived"
-    && readRootTaskId(item.metadata) === rootTaskId
-    && item.metadata?.rootTask !== true);
+  const existingSession = findExistingManagedTakeoverSession(input);
   const executionAgentId = readExecutionAgentId(metadata);
 
   return {
@@ -71,4 +89,22 @@ export function resolveManagedTakeoverLaunchPlan(input: {
     executionAgentId,
     ...(existingSession ? { existingSessionId: existingSession.sessionId } : {}),
   };
+}
+
+export function resolveManagedTakeoverLaunchBehavior(
+  plan: ManagedTakeoverLaunchPlan | undefined,
+): ManagedTakeoverLaunchBehavior | undefined {
+  if (!plan) {
+    return undefined;
+  }
+
+  return plan.existingSessionId ? "keep_current_session" : "create_and_open";
+}
+
+export function hasManagedTakeoverChildSession(input: {
+  sourceSession: Pick<DesktopConversationSessionItem, "sessionId" | "metadata">;
+  sessions: readonly DesktopConversationSessionItem[];
+  metadata?: Record<string, unknown>;
+}): boolean {
+  return Boolean(findExistingManagedTakeoverSession(input));
 }

@@ -1,11 +1,14 @@
 import { CheckCircleOutlined } from "@ant-design/icons";
 import { Button, Tag } from "antd";
+import type { KeyboardEvent } from "react";
 
 import type { UiDesignerStageKey, UiDesignerStageViewModel } from "../services/stage-view-model-resolver";
+import { isStageActionVisible, resolveStageActionLabel } from "../services/stage-action-availability";
 import { DesignerStatusBar } from "./designer-status-bar";
 
 type DesignerFlowPanelProps = {
   activeStageKey: UiDesignerStageKey;
+  pendingStageKey?: UiDesignerStageKey;
   stageViewModels: UiDesignerStageViewModel[];
   designPackagePath?: string;
   lockReason?: string;
@@ -14,11 +17,19 @@ type DesignerFlowPanelProps = {
   onStartStage: (stageKey: UiDesignerStageKey) => void;
 };
 
-function resolveStageActionLabel(status: UiDesignerStageViewModel["status"]) {
-  return status === "empty" ? "开始设计" : "重新设计";
-}
-
 export function DesignerFlowPanel(props: DesignerFlowPanelProps) {
+  function handleStageItemKeyDown(
+    event: KeyboardEvent<HTMLElement>,
+    stageKey: UiDesignerStageKey,
+  ) {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+
+    event.preventDefault();
+    props.onSelectStage(stageKey);
+  }
+
   return (
     <section className="ui-designer-pane ui-designer-pane-center" data-testid="ui-designer-center-pane">
       <DesignerStatusBar
@@ -40,34 +51,47 @@ export function DesignerFlowPanel(props: DesignerFlowPanelProps) {
 
         <div className="ui-designer-section">
           <div className="ui-designer-stage-list">
-            {props.stageViewModels.map((item) => (
-              <button
-                key={item.stageKey}
-                type="button"
-                className={`ui-designer-stage-item${props.activeStageKey === item.stageKey ? " is-active" : ""}`}
-                onClick={() => props.onSelectStage(item.stageKey)}
-              >
-                <CheckCircleOutlined className={`ui-designer-stage-check${item.status === "complete" ? " is-complete" : ""}`} />
-                <div className="ui-designer-stage-item-content">
-                  <div className="ui-designer-stage-item-main">
-                    <span className="ui-designer-stage-item-title">{item.title}</span>
-                    <Button
-                      type="link"
-                      className="ui-designer-stage-start-action"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        props.onStartStage(item.stageKey);
-                      }}
-                    >
-                      {resolveStageActionLabel(item.status)}
-                    </Button>
-                  </div>
-                  <div className="ui-designer-stage-summary">
-                    {item.summary ? item.summary : <Tag>未确认</Tag>}
+            {props.stageViewModels.map((item, index) => {
+              const actionVisible = isStageActionVisible(props.stageViewModels, index);
+              const pending = props.pendingStageKey === item.stageKey;
+
+              return (
+                <div
+                  key={item.stageKey}
+                  className={`ui-designer-stage-item${props.activeStageKey === item.stageKey ? " is-active" : ""}${pending ? " is-pending" : ""}`}
+                  role="button"
+                  tabIndex={0}
+                  aria-pressed={props.activeStageKey === item.stageKey}
+                  onClick={() => props.onSelectStage(item.stageKey)}
+                  onKeyDown={(event) => handleStageItemKeyDown(event, item.stageKey)}
+                >
+                  <CheckCircleOutlined className={`ui-designer-stage-check${item.status === "complete" ? " is-complete" : ""}`} />
+                  <div className="ui-designer-stage-item-content">
+                    <div className="ui-designer-stage-item-main">
+                      <span className="ui-designer-stage-item-title">{item.title}</span>
+                      {pending ? <Tag color="processing">待填写</Tag> : null}
+                      {actionVisible
+                        ? (
+                            <Button
+                              type="link"
+                              className="ui-designer-stage-start-action"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                props.onStartStage(item.stageKey);
+                              }}
+                            >
+                              {resolveStageActionLabel(item.status, pending)}
+                            </Button>
+                          )
+                        : null}
+                    </div>
+                    <div className="ui-designer-stage-summary">
+                      {item.summary ? item.summary : <Tag>未确认</Tag>}
+                    </div>
                   </div>
                 </div>
-              </button>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>

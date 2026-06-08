@@ -13,6 +13,12 @@ import { resolveManagedSessionIndicator } from "./managed-session-status";
 
 type Props = {
   item: DesktopConversationSessionItem;
+  executionView?: {
+    isExecuting: boolean;
+    isStopping: boolean;
+    phase?: string;
+  };
+  suppressPendingState?: boolean;
   language: LanguageCode;
   copy: ChatCopy;
   removing?: boolean;
@@ -73,8 +79,15 @@ function trimText(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function hasPendingApprovalOrForm(metadata: Record<string, unknown> | undefined) {
+function hasPendingApprovalOrForm(
+  metadata: Record<string, unknown> | undefined,
+  suppressPendingState?: boolean,
+) {
   if (!metadata) {
+    return false;
+  }
+
+  if (suppressPendingState) {
     return false;
   }
 
@@ -134,20 +147,32 @@ export function ConversationSessionRailItem(props: Props) {
     props.item.status,
     props.item.metadata,
     props.language,
+    {
+      suppressAwaitingConfirmation: props.suppressPendingState,
+    },
   );
   const badge = resolveStatusBadge(props.item.status, props.copy, managedIndicator);
   const meta = formatRelativeTimestamp(props.item.updatedAt, props.language);
   const baseStatusTone = managedIndicator?.statusTone ?? resolveSessionTone(props.item.status);
-  const requiresAttention = baseStatusTone === "warning" || hasPendingApprovalOrForm(props.item.metadata);
+  const isExecutionRunning = Boolean(
+    props.executionView?.isExecuting
+    || props.item.status === "active"
+    || managedIndicator?.statusTone === "running",
+  );
+  const requiresAttention = !isExecutionRunning
+    && (baseStatusTone === "warning" || hasPendingApprovalOrForm(props.item.metadata, props.suppressPendingState));
   const statusTone = props.item.status === "failed"
     ? "error"
     : (requiresAttention
       ? "warning"
-      : (props.item.status === "active" || baseStatusTone === "running"
+      : (props.executionView?.isExecuting || props.item.status === "active" || baseStatusTone === "running"
         ? "running"
         : "idle"));
-  const statusLabel = managedIndicator?.label ?? props.copy.statusLabel(props.item.status);
-  const isExecutionRunning = props.item.status === "active" || managedIndicator?.statusTone === "running";
+  const statusLabel = props.executionView?.phase === "stop_timeout"
+    ? (props.language === "en-US" ? "Stop timed out" : "停止确认超时")
+    : props.executionView?.isStopping
+      ? (props.language === "en-US" ? "Stopping" : "停止中")
+      : managedIndicator?.label ?? props.copy.statusLabel(props.item.status);
   const removeDisabled = Boolean(props.removing || isExecutionRunning);
 
   return (

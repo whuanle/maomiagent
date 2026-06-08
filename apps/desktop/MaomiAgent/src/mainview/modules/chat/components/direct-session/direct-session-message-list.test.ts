@@ -213,6 +213,7 @@ describe("groupDirectSessionMessagesForDisplay", () => {
         summaryMessageId: "summary-1",
         createdAt: 3,
         metadata: {
+          reason: "budget_exceeded",
           prunedMessageIds: ["user-1", "assistant-1"],
           prunedTokens: 2048,
         },
@@ -226,7 +227,7 @@ describe("groupDirectSessionMessagesForDisplay", () => {
       kind: "checkpoint",
       key: "checkpoint:checkpoint-1",
       label: "较早上下文已压缩",
-      detail: "已折叠 2 条较早消息 · 约回收 2048 tokens",
+      detail: "达到阈值后自动压缩 · 已折叠 2 条较早消息 · 约回收 2048 tokens",
     });
     expect(items[2]).toMatchObject({ kind: "message", key: "assistant-2" });
   });

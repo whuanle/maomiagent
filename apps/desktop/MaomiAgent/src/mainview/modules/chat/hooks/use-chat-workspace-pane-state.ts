@@ -36,6 +36,7 @@ import {
 } from "../../models/services/runtime-selection";
 import {
   MANAGED_TAKEOVER_KICKOFF_TEXT,
+  resolveManagedTakeoverLaunchBehavior,
   resolveManagedTakeoverLaunchPlan,
 } from "./managed-takeover";
 import {
@@ -54,6 +55,16 @@ import {
   readWorkspaceExperienceState,
   updateWorkspaceExperienceState,
 } from "../../../components/workspace-experience-state/workspace-experience-state";
+import {
+  applyStopRequested,
+  applyStopRpcResolved,
+  applyStopTimedOut,
+  clearExecutionOverlay,
+  recordRuntimeEventActivity,
+  resolveSessionExecutionView,
+  shouldWaitForStopConfirmation,
+  type SessionExecutionOverlayState,
+} from "../../../components/workspace-experience-state/session-execution-overlay";
 import {
   clearSessionReplying,
   hasSessionFlag,
@@ -199,6 +210,7 @@ function resolveNextComposerAgentId(
 const SESSION_DETAIL_SEND_POLL_INTERVAL_MS = 180;
 const SESSION_DETAIL_FALLBACK_GRACE_MS = 450;
 const SESSION_DETAIL_FALLBACK_SILENCE_WINDOW_MS = 600;
+const STOP_CONFIRMATION_TIMEOUT_MS = 12_000;
 
 function delay(durationMs: number) {
   return new Promise<void>((resolve) => {
@@ -396,7 +408,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [archivingSessionId, setArchivingSessionId] = useState<string | null>(null);
   const [sendingSessionIds, setSendingSessionIds] = useState<Record<string, true>>({});
-  const [stoppingSessionIds, setStoppingSessionIds] = useState<Record<string, true>>({});
+  const [executionOverlays, setExecutionOverlays] = useState<SessionExecutionOverlayState>({});
   const [replyingInteractionIdsBySessionId, setReplyingInteractionIdsBySessionId] = useState<Record<string, string>>({});
   const [searchText, setSearchText] = useState("");
   const [statusFilter, setStatusFilter] = useState<ChatSessionFilter>("all");
@@ -413,7 +425,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
   const runtimeEventActivityBySessionIdRef = useRef<Record<string, number>>({});
   const managedTakeoverAttemptKeysRef = useRef<Record<string, true>>({});
   const sessionDetailsByIdRef = useRef<Record<string, DesktopConversationSessionDetail>>({});
-  const stoppingSessionIdsRef = useRef<Record<string, true>>({});
+  const executionOverlaysRef = useRef<SessionExecutionOverlayState>({});
   const selectedSessionIdRef = useRef<string | undefined>(undefined);
   const expandedSessionDetailSessionIdRef = useRef<string | undefined>(undefined);
 
@@ -422,16 +434,28 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
     [selectedSessionId, sessions],
   );
   const selectedSessionDetail = selectedSessionId ? sessionDetailsById[selectedSessionId] : undefined;
+  const stoppingSessionIds = useMemo(
+    () => Object.fromEntries(
+      Object.entries(executionOverlays).flatMap(([sessionId, overlay]) =>
+        shouldWaitForStopConfirmation(overlay)
+          ? [[sessionId, true] as const]
+          : [],
+      ),
+    ),
+    [executionOverlays],
+  );
   const sessionActivity = useMemo(() => resolveSelectedSessionActivity({
     selectedSessionId,
     sendingSessionIds,
     stoppingSessionIds,
     replyingInteractionIdsBySessionId,
   }), [replyingInteractionIdsBySessionId, selectedSessionId, sendingSessionIds, stoppingSessionIds]);
-  const sendingMessage = sessionActivity.sendingMessage
-    || selectedSession?.status === "active"
-    || selectedSessionDetail?.status === "active";
-  const stoppingMessage = sessionActivity.stoppingMessage;
+  const selectedExecutionView = useMemo(() => resolveSessionExecutionView({
+    detailStatus: selectedSessionDetail?.status ?? selectedSession?.status,
+    overlay: selectedSessionId ? executionOverlays[selectedSessionId] : undefined,
+  }), [executionOverlays, selectedSession, selectedSessionDetail, selectedSessionId]);
+  const sendingMessage = sessionActivity.sendingMessage || selectedExecutionView.isExecuting;
+  const stoppingMessage = selectedExecutionView.isStopping;
   const replyingInteractionId = sessionActivity.replyingInteractionId;
   const selectedSessionComposerMode = readComposerModeMetadata(selectedSessionDetail?.metadata);
   const selectedSessionSummaryChannelId = normalizeOptionalText(selectedSession?.metadata?.selectedChannelId);
@@ -440,12 +464,49 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
   const selectedSessionDetailModelId = normalizeOptionalText(selectedSessionDetail?.metadata?.selectedModelId);
 
   useEffect(() => {
-    stoppingSessionIdsRef.current = stoppingSessionIds;
-  }, [stoppingSessionIds]);
+    executionOverlaysRef.current = executionOverlays;
+  }, [executionOverlays]);
 
   useEffect(() => {
     selectedSessionIdRef.current = selectedSessionId;
   }, [selectedSessionId]);
+
+  useEffect(() => {
+    const timeoutHandles = Object.values(executionOverlays).flatMap((overlay) => {
+      if (overlay.phase !== "waiting_stop_confirm" || !overlay.stopRequestedAt) {
+        return [];
+      }
+
+      const requestedAt = new Date(overlay.stopRequestedAt).getTime();
+      if (Number.isNaN(requestedAt)) {
+        return [];
+      }
+
+      const remainingMs = STOP_CONFIRMATION_TIMEOUT_MS - (Date.now() - requestedAt);
+      if (remainingMs <= 0) {
+        setExecutionOverlays((current) => applyStopTimedOut(
+          current,
+          overlay.sessionId,
+          "stop confirmation timed out",
+        ));
+        return [];
+      }
+
+      const timeoutId = window.setTimeout(() => {
+        setExecutionOverlays((current) => applyStopTimedOut(
+          current,
+          overlay.sessionId,
+          "stop confirmation timed out",
+        ));
+      }, remainingMs);
+
+      return [timeoutId];
+    });
+
+    return () => {
+      timeoutHandles.forEach((timeoutId) => window.clearTimeout(timeoutId));
+    };
+  }, [executionOverlays]);
 
   useEffect(() => {
     writePreferredWorkspaceSessionId(workspaceId, selectedSessionId);
@@ -567,7 +628,11 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
       && detail.sessionId === options.clearStoppingForSessionId
       && detail.status !== "active"
     ) {
-      setStoppingSessionIds((current) => removeSessionFlag(current, options.clearStoppingForSessionId!));
+      setExecutionOverlays((current) => clearExecutionOverlay(current, options.clearStoppingForSessionId!));
+    }
+
+    if (detail.status !== "active") {
+      setExecutionOverlays((current) => clearExecutionOverlay(current, detail.sessionId));
     }
   }, [updateSessionDetailsById]);
 
@@ -590,7 +655,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
         const withinGracePeriod = now - startedAt < SESSION_DETAIL_FALLBACK_GRACE_MS;
         const recentRuntimeActivity = lastRuntimeEventAt > 0
           && now - lastRuntimeEventAt < SESSION_DETAIL_FALLBACK_SILENCE_WINDOW_MS;
-        const stopRequested = hasSessionFlag(stoppingSessionIdsRef.current, sessionId);
+        const stopRequested = shouldWaitForStopConfirmation(executionOverlaysRef.current[sessionId]);
         if (withinGracePeriod || recentRuntimeActivity || stopRequested) {
           await delay(SESSION_DETAIL_SEND_POLL_INTERVAL_MS);
           continue;
@@ -861,7 +926,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
     clearExpandedSessionDetailState();
     setDraftMessage("");
     setSendingSessionIds({});
-    setStoppingSessionIds({});
+    setExecutionOverlays({});
     setReplyingInteractionIdsBySessionId({});
     clearComposerAttachments();
   }, [bridgeAvailable, clearComposerAttachments, clearExpandedSessionDetailState, updateSessionDetailsById]);
@@ -1031,6 +1096,11 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
       }
 
       runtimeEventActivityBySessionIdRef.current[runtimeUpdate.sessionId] = Date.now();
+      setExecutionOverlays((current) => recordRuntimeEventActivity(
+        current,
+        runtimeUpdate.sessionId,
+        new Date().toISOString(),
+      ));
 
       const matchesWorkspace = runtimeUpdate.workspaceId === workspaceId;
       const matchesSelectedSession = runtimeUpdate.sessionId === selectedSessionId;
@@ -1040,7 +1110,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
 
       if (shouldDeferRuntimeEventsWhileStopping({
         update: runtimeUpdate,
-        stoppingSessionId: hasSessionFlag(stoppingSessionIdsRef.current, runtimeUpdate.sessionId)
+        stoppingSessionId: shouldWaitForStopConfirmation(executionOverlaysRef.current[runtimeUpdate.sessionId])
           ? runtimeUpdate.sessionId
           : undefined,
       })) {
@@ -1061,7 +1131,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
           }
         }
 
-        if (!hasSessionFlag(stoppingSessionIdsRef.current, runtimeUpdate.sessionId)) {
+        if (!shouldWaitForStopConfirmation(executionOverlaysRef.current[runtimeUpdate.sessionId])) {
           setSendingSessionIds((current) => setSessionFlag(current, runtimeUpdate.sessionId));
         }
         void reloadSessionDetail(runtimeUpdate.sessionId);
@@ -1154,12 +1224,8 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
       sessions,
       metadata: detail.metadata,
     });
-    if (!launchPlan) {
-      return;
-    }
-
-    if (launchPlan.existingSessionId) {
-      activateSession(launchPlan.existingSessionId);
+    const launchBehavior = resolveManagedTakeoverLaunchBehavior(launchPlan);
+    if (!launchPlan || launchBehavior !== "create_and_open") {
       return;
     }
 
@@ -1232,7 +1298,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
     } catch (error) {
       onError("createSession", error);
     }
-  }, [activateSession, applySessionDetail, composerModelOptions, onError, reloadComposerAgents, reloadComposerModels, reloadSessionDetail, reloadSessions, selectedComposerModelValue, sessions, startSessionDetailFallbackPolling, workspaceId]);
+  }, [applySessionDetail, composerModelOptions, onError, reloadComposerAgents, reloadComposerModels, reloadSessionDetail, reloadSessions, selectedComposerModelValue, sessions, startSessionDetailFallbackPolling, workspaceId]);
 
   useEffect(() => {
     if (!active || !bridgeAvailable || !selectedSession || !selectedSessionDetail) {
@@ -1381,11 +1447,11 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
   }, [applySessionDetail, clearComposerAttachments, composerAttachments, composerMode, composerModelOptions, draftMessage, onError, reloadComposerAgents, reloadComposerModels, reloadSessions, selectedComposerAgentId, selectedComposerModelValue, selectedSessionDetail?.metadata, selectedSessionId, sendingMessage, startSessionDetailFallbackPolling, workspaceId]);
 
   const stopMessage = useCallback(async () => {
-    if (!selectedSessionId || !sendingMessage || stoppingMessage) {
+    if (!selectedSessionId || !sendingMessage || selectedExecutionView.isStopping) {
       return false;
     }
 
-    setStoppingSessionIds((current) => setSessionFlag(current, selectedSessionId));
+    setExecutionOverlays((current) => applyStopRequested(current, selectedSessionId, new Date().toISOString()));
 
     try {
       const response = await stopDesktopConversationMessage({
@@ -1393,22 +1459,29 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
       });
       applySessionDetail(response.detail, {
         clearSendingForSessionId: selectedSessionId,
-        clearStoppingForSessionId: selectedSessionId,
       });
+      setExecutionOverlays((current) => applyStopRpcResolved(current, selectedSessionId, {
+        stopped: response.stopped,
+        detailStatus: response.detail.status,
+        at: new Date().toISOString(),
+      }));
       await reloadSessions(response.detail.sessionId);
       await reloadComposerAgents(response.detail);
       await reloadComposerModels(response.detail);
       setSendingSessionIds((current) => response.detail.status === "active"
         ? setSessionFlag(current, selectedSessionId)
         : removeSessionFlag(current, selectedSessionId));
-      setStoppingSessionIds((current) => removeSessionFlag(current, selectedSessionId));
       return response.stopped;
     } catch (error) {
-      setStoppingSessionIds((current) => removeSessionFlag(current, selectedSessionId));
+      setExecutionOverlays((current) => applyStopTimedOut(
+        current,
+        selectedSessionId,
+        error instanceof Error ? error.message : String(error),
+      ));
       onError("sendMessage", error);
       return false;
     }
-  }, [applySessionDetail, onError, reloadComposerAgents, reloadComposerModels, reloadSessions, selectedSessionId, sendingMessage, stoppingMessage]);
+  }, [applySessionDetail, onError, reloadComposerAgents, reloadComposerModels, reloadSessions, selectedExecutionView.isStopping, selectedSessionId, sendingMessage]);
 
   const attachComposerFiles = useCallback((files: File[]) => {
     if (files.length === 0) {
@@ -1559,6 +1632,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
     archivingSessionId,
     sendingMessage,
     stoppingMessage,
+    executionOverlays,
     replyingInteractionId,
     searchText,
     statusFilter,

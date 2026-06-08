@@ -74,13 +74,15 @@ describe("direct session pane controller helpers", () => {
       usedTokens: 40960,
       limitTokens: 128000,
       percent: 32,
+      thresholdUsagePercent: 107,
       status: "critical",
       thresholdPercent: 30,
       thresholdLabel: "达到 30% 自动压缩",
+      detailLabel: "模型窗口占比：32%\n达到 30% 自动压缩\n阈值使用：107%",
     }));
   });
 
-  test("reports compaction status only while compaction is in progress", () => {
+  test("reports context compression states across waiting, running, completed, and failed turns", () => {
     const awaiting = resolveContextCompressionStatus({
       detail: createDetail({
         runs: [{
@@ -92,6 +94,29 @@ describe("direct session pane controller helpers", () => {
           trigger: { kind: "user_message" },
           boundary: { kind: "awaiting_compaction", reason: "budget_exceeded" },
         } as never],
+      }),
+      language: "zh-CN",
+    });
+
+    const thresholdReached = resolveContextCompressionStatus({
+      detail: createDetail({
+        currentContextBudget: {
+          runId: "run-threshold",
+          estimatedPromptTokens: 40960,
+          contextWindowTokens: 128000,
+          compressionThresholdPercent: 30,
+          compressionThresholdTokens: 38400,
+          promptUsagePercent: 32,
+          thresholdUsagePercent: 107,
+          shouldAutoCompress: true,
+          breakdown: {
+            systemTokens: 20,
+            contextTokens: 10,
+            messageTokens: 40930,
+            toolTokens: 0,
+            outputSchemaTokens: 0,
+          },
+        },
       }),
       language: "zh-CN",
     });
@@ -178,11 +203,21 @@ describe("direct session pane controller helpers", () => {
       tone: "warning",
       label: "正在压缩上下文",
     }));
+    expect(thresholdReached).toEqual(expect.objectContaining({
+      tone: "warning",
+      label: "已达到阈值，等待压缩",
+    }));
     expect(running).toEqual(expect.objectContaining({
       tone: "warning",
       label: "正在压缩上下文",
     }));
-    expect(completed).toBeUndefined();
-    expect(failed).toBeUndefined();
+    expect(completed).toEqual(expect.objectContaining({
+      tone: "success",
+      label: "已完成上下文压缩",
+    }));
+    expect(failed).toEqual(expect.objectContaining({
+      tone: "error",
+      label: "上下文压缩失败",
+    }));
   });
 });

@@ -174,6 +174,7 @@ export type InteractionFormField = {
   required?: boolean
   placeholder?: string
   allowCustom?: boolean
+  recommendedOptions?: readonly InteractionOption[]
   options?: readonly InteractionOption[]
   value?: InteractionFormValue
   trueLabel?: string
@@ -305,6 +306,7 @@ function isInteractionFormField(value: unknown): value is InteractionFormField {
     && (value.required === undefined || typeof value.required === "boolean")
     && (value.placeholder === undefined || typeof value.placeholder === "string")
     && (value.allowCustom === undefined || typeof value.allowCustom === "boolean")
+    && (value.recommendedOptions === undefined || (Array.isArray(value.recommendedOptions) && value.recommendedOptions.every(isInteractionOption)))
     && (value.options === undefined || (Array.isArray(value.options) && value.options.every(isInteractionOption)))
     && (value.value === undefined || isInteractionFormValue(value.value))
     && (value.trueLabel === undefined || typeof value.trueLabel === "string")

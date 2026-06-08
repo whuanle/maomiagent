@@ -40,6 +40,9 @@ function formatCheckpointDetail(checkpoint: ConversationCheckpointEntry, languag
   const reason = typeof metadata?.reason === "string" ? metadata.reason : undefined;
 
   const detailParts: string[] = [];
+  if (reason === "budget_exceeded") {
+    detailParts.push(isEn ? "Auto-compacted after threshold" : "达到阈值后自动压缩");
+  }
   if (prunedMessageCount) {
     detailParts.push(isEn ? `${prunedMessageCount} earlier messages folded` : `已折叠 ${prunedMessageCount} 条较早消息`);
   }

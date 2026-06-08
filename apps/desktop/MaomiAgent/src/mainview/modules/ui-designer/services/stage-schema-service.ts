@@ -1,8 +1,7 @@
 import { executeDesktopAiOneShot } from "../../../lib/desktop-ai";
 import { getDesktopModelRuntimeSelectionSnapshot } from "../../../lib/desktop-models";
 import { UI_DESIGNER_AGENT_ID } from "../../../../shared/conversation/managed-execution";
-import type { UiDesignerInteractionSchema } from "../components/stage-dialog";
-import type { UiDesignerInteractionField } from "../components/stage-form-renderer";
+import type { UiDesignerInteractionField, UiDesignerInteractionSchema } from "./stage-schema-types";
 import type { UiDesignerStageKey } from "./stage-view-model-resolver";
 
 type UiDesignerStageAiContext = {
@@ -136,10 +135,38 @@ function escapeJsonForPrompt(value: unknown) {
   return JSON.stringify(value, null, 2);
 }
 
+function resolveUpstreamAiErrorMessage(rawMessage: unknown) {
+  const message = readText(rawMessage);
+  if (!message) {
+    return "";
+  }
+
+  const normalized = message.toLowerCase();
+  if (
+    normalized.includes("usage limit")
+    || normalized.includes("quota")
+    || normalized.includes("rate limit")
+    || normalized.includes("exceeded")
+    || normalized.includes("余额不足")
+    || normalized.includes("额度")
+    || normalized.includes("配额")
+    || normalized.includes("超出限制")
+  ) {
+    return "当前模型额度已用尽，请切换可用模型或等待配额刷新。";
+  }
+
+  return "";
+}
+
 function extractJsonObject(text: string) {
   const normalized = text.trim();
   if (!normalized) {
     throw new Error("AI 未返回可用内容。");
+  }
+
+  const upstreamErrorMessage = resolveUpstreamAiErrorMessage(normalized);
+  if (upstreamErrorMessage) {
+    throw new Error(upstreamErrorMessage);
   }
 
   try {
@@ -252,6 +279,16 @@ export function normalizeStageSchemaResponse(
   }, []) : [];
 
   if (fields.length === 0) {
+    const upstreamErrorMessage = resolveUpstreamAiErrorMessage([
+      parsed.title,
+      parsed.description,
+      parsed.submitLabel,
+      parsed.cancelLabel,
+    ].map((item) => readText(item)).filter(Boolean).join("\n"));
+    if (upstreamErrorMessage) {
+      throw new Error(upstreamErrorMessage);
+    }
+
     throw new Error("AI 未返回可渲染的阶段表单。");
   }
 
@@ -530,7 +567,7 @@ export async function requestStageSchema(input: RequestStageSchemaInput): Promis
   });
 
   if (response.error) {
-    throw new Error(response.error.message);
+    throw new Error(resolveUpstreamAiErrorMessage(response.error.message) || response.error.message);
   }
 
   return normalizeStageSchemaResponse(extractJsonObject(response.content), input.stageKey);
@@ -560,7 +597,7 @@ export async function requestStageResult(input: RequestStageResultInput) {
   });
 
   if (response.error) {
-    throw new Error(response.error.message);
+    throw new Error(resolveUpstreamAiErrorMessage(response.error.message) || response.error.message);
   }
 
   return normalizeStageResultResponse(extractJsonObject(response.content), input.stageKey);

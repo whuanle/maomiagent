@@ -1,6 +1,11 @@
-import { Alert, Splitter } from "antd";
-import { useMemo, useState } from "react";
+import { Splitter } from "antd";
+import { useEffect, useMemo, useRef, useState } from "react";
 
+import {
+  readWorkspaceExperienceState,
+  updateWorkspaceExperienceState,
+} from "../../../components/workspace-experience-state/workspace-experience-state";
+import { notifier } from "../../../lib/notifications";
 import type { UiDesignerPageProps } from "../types";
 import { useUiDesignerShellState } from "../hooks/use-ui-designer-shell-state";
 import type { UiDesignerStageKey } from "../services/stage-view-model-resolver";
@@ -15,7 +20,10 @@ export function UiDesignerWorkspaceShell(props: UiDesignerWorkspaceShellProps) {
   const state = useUiDesignerShellState({
     active: props.active,
   });
-  const [activeStageKey, setActiveStageKey] = useState<UiDesignerStageKey>("projectScope");
+  const [activeStageKey, setActiveStageKey] = useState<UiDesignerStageKey>(
+    () => readWorkspaceExperienceState().uiDesigner.activeStageKey ?? "projectScope",
+  );
+  const lastErrorMessageRef = useRef<string | null>(null);
   const activeStage = useMemo(
     () => state.stageViewModels.find((item) => item.stageKey === activeStageKey) ?? state.stageViewModels[0],
     [activeStageKey, state.stageViewModels],
@@ -25,6 +33,51 @@ export function UiDesignerWorkspaceShell(props: UiDesignerWorkspaceShellProps) {
     [state.stageViewModels],
   );
 
+  useEffect(() => {
+    const normalizedErrorMessage = state.errorMessage?.trim() ?? "";
+    if (!normalizedErrorMessage) {
+      lastErrorMessageRef.current = null;
+      return;
+    }
+
+    if (lastErrorMessageRef.current === normalizedErrorMessage) {
+      return;
+    }
+
+    lastErrorMessageRef.current = normalizedErrorMessage;
+    notifier.error(normalizedErrorMessage);
+  }, [state.errorMessage]);
+
+  useEffect(() => {
+    if (state.stageViewModels.length === 0 || knownStageKeys.has(activeStageKey)) {
+      return;
+    }
+
+    setActiveStageKey(state.stageViewModels[0].stageKey);
+  }, [activeStageKey, knownStageKeys, state.stageViewModels]);
+
+  useEffect(() => {
+    updateWorkspaceExperienceState((current) => ({
+      ...current,
+      uiDesigner: {
+        ...current.uiDesigner,
+        activeStageKey,
+      },
+    }));
+  }, [activeStageKey]);
+
+  useEffect(() => {
+    const nextStageKey = state.suggestedStageKey;
+    if (!nextStageKey) {
+      return;
+    }
+
+    if (knownStageKeys.has(nextStageKey as UiDesignerStageKey)) {
+      setActiveStageKey(nextStageKey as UiDesignerStageKey);
+    }
+    state.clearSuggestedStageKey();
+  }, [knownStageKeys, state.clearSuggestedStageKey, state.suggestedStageKey]);
+
   return (
     <div
       className="chat-page-root ui-designer-page"
@@ -32,17 +85,6 @@ export function UiDesignerWorkspaceShell(props: UiDesignerWorkspaceShellProps) {
       data-active={props.active ? "true" : "false"}
       data-language={props.language}
     >
-      {state.errorMessage
-        ? (
-            <Alert
-              className="ui-designer-page-alert"
-              type="error"
-              showIcon
-              message="UI 设计师工作台暂时不可用"
-              description={state.errorMessage}
-            />
-          )
-        : null}
       <Splitter className="ui-designer-page-splitter">
         <Splitter.Panel min={320} defaultSize="30%">
           <ConversationRail {...state} language={props.language} />
@@ -50,6 +92,7 @@ export function UiDesignerWorkspaceShell(props: UiDesignerWorkspaceShellProps) {
         <Splitter.Panel min={420} defaultSize="40%">
           <DesignerFlowPanel
             activeStageKey={activeStage?.stageKey ?? "projectScope"}
+            pendingStageKey={state.pendingStageKey}
             stageViewModels={state.stageViewModels}
             designPackagePath={state.designerState?.designPackagePath}
             lockReason={state.designerState?.lockReason}
@@ -66,16 +109,21 @@ export function UiDesignerWorkspaceShell(props: UiDesignerWorkspaceShellProps) {
         </Splitter.Panel>
       </Splitter>
       <StageDialog
-        open={Boolean(state.stageDialogState.schema)}
-        schema={state.stageDialogState.schema}
-        submitting={state.stageDialogState.submitting}
-        onCancel={state.closeStageDialog}
-        onSubmit={(values) => {
-          void state.submitStageDialog(values).then((nextStageKey) => {
-            if (nextStageKey && knownStageKeys.has(nextStageKey as UiDesignerStageKey)) {
-              setActiveStageKey(nextStageKey as UiDesignerStageKey);
-            }
-          });
+        open={Boolean(state.activeLocalInteractionRequest && state.activeLocalInteractionId)}
+        language={props.language}
+        request={state.activeLocalInteractionRequest}
+        submitting={Boolean(
+          state.activeLocalInteractionId && state.replyingInteractionId === state.activeLocalInteractionId,
+        )}
+        onCancel={() => {
+          if (state.activeLocalInteractionId) {
+            void state.rejectInteraction(state.activeLocalInteractionId);
+          }
+        }}
+        onSubmit={(response) => {
+          if (state.activeLocalInteractionId) {
+            void state.answerInteraction(state.activeLocalInteractionId, response);
+          }
         }}
       />
     </div>

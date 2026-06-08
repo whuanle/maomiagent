@@ -22,6 +22,9 @@ export function resolveManagedSessionIndicator(
   status: DesktopConversationSessionStatus,
   metadata: Record<string, unknown> | undefined,
   language: LanguageCode,
+  options?: {
+    suppressAwaitingConfirmation?: boolean;
+  },
 ): ManagedSessionIndicator | undefined {
   if (status === "failed" || status === "archived" || !hasManagedRootTask(metadata)) {
     return undefined;
@@ -30,6 +33,7 @@ export function resolveManagedSessionIndicator(
   const phase = trimText(metadata?.phase);
   const stage = trimText(metadata?.managedExecutionStage);
   const stopReason = trimText(metadata?.managedExecutionStopReason);
+  const isActive = status === "active";
 
   if (phase === "completed" || stopReason === "completed" || stage === "completed") {
     return {
@@ -39,15 +43,7 @@ export function resolveManagedSessionIndicator(
     };
   }
 
-  if (phase === "awaiting_task_confirmation" || stage === "ready") {
-    return {
-      label: language === "en-US" ? "Ready to confirm" : "待确认",
-      badgeTone: "warning",
-      statusTone: "warning",
-    };
-  }
-
-  if (phase === "retrying_after_failure") {
+  if (phase === "retrying_after_failure" && isActive) {
     return {
       label: language === "en-US" ? "Retrying" : "重试中",
       badgeTone: "running",
@@ -55,11 +51,19 @@ export function resolveManagedSessionIndicator(
     };
   }
 
-  if (phase === "executing_plan" || stage === "running") {
+  if (isActive) {
     return {
       label: language === "en-US" ? "Running" : "执行中",
       badgeTone: "running",
       statusTone: "running",
+    };
+  }
+
+  if (!options?.suppressAwaitingConfirmation && (phase === "awaiting_task_confirmation" || stage === "ready")) {
+    return {
+      label: language === "en-US" ? "Ready to confirm" : "待确认",
+      badgeTone: "warning",
+      statusTone: "warning",
     };
   }
 

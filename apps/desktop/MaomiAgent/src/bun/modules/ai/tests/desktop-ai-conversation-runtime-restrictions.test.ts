@@ -11,6 +11,7 @@ import {
 import {
   applyConversationTimeoutToServiceConfig,
   applyConversationThinkingPreferenceToServiceConfig,
+  buildDesktopConversationContinuationPolicyBlock,
   buildConversationProviderRetryPolicy,
   mergeConversationExecutionProfile,
   resolveConversationTurnNoActivityTimeoutMs,
@@ -834,5 +835,69 @@ describe("shouldRestrictDesktopConversationBuiltinToolsForLatestUserTurn", () =>
       latestUserText: "解释一下这个报错",
       hasAttachments: true,
     })).toBe(false);
+  });
+});
+
+describe("buildDesktopConversationContinuationPolicyBlock", () => {
+  test("adds a hard fact block for tool-result continuation turns", () => {
+    expect(buildDesktopConversationContinuationPolicyBlock({
+      run: {
+        trigger: {
+          kind: "tool_result",
+        },
+      },
+      visibleMessages: [{
+        message: {
+          id: "message-user-latest" as never,
+          sessionId: "session-1" as never,
+          role: "user",
+          createdAt: 1,
+        },
+        parts: [{
+          id: "message-user-latest-text" as never,
+          type: "text",
+          text: "继续完善 design-spec.md，并补上页面结构。",
+        }],
+      }],
+    })).toContain("There is no new user message attached to this run.");
+  });
+
+  test("grounds continuation turns in the latest confirmed user message", () => {
+    const block = buildDesktopConversationContinuationPolicyBlock({
+      run: {
+        trigger: {
+          kind: "system_continue",
+        },
+      },
+      visibleMessages: [{
+        message: {
+          id: "message-user-latest" as never,
+          sessionId: "session-1" as never,
+          role: "user",
+          createdAt: 1,
+        },
+        parts: [{
+          id: "message-user-latest-text" as never,
+          type: "text",
+          text: "继续完善 design-spec.md，并补上页面结构。",
+        }],
+      }],
+    });
+
+    expect(block).toContain("Latest confirmed user message id: message-user-latest.");
+    expect(block).toContain("Latest confirmed user message preview: 继续完善 design-spec.md，并补上页面结构。");
+    expect(block).toContain("Do not claim that the user said something, said nothing, changed goals, or asked a new question in this turn unless a visible user message explicitly shows it.");
+  });
+
+  test("skips the continuation fact block for fresh user-message turns", () => {
+    expect(buildDesktopConversationContinuationPolicyBlock({
+      run: {
+        trigger: {
+          kind: "user_message",
+          refId: "message-user-latest",
+        },
+      },
+      visibleMessages: [],
+    })).toBeUndefined();
   });
 });

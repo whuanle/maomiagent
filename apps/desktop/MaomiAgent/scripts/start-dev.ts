@@ -2,7 +2,13 @@ import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEV_SERVER_HOST, resolveAvailablePort } from "./dev-server-port";
+import {
+  DEFAULT_DEV_SERVER_PORT,
+  DEV_SERVER_HOST,
+  DEV_SERVER_PORT_ENV_NAME,
+  resolveDevServerPort,
+  resolveDevServerPortSource,
+} from "./dev-server-port";
 import {
   createPackagedDesktopAppUpdateConfig,
 } from "../src/bun/desktop-app-update/config";
@@ -105,9 +111,15 @@ async function startManagedHmrDevServer(): Promise<{
   devServerProcess: ReturnType<typeof spawnCommand>;
   devServerUrl: string;
 }> {
-  const devServerPort = await resolveAvailablePort();
+  const devServerPort = resolveDevServerPort();
+  const devServerPortSource = resolveDevServerPortSource();
   const devServerUrl = `http://${DEV_SERVER_HOST}:${devServerPort}`;
-  console.log(`Starting MaomiAgent HMR dev server at ${devServerUrl}.`);
+  console.log(
+    `Starting MaomiAgent HMR dev server at ${devServerUrl} `
+    + `(${devServerPortSource === "env"
+      ? `from ${DEV_SERVER_PORT_ENV_NAME}`
+      : `default fixed port ${DEFAULT_DEV_SERVER_PORT}`}).`,
+  );
   const devServerProcess = spawnCommand([
     "bun",
     "x",
@@ -124,7 +136,7 @@ async function startManagedHmrDevServer(): Promise<{
     devServerExitCode = exitCode;
   });
 
-  await waitForDevServer(devServerUrl, () => devServerExitCode);
+  await waitForDevServer(devServerUrl, devServerPort, () => devServerExitCode);
 
   return {
     devServerProcess,
@@ -256,6 +268,7 @@ function isBusyCleanupError(error: unknown): error is { code: string } {
 
 async function waitForDevServer(
   devServerUrl: string,
+  devServerPort: number,
   getExitCode: () => number | null,
 ): Promise<void> {
   const deadline = Date.now() + DEV_SERVER_START_TIMEOUT_MS;
@@ -263,7 +276,10 @@ async function waitForDevServer(
   while (Date.now() < deadline) {
     const exitCode = getExitCode();
     if (exitCode !== null) {
-      throw new Error(`Vite dev server exited before it became ready (code ${exitCode}).`);
+      throw new Error(
+        `Vite dev server exited before it became ready on ${DEV_SERVER_HOST}:${devServerPort} (code ${exitCode}). `
+        + `If the port is already in use, set ${DEV_SERVER_PORT_ENV_NAME} to another port and retry.`,
+      );
     }
 
     try {
@@ -278,7 +294,10 @@ async function waitForDevServer(
     await delay(250);
   }
 
-  throw new Error(`Timed out waiting for the Vite dev server at ${devServerUrl}.`);
+  throw new Error(
+    `Timed out waiting for the Vite dev server at ${devServerUrl}. `
+    + `If the port is already in use, set ${DEV_SERVER_PORT_ENV_NAME} to another port and retry.`,
+  );
 }
 
 function delay(milliseconds: number): Promise<void> {

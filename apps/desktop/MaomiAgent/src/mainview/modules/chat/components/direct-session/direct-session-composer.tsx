@@ -300,9 +300,7 @@ export function DirectSessionComposer(props: Props) {
               {props.tokenBudgetUsage ? (
                 <div
                   className={`chat-direct-composer-token-usage is-${props.tokenBudgetUsage.status}`}
-                  title={props.tokenBudgetUsage.thresholdLabel
-                    ? `${props.tokenBudgetUsage.label}\n${props.tokenBudgetUsage.thresholdLabel}`
-                    : props.tokenBudgetUsage.label}
+                  title={props.tokenBudgetUsage.detailLabel ?? props.tokenBudgetUsage.label}
                   aria-label={props.tokenBudgetUsage.ariaLabel}
                 >
                   <svg

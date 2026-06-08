@@ -40,6 +40,20 @@ import {
   getDesktopWorkspaceFileContent,
   hasDesktopWorkspaceBridge,
 } from "../../../lib/desktop-workspace";
+import {
+  readWorkspaceExperienceState,
+  updateWorkspaceExperienceState,
+} from "../../../components/workspace-experience-state/workspace-experience-state";
+import {
+  applyStopRequested,
+  applyStopRpcResolved,
+  applyStopTimedOut,
+  clearExecutionOverlay,
+  recordRuntimeEventActivity,
+  resolveSessionExecutionView,
+  shouldWaitForStopConfirmation,
+  type SessionExecutionOverlayState,
+} from "../../../components/workspace-experience-state/session-execution-overlay";
 import { getNormalWorkspaces } from "../../../services/workspace-query-service";
 import {
   useConversationWorkspaceSettings,
@@ -58,12 +72,24 @@ import {
   buildDesktopRuntimeModelOptions,
   resolveDesktopRuntimeSelectedValue,
 } from "../../models/services/runtime-selection";
-import type { UiDesignerInteractionSchema } from "../components/stage-dialog";
+import {
+  buildProjectScopeDraft,
+  normalizeProjectScopeFormValues,
+  parseProjectScopeJson,
+  stringifyProjectScope,
+} from "../services/project-scope-flow";
+import { buildUiDesignerStageDraft } from "../services/stage-draft";
+import { buildProjectScopeInteractionRequest } from "../services/project-scope-interaction";
+import {
+  buildUiDesignerStageInteractionId,
+  buildUiDesignerStageInteractionRequest,
+} from "../services/stage-interaction";
 import { normalizeStageResult } from "../services/stage-result-normalizer";
 import {
   requestStageResult,
   requestStageSchema,
 } from "../services/stage-schema-service";
+import type { UiDesignerStageKey } from "../services/stage-view-model-resolver";
 import { resolveStageViewModels } from "../services/stage-view-model-resolver";
 
 type UiDesignerDesignFiles = {
@@ -103,9 +129,24 @@ type UseUiDesignerShellStateInput = {
   active: boolean;
 };
 
+type UiDesignerPendingInteraction = DesktopConversationSessionDetail["pendingInteractions"][number];
+
+type LocalProjectScopeInteractionState = {
+  sessionId: string;
+  interaction: UiDesignerPendingInteraction;
+};
+
+type LocalStageInteractionState = {
+  sessionId: string;
+  stageKey: Parameters<typeof requestStageSchema>[0]["stageKey"];
+  interaction: UiDesignerPendingInteraction;
+};
+
 const SESSION_DETAIL_SEND_POLL_INTERVAL_MS = 180;
 const SESSION_DETAIL_FALLBACK_GRACE_MS = 450;
 const SESSION_DETAIL_FALLBACK_SILENCE_WINDOW_MS = 600;
+const STOP_CONFIRMATION_TIMEOUT_MS = 12_000;
+const UI_DESIGNER_PROJECT_SCOPE_INTERACTION_ID = "ui-designer:project-scope";
 function compareWorkspaces(left: DesktopWorkspaceItem, right: DesktopWorkspaceItem) {
   if (left.isPinned !== right.isPinned) {
     return left.isPinned ? -1 : 1;
@@ -156,6 +197,24 @@ function resolveActiveSessionId(
 ) {
   const activeItems = items.filter((item) => item.status !== "archived");
   return resolveNextSessionId(activeItems, currentSessionId);
+}
+
+function readUiDesignerScene() {
+  return readWorkspaceExperienceState().uiDesigner;
+}
+
+function updateUiDesignerScene(input: {
+  workspaceId?: string;
+  selectedSessionId?: string;
+}) {
+  updateWorkspaceExperienceState((current) => ({
+    ...current,
+    uiDesigner: {
+      ...current.uiDesigner,
+      workspaceId: input.workspaceId,
+      selectedSessionId: input.selectedSessionId,
+    },
+  }));
 }
 
 function delay(durationMs: number) {
@@ -488,35 +547,35 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
   const [creatingSession, setCreatingSession] = useState(false);
   const [resettingConversation, setResettingConversation] = useState(false);
   const [sendingMessage, setSendingMessage] = useState(false);
+  const [executionOverlays, setExecutionOverlays] = useState<SessionExecutionOverlayState>({});
   const [replyingInteractionId, setReplyingInteractionId] = useState<string | null>(null);
-  const [stoppingSessionId, setStoppingSessionId] = useState<string | null>(null);
+  const initialSceneRef = useRef(readUiDesignerScene());
   const [workspaces, setWorkspaces] = useState<DesktopWorkspaceItem[]>([]);
-  const [workspaceId, setWorkspaceId] = useState<string | undefined>(undefined);
+  const [workspaceId, setWorkspaceId] = useState<string | undefined>(
+    () => initialSceneRef.current.workspaceId,
+  );
   const [designerState, setDesignerState] = useState<DesktopUiDesignerState | null>(null);
   const [sessions, setSessions] = useState<DesktopConversationSessionItem[]>([]);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>(undefined);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>(
+    () => initialSceneRef.current.selectedSessionId,
+  );
   const [selectedSessionDetail, setSelectedSessionDetail] = useState<DesktopConversationSessionDetail | null>(null);
   const [designFiles, setDesignFiles] = useState<UiDesignerDesignFiles>(DEFAULT_DESIGN_FILES);
   const [draftMessage, setDraftMessage] = useState("");
+  const [composerFocusBlock, setComposerFocusBlock] = useState<UiDesignerStageKey | undefined>(undefined);
   const [composerAttachments, setComposerAttachments] = useState<ChatComposerAttachment[]>([]);
   const composerAttachmentsRef = useRef<ChatComposerAttachment[]>([]);
   const runtimeEventActivityBySessionIdRef = useRef<Record<string, number>>({});
-  const stoppingSessionIdRef = useRef<string | null>(null);
+  const executionOverlaysRef = useRef<SessionExecutionOverlayState>({});
   const selectedSessionIdRef = useRef<string | undefined>(undefined);
   const selectedSessionDetailRef = useRef<DesktopConversationSessionDetail | null>(null);
   const [composerModelOptions, setComposerModelOptions] = useState<ChatComposerModelOption[]>([]);
   const [composerModelSelectOptions, setComposerModelSelectOptions] = useState<ChatComposerSelectOptionGroup[]>([]);
   const [selectedComposerModelValue, setSelectedComposerModelValueState] = useState<string>();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [stageDialogState, setStageDialogState] = useState<{
-    stageKey: string | null;
-    schema: UiDesignerInteractionSchema | null;
-    submitting: boolean;
-  }>({
-    stageKey: null,
-    schema: null,
-    submitting: false,
-  });
+  const [localProjectScopeInteraction, setLocalProjectScopeInteraction] = useState<LocalProjectScopeInteractionState | null>(null);
+  const [localStageInteraction, setLocalStageInteraction] = useState<LocalStageInteractionState | null>(null);
+  const [suggestedStageKey, setSuggestedStageKey] = useState<string | null>(null);
 
   const selectedWorkspace = useMemo(
     () => workspaces.find((item) => item.workspaceId === workspaceId),
@@ -530,6 +589,41 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     settings: workspaceSettings,
     saveSettings: saveWorkspaceSettings,
   } = useConversationWorkspaceSettings(workspaceId);
+  const persistedUiDesignerSessionId = selectedSession?.workspaceId === workspaceId
+    ? selectedSession?.sessionId
+    : undefined;
+
+  useEffect(() => {
+    setLocalProjectScopeInteraction((current) => {
+      if (!current) {
+        return current;
+      }
+
+      if (selectedSessionId && current.sessionId !== selectedSessionId) {
+        return null;
+      }
+
+      return current;
+    });
+    setLocalStageInteraction((current) => {
+      if (!current) {
+        return current;
+      }
+
+      if (selectedSessionId && current.sessionId !== selectedSessionId) {
+        return null;
+      }
+
+      return current;
+    });
+  }, [selectedSessionId, workspaceId]);
+
+  useEffect(() => {
+    updateUiDesignerScene({
+      workspaceId,
+      selectedSessionId: persistedUiDesignerSessionId ?? selectedSessionId,
+    });
+  }, [persistedUiDesignerSessionId, selectedSessionId, workspaceId]);
 
   const stack = useMemo(() => parseJsonObject(designFiles.stackJson), [designFiles.stackJson]);
   const scope = useMemo(() => parseJsonObject(designFiles.scopeJson), [designFiles.scopeJson]);
@@ -557,6 +651,34 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     stack,
     theme,
   ]);
+  const selectedSessionDetailForView = selectedSessionDetail;
+  const activeLocalInteraction = useMemo(() => {
+    if (localProjectScopeInteraction) {
+      return localProjectScopeInteraction.interaction;
+    }
+
+    if (localStageInteraction) {
+      return localStageInteraction.interaction;
+    }
+
+    return null;
+  }, [localProjectScopeInteraction, localStageInteraction]);
+  const activeLocalInteractionId = activeLocalInteraction?.interactionId;
+  const activeLocalInteractionRequest = activeLocalInteraction?.request.kind === "form"
+    ? activeLocalInteraction.request
+    : null;
+  const pendingStageKey = useMemo(() => {
+    if (localProjectScopeInteraction) {
+      return "projectScope" as const;
+    }
+
+    const activeLocalStageInteraction = localStageInteraction;
+    if (activeLocalStageInteraction) {
+      return activeLocalStageInteraction.stageKey;
+    }
+
+    return undefined;
+  }, [localProjectScopeInteraction, localStageInteraction]);
   const selectedSessionSummaryChannelId = typeof selectedSession?.metadata?.selectedChannelId === "string"
     && selectedSession.metadata.selectedChannelId.trim()
     ? selectedSession.metadata.selectedChannelId.trim()
@@ -573,6 +695,10 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     && selectedSessionDetail.metadata.selectedModelId.trim()
     ? selectedSessionDetail.metadata.selectedModelId.trim()
     : undefined;
+  const selectedExecutionView = useMemo(() => resolveSessionExecutionView({
+    detailStatus: selectedSessionDetail?.status ?? selectedSession?.status,
+    overlay: selectedSessionId ? executionOverlays[selectedSessionId] : undefined,
+  }), [executionOverlays, selectedSession, selectedSessionDetail, selectedSessionId]);
 
   const canSwitchWorkspace = !designerState?.lockReason
     && !creatingSession
@@ -592,8 +718,8 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
   }, [composerAttachments]);
 
   useEffect(() => {
-    stoppingSessionIdRef.current = stoppingSessionId;
-  }, [stoppingSessionId]);
+    executionOverlaysRef.current = executionOverlays;
+  }, [executionOverlays]);
 
   useEffect(() => {
     selectedSessionIdRef.current = selectedSessionId;
@@ -606,6 +732,43 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
   useEffect(() => () => {
     composerAttachmentsRef.current.forEach((attachment) => revokeComposerAttachmentPreviewUrl(attachment));
   }, []);
+
+  useEffect(() => {
+    const timeoutHandles = Object.values(executionOverlays).flatMap((overlay) => {
+      if (overlay.phase !== "waiting_stop_confirm" || !overlay.stopRequestedAt) {
+        return [];
+      }
+
+      const requestedAt = new Date(overlay.stopRequestedAt).getTime();
+      if (Number.isNaN(requestedAt)) {
+        return [];
+      }
+
+      const remainingMs = STOP_CONFIRMATION_TIMEOUT_MS - (Date.now() - requestedAt);
+      if (remainingMs <= 0) {
+        setExecutionOverlays((current) => applyStopTimedOut(
+          current,
+          overlay.sessionId,
+          "stop confirmation timed out",
+        ));
+        return [];
+      }
+
+      const timeoutId = window.setTimeout(() => {
+        setExecutionOverlays((current) => applyStopTimedOut(
+          current,
+          overlay.sessionId,
+          "stop confirmation timed out",
+        ));
+      }, remainingMs);
+
+      return [timeoutId];
+    });
+
+    return () => {
+      timeoutHandles.forEach((timeoutId) => window.clearTimeout(timeoutId));
+    };
+  }, [executionOverlays]);
 
   const clearComposerAttachments = useCallback(() => {
     setComposerAttachments((current) => {
@@ -636,9 +799,10 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     setLoadingWorkspaces(true);
     setErrorMessage(null);
     try {
+      const persistedScene = readUiDesignerScene();
       const nextItems = (await getNormalWorkspaces({ limit: 200, offset: 0 })).sort(compareWorkspaces);
       setWorkspaces(nextItems);
-      setWorkspaceId((current) => resolveNextWorkspaceId(nextItems, current));
+      setWorkspaceId((current) => resolveNextWorkspaceId(nextItems, current ?? persistedScene.workspaceId));
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -702,6 +866,7 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     setLoadingSessions(true);
     setErrorMessage(null);
     try {
+      const persistedScene = readUiDesignerScene();
       const response = await conversationClient.listSessions({
         workspaceId: nextWorkspaceId,
         status: "all",
@@ -713,7 +878,7 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
         .sort(compareSessions);
       setSessions(nextItems);
       setSelectedSessionId((current) =>
-        resolveActiveSessionId(nextItems, preferredSessionId ?? current));
+        resolveActiveSessionId(nextItems, preferredSessionId ?? current ?? persistedScene.selectedSessionId));
     } catch (error) {
       setSessions([]);
       setSelectedSessionId(undefined);
@@ -759,7 +924,7 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
         const withinGracePeriod = now - startedAt < SESSION_DETAIL_FALLBACK_GRACE_MS;
         const recentRuntimeActivity = lastRuntimeEventAt > 0
           && now - lastRuntimeEventAt < SESSION_DETAIL_FALLBACK_SILENCE_WINDOW_MS;
-        const stopRequested = stoppingSessionIdRef.current === sessionId;
+        const stopRequested = shouldWaitForStopConfirmation(executionOverlaysRef.current[sessionId]);
         if (withinGracePeriod || recentRuntimeActivity || stopRequested) {
           await delay(SESSION_DETAIL_SEND_POLL_INTERVAL_MS);
           continue;
@@ -827,6 +992,8 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
       setSessions([]);
       setSelectedSessionId(undefined);
       setSelectedSessionDetail(null);
+      setSendingMessage(false);
+      setExecutionOverlays({});
       return;
     }
 
@@ -846,6 +1013,7 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
   const createSession = useCallback(async (input?: {
     kickoffMessage?: string;
     prefillDraft?: string;
+    prefillFocusBlock?: UiDesignerStageKey;
   }) => {
     if (!workspaceId) {
       return null;
@@ -887,6 +1055,7 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
       }
 
       setDraftMessage(input?.prefillDraft?.trim() ?? "");
+      setComposerFocusBlock(input?.prefillFocusBlock);
       return response.item;
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -1065,9 +1234,9 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
       applySessionDetail(detailUpdate.detail);
       setLoadingSessionDetail(false);
       if (detailUpdate.detail.sessionId === selectedSessionIdRef.current) {
-        setSendingMessage(detailUpdate.detail.status === "active" && stoppingSessionIdRef.current !== detailUpdate.detail.sessionId);
+        setSendingMessage(detailUpdate.detail.status === "active");
         if (detailUpdate.detail.status !== "active") {
-          setStoppingSessionId((current) => current === detailUpdate.detail.sessionId ? null : current);
+          setExecutionOverlays((current) => clearExecutionOverlay(current, detailUpdate.detail.sessionId));
           void reloadDesignerState(detailUpdate.detail.workspaceId);
         }
       }
@@ -1095,6 +1264,11 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
       }
 
       runtimeEventActivityBySessionIdRef.current[runtimeUpdate.sessionId] = Date.now();
+      setExecutionOverlays((current) => recordRuntimeEventActivity(
+        current,
+        runtimeUpdate.sessionId,
+        new Date().toISOString(),
+      ));
 
       const matchesWorkspace = runtimeUpdate.workspaceId === workspaceId;
       const matchesSelectedSession = runtimeUpdate.sessionId === selectedSessionIdRef.current;
@@ -1109,16 +1283,16 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
           if (!merged.requiresReload) {
             applySessionDetail(merged.detail);
             setLoadingSessionDetail(false);
-            setSendingMessage(merged.detail.status === "active" && stoppingSessionIdRef.current !== runtimeUpdate.sessionId);
+            setSendingMessage(merged.detail.status === "active");
             if (merged.detail.status !== "active") {
-              setStoppingSessionId((current) => current === runtimeUpdate.sessionId ? null : current);
+              setExecutionOverlays((current) => clearExecutionOverlay(current, runtimeUpdate.sessionId));
               void reloadDesignerState(merged.detail.workspaceId);
             }
             return;
           }
         }
 
-        if (stoppingSessionIdRef.current !== runtimeUpdate.sessionId) {
+        if (!shouldWaitForStopConfirmation(executionOverlaysRef.current[runtimeUpdate.sessionId])) {
           setSendingMessage(true);
         }
         void reloadSelectedSessionDetail(runtimeUpdate.sessionId);
@@ -1277,16 +1451,21 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     });
   }, []);
 
-  const sendMessage = useCallback(async () => {
-    if (!workspaceId || !selectedSessionId || sendingMessage) {
-      return;
+  const sendUiDesignerConversationMessage = useCallback(async (input: {
+    sessionId: string;
+    text?: string;
+    attachments?: DesktopConversationAttachmentInput[];
+    focusBlock?: string;
+    clearComposer?: boolean;
+  }) => {
+    if (!workspaceId || sendingMessage) {
+      return false;
     }
 
-    const text = draftMessage.trim();
-    const attachments = buildComposerAttachmentInputs(composerAttachments);
-
+    const text = input.text?.trim() ?? "";
+    const attachments = input.attachments ?? [];
     if (!text && attachments.length === 0) {
-      return;
+      return false;
     }
 
     const selectedModel = composerModelOptions.find((item) => item.value === selectedComposerModelValue);
@@ -1295,15 +1474,19 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
       selectedWorkspace,
       designerState,
       designFiles,
+      ...(input.focusBlock ? { focusBlock: input.focusBlock } : {}),
     });
 
     setSendingMessage(true);
     setErrorMessage(null);
     try {
       await waitForConversationWorkspaceSettingsSaves(workspaceId);
-      setDraftMessage("");
-      clearComposerAttachments();
-      const targetSessionId = selectedSessionId;
+      if (input.clearComposer) {
+        setDraftMessage("");
+        setComposerFocusBlock(undefined);
+        clearComposerAttachments();
+      }
+      const targetSessionId = input.sessionId;
       const stopPolling = startSessionDetailFallbackPolling(targetSessionId, (detail) => {
         applySessionDetail(detail);
         setSendingMessage(detail.status === "active");
@@ -1314,7 +1497,7 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
 
       const messagePromise = conversationClient.sendMessage({
         workspaceId,
-        sessionId: selectedSessionId,
+        sessionId: input.sessionId,
         ...(text ? { text } : {}),
         ...(attachments.length > 0 ? { attachments } : {}),
         metadata: buildUiDesignerSendMetadata(context),
@@ -1339,46 +1522,73 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error));
       setSendingMessage(false);
-      return;
+      return false;
     } finally {
       // Runtime events and the final detail update now control the visible sending state.
     }
+    return true;
   }, [
     applySessionDetail,
     clearComposerAttachments,
-    composerAttachments,
     composerModelOptions,
     conversationClient,
     designFiles,
     designerState,
-    draftMessage,
     reloadDesignerState,
+    reloadSessions,
     selectedComposerModelValue,
     selectedWorkspace,
-    selectedSessionId,
     sendingMessage,
     startSessionDetailFallbackPolling,
     workspaceId,
   ]);
 
-  const stopMessage = useCallback(async () => {
-    if (!selectedSessionId || !sendingMessage || stoppingSessionId === selectedSessionId) {
+  const sendMessage = useCallback(async () => {
+    if (!selectedSessionId) {
       return;
     }
 
-    setStoppingSessionId(selectedSessionId);
+    await sendUiDesignerConversationMessage({
+      sessionId: selectedSessionId,
+      text: draftMessage,
+      attachments: buildComposerAttachmentInputs(composerAttachments),
+      ...(composerFocusBlock ? { focusBlock: composerFocusBlock } : {}),
+      clearComposer: true,
+    });
+  }, [
+    composerAttachments,
+    composerFocusBlock,
+    draftMessage,
+    selectedSessionId,
+    sendUiDesignerConversationMessage,
+  ]);
+
+  const stopMessage = useCallback(async () => {
+    if (!selectedSessionId || !sendingMessage || selectedExecutionView.isStopping) {
+      return;
+    }
+
+    setExecutionOverlays((current) => applyStopRequested(current, selectedSessionId, new Date().toISOString()));
     setErrorMessage(null);
     try {
       const response = await conversationClient.stopMessage({
         sessionId: selectedSessionId,
       });
       applySessionDetail(response.detail);
+      setExecutionOverlays((current) => applyStopRpcResolved(current, selectedSessionId, {
+        stopped: response.stopped,
+        detailStatus: response.detail.status,
+        at: new Date().toISOString(),
+      }));
       await reloadSessions(response.detail.workspaceId, response.detail.sessionId);
       await reloadDesignerState(response.detail.workspaceId);
       setSendingMessage(response.detail.status === "active");
-      setStoppingSessionId(null);
     } catch (error) {
-      setStoppingSessionId(null);
+      setExecutionOverlays((current) => applyStopTimedOut(
+        current,
+        selectedSessionId,
+        error instanceof Error ? error.message : String(error),
+      ));
       setErrorMessage(error instanceof Error ? error.message : String(error));
     }
   }, [
@@ -1386,14 +1596,132 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     conversationClient,
     reloadDesignerState,
     reloadSessions,
+    selectedExecutionView.isStopping,
     selectedSessionId,
     sendingMessage,
-    stoppingSessionId,
+  ]);
+
+  const resolveCurrentStageModelSelection = useCallback(() => {
+    const selectedModel = composerModelOptions.find((item) => item.value === selectedComposerModelValue);
+    return {
+      selectedChannelId: selectedModel?.channelId,
+      selectedModelId: selectedModel?.modelId,
+    };
+  }, [composerModelOptions, selectedComposerModelValue]);
+
+  const submitLocalProjectScopeInteraction = useCallback(async (response: unknown) => {
+    const activeSessionId = localProjectScopeInteraction?.sessionId ?? selectedSessionId;
+    if (!workspaceId || !activeSessionId || !isRecord(response) || response.kind !== "form") {
+      return false;
+    }
+
+    const normalized = normalizeProjectScopeFormValues(
+      isRecord(response.values) ? response.values : {},
+    );
+    setReplyingInteractionId(UI_DESIGNER_PROJECT_SCOPE_INTERACTION_ID);
+    setErrorMessage(null);
+    try {
+      const saved = await saveDesktopUiDesignerDesignPackage({
+        workspaceId,
+        files: {
+          scopeJson: stringifyProjectScope(normalized),
+        },
+      });
+      setDesignerState(saved.state);
+      await reloadDesignFiles(workspaceId);
+      setLocalProjectScopeInteraction(null);
+      await sendUiDesignerConversationMessage({
+        sessionId: activeSessionId,
+        text: buildProjectScopeDraft(normalized),
+        focusBlock: "projectScope",
+      });
+      return true;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      return false;
+    } finally {
+      setReplyingInteractionId((current) => current === UI_DESIGNER_PROJECT_SCOPE_INTERACTION_ID ? null : current);
+    }
+  }, [
+    localProjectScopeInteraction,
+    reloadDesignFiles,
+    selectedSessionId,
+    sendUiDesignerConversationMessage,
+    workspaceId,
+  ]);
+
+  const submitLocalStageInteraction = useCallback(async (response: unknown) => {
+    const activeInteraction = localStageInteraction;
+    if (!workspaceId || !activeInteraction || !isRecord(response) || response.kind !== "form") {
+      return false;
+    }
+
+    const interactionId = activeInteraction.interaction.interactionId;
+    setReplyingInteractionId(interactionId);
+    setErrorMessage(null);
+
+    try {
+      const stageResult = await requestStageResult({
+        stageKey: activeInteraction.stageKey,
+        values: isRecord(response.values) ? response.values : {},
+        context: buildUiDesignerContext({
+          workspaceId,
+          selectedWorkspace,
+          designerState,
+          designFiles,
+          focusBlock: activeInteraction.stageKey,
+        }),
+        ...resolveCurrentStageModelSelection(),
+      });
+      const normalized = normalizeStageResult(stageResult);
+
+      if (Object.keys(normalized.files).length > 0) {
+        const saved = await saveDesktopUiDesignerDesignPackage({
+          workspaceId,
+          files: normalized.files,
+        });
+        setDesignerState(saved.state);
+        await reloadDesignFiles(workspaceId);
+      }
+
+      setLocalStageInteraction(null);
+      if (normalized.nextSuggestedStage) {
+        setSuggestedStageKey(normalized.nextSuggestedStage);
+      }
+      return true;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      return false;
+    } finally {
+      setReplyingInteractionId((current) => current === interactionId ? null : current);
+    }
+  }, [
+    designFiles,
+    designerState,
+    localStageInteraction,
+    reloadDesignFiles,
+    resolveCurrentStageModelSelection,
+    selectedWorkspace,
+    workspaceId,
   ]);
 
   const answerInteraction = useCallback(async (interactionId: string, response: unknown) => {
     const normalizedInteractionId = interactionId.trim();
-    if (!normalizedInteractionId || !selectedSessionId) {
+    if (!normalizedInteractionId) {
+      return;
+    }
+
+    if (normalizedInteractionId === UI_DESIGNER_PROJECT_SCOPE_INTERACTION_ID) {
+      await submitLocalProjectScopeInteraction(response);
+      return;
+    }
+
+    if (normalizedInteractionId.startsWith("ui-designer:stage:")) {
+      await submitLocalStageInteraction(response);
+      return;
+    }
+
+    if (!selectedSessionId) {
       return;
     }
 
@@ -1431,17 +1759,28 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     reloadDesignerState,
     reloadSessions,
     selectedSessionId,
-    scope,
-    stack,
-    theme,
-    pages,
     startSessionDetailFallbackPolling,
-    workspaceId,
+    submitLocalProjectScopeInteraction,
+    submitLocalStageInteraction,
   ]);
 
   const rejectInteraction = useCallback(async (interactionId: string) => {
     const normalizedInteractionId = interactionId.trim();
-    if (!normalizedInteractionId || !selectedSessionId) {
+    if (!normalizedInteractionId) {
+      return;
+    }
+
+    if (normalizedInteractionId === UI_DESIGNER_PROJECT_SCOPE_INTERACTION_ID) {
+      setLocalProjectScopeInteraction(null);
+      return;
+    }
+
+    if (normalizedInteractionId.startsWith("ui-designer:stage:")) {
+      setLocalStageInteraction(null);
+      return;
+    }
+
+    if (!selectedSessionId) {
       return;
     }
 
@@ -1530,103 +1869,75 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     workspaceSettings.selectedModelId,
   ]);
 
-  const resolveCurrentStageModelSelection = useCallback(() => {
-    const selectedModel = composerModelOptions.find((item) => item.value === selectedComposerModelValue);
-    return {
-      selectedChannelId: selectedModel?.channelId,
-      selectedModelId: selectedModel?.modelId,
-    };
-  }, [composerModelOptions, selectedComposerModelValue]);
-
-  const openStageDialog = useCallback(async (stageKey: string) => {
-    if (!workspaceId) {
+  const openProjectScopeInteraction = useCallback(async () => {
+    if (localProjectScopeInteraction?.sessionId === selectedSessionId) {
       return;
     }
 
-    try {
-      const schema = await requestStageSchema({
-        stageKey: stageKey as Parameters<typeof requestStageSchema>[0]["stageKey"],
-        context: buildUiDesignerContext({
-          workspaceId,
-          selectedWorkspace,
-          designerState,
-          designFiles,
-          focusBlock: stageKey,
-        }),
-        ...resolveCurrentStageModelSelection(),
+    const currentScope = parseProjectScopeJson(designFiles.scopeJson);
+    let sessionId = selectedSessionId;
+    if (!sessionId) {
+      const created = await createSession({
+        prefillDraft: "",
       });
-      setStageDialogState({
-        stageKey,
-        schema,
-        submitting: false,
-      });
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
+      sessionId = created?.sessionId;
     }
-  }, [designFiles, designerState, resolveCurrentStageModelSelection, selectedWorkspace, workspaceId]);
 
-  const closeStageDialog = useCallback(() => {
-    setStageDialogState({
-      stageKey: null,
-      schema: null,
-      submitting: false,
+    if (!sessionId) {
+      return;
+    }
+
+    const now = Date.now();
+    setLocalProjectScopeInteraction({
+      sessionId,
+      interaction: {
+        interactionId: UI_DESIGNER_PROJECT_SCOPE_INTERACTION_ID,
+        sessionId,
+        runId: selectedSessionDetail?.lastRunId ?? selectedSession?.lastRunId ?? "ui-designer-project-scope",
+        kind: "form",
+        status: "pending",
+        request: buildProjectScopeInteractionRequest(currentScope),
+        createdAt: now,
+        updatedAt: now,
+        metadata: {
+          moduleId: "ui-designer",
+          surface: "ui-designer",
+          focusBlock: "projectScope",
+        },
+      },
     });
+  }, [createSession, designFiles.scopeJson, localProjectScopeInteraction, selectedSession, selectedSessionDetail, selectedSessionId]);
+
+  const clearSuggestedStageKey = useCallback(() => {
+    setSuggestedStageKey(null);
   }, []);
 
-  const submitStageDialog = useCallback(async (values: Record<string, unknown>) => {
-    if (!workspaceId || !stageDialogState.stageKey) {
+  const openStageDialog = useCallback(async (stageKey: string) => {
+    const normalizedStageKey = stageKey as UiDesignerStageKey;
+    const stage = stageViewModels.find((item) => item.stageKey === normalizedStageKey);
+    if (!stage) {
       return;
     }
 
-    setStageDialogState((current) => current.schema
-      ? { ...current, submitting: true }
-      : current);
+    const stageDraft = normalizedStageKey === "projectScope"
+      ? buildProjectScopeDraft(normalizeProjectScopeFormValues(scope))
+      : buildUiDesignerStageDraft(stage);
 
-    try {
-      const stageResult = await requestStageResult({
-        stageKey: stageDialogState.stageKey as Parameters<typeof requestStageResult>[0]["stageKey"],
-        values,
-        context: buildUiDesignerContext({
-          workspaceId,
-          selectedWorkspace,
-          designerState,
-          designFiles,
-          focusBlock: stageDialogState.stageKey,
-        }),
-        ...resolveCurrentStageModelSelection(),
+    if (!selectedSessionId) {
+      await createSession({
+        prefillDraft: stageDraft,
+        prefillFocusBlock: normalizedStageKey,
       });
-      const normalized = normalizeStageResult(stageResult);
-
-      if (Object.keys(normalized.files).length > 0) {
-        const saved = await saveDesktopUiDesignerDesignPackage({
-          workspaceId,
-          files: normalized.files,
-        });
-        setDesignerState(saved.state);
-        await reloadDesignFiles(workspaceId);
-      }
-
-      setStageDialogState({
-        stageKey: null,
-        schema: null,
-        submitting: false,
-      });
-      return normalized.nextSuggestedStage;
-    } catch (error) {
-      setStageDialogState((current) => current.schema
-        ? { ...current, submitting: false }
-        : current);
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      return undefined;
+      return;
     }
+
+    setDraftMessage(stageDraft);
+    setComposerFocusBlock(normalizedStageKey);
   }, [
-    designFiles,
-    designerState,
-    reloadDesignFiles,
-    resolveCurrentStageModelSelection,
-    selectedWorkspace,
-    stageDialogState.stageKey,
-    workspaceId,
+    createSession,
+    scope,
+    selectedSessionId,
+    stageViewModels,
   ]);
 
   return {
@@ -1641,6 +1952,8 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     designerState,
     draftMessage,
     errorMessage,
+    activeLocalInteractionId,
+    activeLocalInteractionRequest,
     loadingDesignerState,
     loadingSessionDetail,
     loadingSessions,
@@ -1648,18 +1961,20 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     modelsBridgeAvailable,
     layouts,
     patterns,
+    pendingStageKey,
     pages,
     resettingConversation,
     replyingInteractionId,
     scope,
     selectedSession,
     selectedComposerModelValue,
-    selectedSessionDetail,
+    selectedSessionDetail: selectedSessionDetailForView,
     selectedWorkspace,
+    sessions,
     sendingMessage,
-    stageDialogState,
     stageViewModels,
-    stoppingMessage: Boolean(selectedSessionId && stoppingSessionId === selectedSessionId),
+    suggestedStageKey,
+    stoppingMessage: selectedExecutionView.isStopping,
     sourcesMarkdown,
     stack,
     theme,
@@ -1672,7 +1987,7 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     reloadWorkspaces,
     selectWorkspace,
     attachComposerFiles,
-    closeStageDialog,
+    clearSuggestedStageKey,
     openStageDialog,
     removeComposerAttachment,
     resetConversation,
@@ -1680,7 +1995,6 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     rejectInteraction,
     sendMessage,
     stopMessage,
-    submitStageDialog,
     setDraftMessage,
     setSelectedComposerModelValue,
   };
