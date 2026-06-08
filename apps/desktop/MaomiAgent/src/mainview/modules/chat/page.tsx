@@ -11,6 +11,7 @@ import {
 
 import {
   closeWorkspaceTabState,
+  normalizeWorkspaceTabsState,
   openWorkspaceTab,
   readWorkspaceTabsState,
   resolveVisibleWorkspaceId,
@@ -35,6 +36,20 @@ import "./chat-page.css";
 
 function areListsEqual(left: string[], right: string[]) {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function syncWorkspaceTabRefs(input: {
+  state: WorkspaceTabsState;
+  fallbackWorkspaceId?: string;
+  workspaceTabsStateRef: { current: WorkspaceTabsState };
+  activeWorkspaceIdRef: { current: string };
+  openWorkspaceIdsRef: { current: string[] };
+}) {
+  const normalized = normalizeWorkspaceTabsState(input.state);
+  input.workspaceTabsStateRef.current = normalized;
+  input.openWorkspaceIdsRef.current = normalized.openWorkspaceIds;
+  input.activeWorkspaceIdRef.current = normalized.activeWorkspaceId ?? input.fallbackWorkspaceId ?? "";
+  return normalized;
 }
 
 function resolveMountedChatWorkspaces(input: {
@@ -220,6 +235,7 @@ export const ChatPage = forwardRef<ChatPageHandle, ChatPageProps>(function ChatP
   const { message } = App.useApp();
   const copy = useMemo(() => createChatCopy(props.language), [props.language]);
   const initialWorkspaceTabsStateRef = useRef(readWorkspaceTabsState());
+  const workspaceTabsStateRef = useRef(initialWorkspaceTabsStateRef.current);
   const activeWorkspaceIdRef = useRef(initialWorkspaceTabsStateRef.current.activeWorkspaceId ?? "");
   const openWorkspaceIdsRef = useRef(initialWorkspaceTabsStateRef.current.openWorkspaceIds);
   const [workspaceTabsState, setWorkspaceTabsState] = useState<WorkspaceTabsState>(
@@ -239,6 +255,36 @@ export const ChatPage = forwardRef<ChatPageHandle, ChatPageProps>(function ChatP
     onError: handleError,
   });
 
+  const persistWorkspaceTabsState = useCallback((nextState: WorkspaceTabsState) => {
+    const normalized = syncWorkspaceTabRefs({
+      state: nextState,
+      fallbackWorkspaceId: shellState.workspaceId,
+      workspaceTabsStateRef,
+      activeWorkspaceIdRef,
+      openWorkspaceIdsRef,
+    });
+    writeWorkspaceTabsState(normalized);
+    setWorkspaceTabsState((current) => {
+      const sameOpenWorkspaceIds = areListsEqual(current.openWorkspaceIds, normalized.openWorkspaceIds);
+      if (sameOpenWorkspaceIds && current.activeWorkspaceId === normalized.activeWorkspaceId) {
+        return current;
+      }
+
+      return normalized;
+    });
+    return normalized;
+  }, [shellState.workspaceId]);
+
+  useEffect(() => {
+    syncWorkspaceTabRefs({
+      state: workspaceTabsState,
+      fallbackWorkspaceId: shellState.workspaceId,
+      workspaceTabsStateRef,
+      activeWorkspaceIdRef,
+      openWorkspaceIdsRef,
+    });
+  }, [shellState.workspaceId, workspaceTabsState]);
+
   useEffect(() => {
     if (!shouldReconcileWorkspaceTabsState({
       workspaceListHydrated: shellState.workspaceListHydrated,
@@ -254,19 +300,13 @@ export const ChatPage = forwardRef<ChatPageHandle, ChatPageProps>(function ChatP
       activeWorkspaceId: workspaceTabsState.activeWorkspaceId,
     });
 
-    setWorkspaceTabsState((current) => {
-      const sameOpenWorkspaceIds = areListsEqual(current.openWorkspaceIds, nextWorkspaceTabsState.openWorkspaceIds);
-      if (sameOpenWorkspaceIds && current.activeWorkspaceId === nextWorkspaceTabsState.activeWorkspaceId) {
-        return current;
-      }
+    const resolvedWorkspaceTabsState = persistWorkspaceTabsState(nextWorkspaceTabsState);
 
-      return nextWorkspaceTabsState;
-    });
-
-    if (nextWorkspaceTabsState.activeWorkspaceId !== shellState.workspaceId) {
-      shellState.setWorkspaceId(nextWorkspaceTabsState.activeWorkspaceId);
+    if (resolvedWorkspaceTabsState.activeWorkspaceId !== shellState.workspaceId) {
+      shellState.setWorkspaceId(resolvedWorkspaceTabsState.activeWorkspaceId);
     }
   }, [
+    persistWorkspaceTabsState,
     shellState.setWorkspaceId,
     shellState.workspaceId,
     shellState.workspaceListHydrated,
@@ -275,8 +315,16 @@ export const ChatPage = forwardRef<ChatPageHandle, ChatPageProps>(function ChatP
   ]);
 
   useEffect(() => {
-    writeWorkspaceTabsState(workspaceTabsState);
-  }, [workspaceTabsState]);
+    const flushWorkspaceTabsState = () => {
+      writeWorkspaceTabsState(workspaceTabsStateRef.current);
+    };
+
+    window.addEventListener("beforeunload", flushWorkspaceTabsState);
+    return () => {
+      flushWorkspaceTabsState();
+      window.removeEventListener("beforeunload", flushWorkspaceTabsState);
+    };
+  }, []);
 
   const handleOpenWorkspace = useCallback(() => {
     window.location.hash = "workspace";
@@ -288,15 +336,12 @@ export const ChatPage = forwardRef<ChatPageHandle, ChatPageProps>(function ChatP
       return;
     }
 
-    setWorkspaceTabsState((current) => ({
-      openWorkspaceIds: openWorkspaceTab(current.openWorkspaceIds, nextWorkspaceId),
+    const nextWorkspaceTabsState = persistWorkspaceTabsState({
+      openWorkspaceIds: openWorkspaceTab(workspaceTabsStateRef.current.openWorkspaceIds, nextWorkspaceId),
       activeWorkspaceId: nextWorkspaceId,
-    }));
-    shellState.setWorkspaceId(nextWorkspaceId);
-  }, [shellState.setWorkspaceId]);
-
-  activeWorkspaceIdRef.current = workspaceTabsState.activeWorkspaceId ?? shellState.workspaceId ?? "";
-  openWorkspaceIdsRef.current = workspaceTabsState.openWorkspaceIds;
+    });
+    shellState.setWorkspaceId(nextWorkspaceTabsState.activeWorkspaceId);
+  }, [persistWorkspaceTabsState, shellState.setWorkspaceId]);
 
   const workspacePaneBridge = useChatWorkspacePaneBridge({
     workspaceItems: shellState.workspaces,
@@ -311,22 +356,18 @@ export const ChatPage = forwardRef<ChatPageHandle, ChatPageProps>(function ChatP
   }), [workspacePaneBridge.handleOpenAttachedTab, workspacePaneBridge.handleOpenConversation]);
 
   const handleCloseWorkspace = useCallback((workspaceId: string) => {
-    setWorkspaceTabsState((current) => {
-      const nextWorkspaceTabsState = closeWorkspaceTabState({
-        openWorkspaceIds: current.openWorkspaceIds,
-        activeWorkspaceId: current.activeWorkspaceId,
-        workspaceId,
-      });
+    const nextWorkspaceTabsState = persistWorkspaceTabsState(closeWorkspaceTabState({
+      openWorkspaceIds: workspaceTabsStateRef.current.openWorkspaceIds,
+      activeWorkspaceId: workspaceTabsStateRef.current.activeWorkspaceId,
+      workspaceId,
+    }));
 
-      if (workspaceId === shellState.workspaceId) {
-        shellState.setWorkspaceId(nextWorkspaceTabsState.activeWorkspaceId);
-      }
+    if (workspaceId === shellState.workspaceId) {
+      shellState.setWorkspaceId(nextWorkspaceTabsState.activeWorkspaceId);
+    }
 
-      workspacePaneBridge.clearWorkspacePaneState(workspaceId);
-
-      return nextWorkspaceTabsState;
-    });
-  }, [shellState.setWorkspaceId, shellState.workspaceId, workspacePaneBridge]);
+    workspacePaneBridge.clearWorkspacePaneState(workspaceId);
+  }, [persistWorkspaceTabsState, shellState.setWorkspaceId, shellState.workspaceId, workspacePaneBridge]);
 
   const workspaceShell = useMemo<ChatWorkspaceShellState>(() => ({
     workspaceOptions: shellState.workspaces.map((item) => ({
@@ -343,7 +384,8 @@ export const ChatPage = forwardRef<ChatPageHandle, ChatPageProps>(function ChatP
         title: item?.directoryPath,
         active: workspaceId === (workspaceTabsState.activeWorkspaceId ?? shellState.workspaceId),
         ready: true,
-        closable: workspaceTabsState.openWorkspaceIds.length > 1,
+        closable: workspaceTabsState.openWorkspaceIds.length > 1
+          && workspaceId !== (workspaceTabsState.activeWorkspaceId ?? shellState.workspaceId),
       };
     }),
     onOpenWorkspace: handleSelectWorkspace,
