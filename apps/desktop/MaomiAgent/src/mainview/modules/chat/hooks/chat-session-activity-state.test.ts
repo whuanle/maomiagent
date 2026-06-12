@@ -47,6 +47,22 @@ describe("chat session activity state", () => {
     expect(clearSessionReplying(state, "session-a")).toEqual({});
   });
 
+  test("treats interaction-triggered continuation as sending for the selected session", () => {
+    const sending = setSessionFlag({}, "session-a");
+    const replying = markSessionReplying({}, "session-a", "interaction-a");
+
+    expect(resolveSelectedSessionActivity({
+      selectedSessionId: "session-a",
+      sendingSessionIds: sending,
+      stoppingSessionIds: {},
+      replyingInteractionIdsBySessionId: replying,
+    })).toEqual({
+      sendingMessage: true,
+      stoppingMessage: false,
+      replyingInteractionId: "interaction-a",
+    });
+  });
+
   test("ignores activity from other sessions when resolving the selected session", () => {
     const sending = setSessionFlag({}, "session-a");
 

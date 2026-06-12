@@ -2045,7 +2045,7 @@ export class DesktopConversationService implements DesktopConversationPort {
       archivedAt: detail.archivedAt,
       updatedAt: latestRun ? toIsoFromRun(latestRun) : detail.updatedAt,
       lastRunId: lastRunId ?? latestRun?.id ?? current.lastRunId,
-      metadata: detail.metadata ? { ...detail.metadata } : undefined,
+      metadata: mergeSessionSelectionMetadata(detail.metadata, current.metadata),
     };
 
     this.store.upsertSession(next);
@@ -2705,6 +2705,26 @@ function readSelectionMetadata(metadata: Record<string, unknown> | undefined) {
     selectedModelId: normalizeOptionalText(metadata?.selectedModelId),
     selectedAgentId: normalizeOptionalText(metadata?.selectedAgentId),
   };
+}
+
+function mergeSessionSelectionMetadata(
+  primary: Record<string, unknown> | undefined,
+  fallback: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  const primarySelection = readSelectionMetadata(primary);
+  const fallbackSelection = readSelectionMetadata(fallback);
+
+  return mergeMetadata(primary, {
+    ...(primarySelection.selectedChannelId || fallbackSelection.selectedChannelId
+      ? { selectedChannelId: primarySelection.selectedChannelId ?? fallbackSelection.selectedChannelId }
+      : {}),
+    ...(primarySelection.selectedModelId || fallbackSelection.selectedModelId
+      ? { selectedModelId: primarySelection.selectedModelId ?? fallbackSelection.selectedModelId }
+      : {}),
+    ...(primarySelection.selectedAgentId || fallbackSelection.selectedAgentId
+      ? { selectedAgentId: primarySelection.selectedAgentId ?? fallbackSelection.selectedAgentId }
+      : {}),
+  });
 }
 
 function buildConversationTaskTitle(input: {

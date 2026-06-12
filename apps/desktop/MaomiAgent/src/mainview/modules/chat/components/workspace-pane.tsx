@@ -88,12 +88,17 @@ export const ConversationWorkspacePane = forwardRef<ConversationWorkspacePaneHan
 
   useImperativeHandle(ref, () => ({
     openConversation: async (input) => {
+      const requestedSelectedAgentId = input?.selectedAgentId?.trim();
+      if (requestedSelectedAgentId) {
+        state.setSelectedComposerAgentId(requestedSelectedAgentId);
+      }
+
       const sessionId = input?.sessionId?.trim();
       if (sessionId) {
         state.activateSession(sessionId);
       } else if (input?.createSession) {
         const createdSession = await state.createSession({
-          selectedAgentId: input.selectedAgentId,
+          selectedAgentId: requestedSelectedAgentId,
         });
         if (!createdSession) {
           return;
@@ -210,8 +215,8 @@ export const ConversationWorkspacePane = forwardRef<ConversationWorkspacePaneHan
           onComposerAgentChange={state.setSelectedComposerAgentId}
           onComposerModelChange={state.setSelectedComposerModelValue}
           onComposerModeChange={state.setComposerMode}
-          onSendMessage={() => {
-            void state.sendMessage();
+          onSendMessage={(input) => {
+            void state.sendMessage(input);
           }}
           onStopMessage={() => {
             void state.stopMessage();

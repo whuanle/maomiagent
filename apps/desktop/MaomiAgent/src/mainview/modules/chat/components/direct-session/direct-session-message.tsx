@@ -58,6 +58,7 @@ import {
 import {
   resolveCommandLikeToolHeadline,
   resolveToolDisplayNameFallback,
+  resolveToolTraceStatusLabel,
 } from "./direct-session-message-tool-trace";
 import { shouldRenderToolTraceBody } from "./direct-session-message-tool-trace-body";
 import {
@@ -727,31 +728,13 @@ function isCommandLikeToolTrace(part: ConversationMessageToolLikePart) {
 }
 
 function resolveToolTraceEyebrow(part: ConversationMessageToolLikePart, isEn: boolean) {
-  const status = part.toolCall?.status;
-
-  if (isCommandLikeToolTrace(part)) {
-    switch (status) {
-      case "blocked":
-        return isEn ? "Command approval" : "命令待审批";
-      case "failed":
-        return isEn ? "Command failed" : "命令失败";
-      case "completed":
-        return isEn ? "Ran command" : "已运行命令";
-      default:
-        return isEn ? "Running command" : "正在运行命令";
-    }
-  }
-
-  switch (status) {
-    case "blocked":
-      return isEn ? "Tool approval" : "工具待审批";
-    case "failed":
-      return isEn ? "Tool failed" : "工具失败";
-    case "completed":
-      return isEn ? "Ran tool" : "已调用工具";
-    default:
-      return isEn ? "Running tool" : "正在运行工具";
-  }
+  return resolveToolTraceStatusLabel({
+    toolName: part.toolName,
+    operationKind: part.toolCall?.operation.kind,
+    status: part.toolCall?.status,
+    error: part.toolCall?.error,
+    isEn,
+  });
 }
 
 function shouldShowToolTraceHeaderStatus(part: ConversationMessageToolLikePart) {
@@ -1604,19 +1587,26 @@ function DirectSessionMessageInner(props: Props) {
             const actionLabel = formatModifiedFileAction(item.action, isEn);
             const lineLabel = formatModifiedFileAffectedLines(item, isEn);
             const impactTitle = formatModifiedFileImpactTitle(item, isEn);
+            const paneWorkspaceId = props.paneWorkspaceId;
+            const itemWorkspaceId = trimText(item.workspaceId) || workspaceId;
             const pathNode = (
               <WorkspacePathContextMenu
                 language={props.language}
-                workspaceId={workspaceId}
+                workspaceId={itemWorkspaceId}
                 path={item.path}
                 pathKind="file"
               >
-                {openWorkspaceFilePreview ? (
+                {props.onOpenWorkspaceFilePreview && paneWorkspaceId && itemWorkspaceId ? (
                   <button
                     type="button"
                     className="chat-direct-message-files-path is-button"
                     title={item.path}
-                    onClick={() => openWorkspaceFilePreview?.(item.path)}
+                    onClick={() => props.onOpenWorkspaceFilePreview?.({
+                      workspaceId: paneWorkspaceId,
+                      targetWorkspaceId: itemWorkspaceId,
+                      path: item.path,
+                      title: extractPathLeaf(item.path) || item.path,
+                    })}
                   >
                     {item.path}
                   </button>

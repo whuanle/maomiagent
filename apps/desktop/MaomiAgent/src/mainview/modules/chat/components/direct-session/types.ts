@@ -61,7 +61,7 @@ export type DirectConversationSessionPaneProps = {
   onComposerAgentChange: (value: string | undefined) => void;
   onComposerModelChange: (value: string | undefined) => void;
   onComposerModeChange: (value: "agent" | "plan") => void;
-  onSendMessage: () => void;
+  onSendMessage: (input?: { textOverride?: string }) => void;
   onStopMessage: () => void;
   onAnswerInteraction: (interactionId: string, response: unknown) => void;
   onApproveInteraction: (interactionId: string, decision: "approve_once" | "approve_always") => void;
@@ -175,7 +175,7 @@ export type DirectSessionComposerViewModel = {
   onModelChange: (value: string | undefined) => void;
   onAgentChange: (value: string | undefined) => void;
   onModeChange: (value: "agent" | "plan") => void;
-  onSubmit: () => void;
+  onSubmit: (input?: { textOverride?: string }) => void;
   onStop: () => void;
 };
 

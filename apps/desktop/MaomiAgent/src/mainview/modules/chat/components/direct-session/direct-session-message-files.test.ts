@@ -34,7 +34,8 @@ describe("resolveModifiedMessageFiles", () => {
       createToolResultPart({
         toolName: "create_file",
         targetPaths: ["docs/guide.md"],
-        toolInput: {
+        toolOutput: {
+          workspaceId: "workspace-1",
           content: "# title\n\nbody",
         },
       }),
@@ -44,6 +45,7 @@ describe("resolveModifiedMessageFiles", () => {
       {
         path: "docs/guide.md",
         action: "create",
+        workspaceId: "workspace-1",
         additions: 3,
         deletions: 0,
         affectedLines: 3,
@@ -66,6 +68,7 @@ describe("resolveModifiedMessageFiles", () => {
       {
         path: "README.md",
         action: "modify",
+        workspaceId: undefined,
         additions: 2,
         deletions: 1,
         affectedLines: 3,
@@ -105,6 +108,7 @@ describe("resolveModifiedMessageFiles", () => {
       {
         path: "src/app.ts",
         action: "modify",
+        workspaceId: undefined,
         additions: undefined,
         deletions: undefined,
         affectedLines: undefined,
@@ -112,6 +116,7 @@ describe("resolveModifiedMessageFiles", () => {
       {
         path: "src/ui.tsx",
         action: "modify",
+        workspaceId: undefined,
         additions: undefined,
         deletions: undefined,
         affectedLines: undefined,
@@ -139,6 +144,33 @@ describe("resolveModifiedMessageFiles", () => {
       {
         path: "docs/plan.md",
         action: "create",
+        workspaceId: undefined,
+        additions: undefined,
+        deletions: undefined,
+        affectedLines: undefined,
+      },
+    ]);
+  });
+
+  test("does not count attempted input content as modified lines when the tool output has no written content", () => {
+    const files = resolveModifiedMessageFiles([
+      createToolResultPart({
+        toolName: "workspace_write_file",
+        targetPaths: ["docs/draft.md"],
+        toolInput: {
+          content: "# title\n\nbody\nmore",
+        },
+        toolOutput: {
+          path: "docs/draft.md",
+        },
+      }),
+    ]);
+
+    expect(files).toEqual([
+      {
+        path: "docs/draft.md",
+        action: "modify",
+        workspaceId: undefined,
         additions: undefined,
         deletions: undefined,
         affectedLines: undefined,

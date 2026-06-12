@@ -8,6 +8,7 @@ export type DirectSessionModifiedMessageFileAction = "create" | "delete" | "modi
 export type DirectSessionModifiedMessageFile = {
   path: string;
   action: DirectSessionModifiedMessageFileAction;
+  workspaceId?: string;
   affectedLines?: number;
   additions?: number;
   deletions?: number;
@@ -117,7 +118,6 @@ function resolveModifiedFileStats(
 ): DirectSessionModifiedMessageFileStats | undefined {
   const toolCall = resolveToolCallRecord(part);
   const output = isRecord(toolCall?.output) ? toolCall.output : undefined;
-  const input = isRecord(toolCall?.input) ? toolCall.input : isRecord(part.input) ? part.input : undefined;
 
   const additions = readNumber(output?.additions);
   const deletions = readNumber(output?.deletions);
@@ -131,16 +131,12 @@ function resolveModifiedFileStats(
     };
   }
 
-  const patchStats = parsePatchLineStats(output?.patch) ?? parsePatchLineStats(input?.patch);
+  const patchStats = parsePatchLineStats(output?.patch);
   if (patchStats) {
     return patchStats;
   }
 
-  const content = typeof output?.content === "string"
-    ? output.content
-    : typeof input?.content === "string"
-      ? input.content
-      : undefined;
+  const content = typeof output?.content === "string" ? output.content : undefined;
   if (content === undefined) {
     return undefined;
   }
@@ -210,6 +206,8 @@ export function resolveModifiedMessageFiles(
         continue;
       }
 
+      const output = resolveToolCallRecord(part)?.output;
+      const outputRecord = isRecord(output) ? output : undefined;
       const action = resolveModifiedFileAction(part);
       const stats = resolveModifiedFileStats(part, action);
       const current = files.get(normalizedPath);
@@ -219,6 +217,7 @@ export function resolveModifiedMessageFiles(
       files.set(normalizedPath, {
         path: normalizedPath,
         action,
+        workspaceId: current?.workspaceId ?? (trimText(outputRecord?.workspaceId) || undefined),
         additions: combineCount(current?.additions, additions),
         deletions: combineCount(current?.deletions, deletions),
         affectedLines: combineCount(current?.affectedLines, stats?.affectedLines),

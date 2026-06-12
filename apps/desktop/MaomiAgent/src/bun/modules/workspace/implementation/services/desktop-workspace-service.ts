@@ -329,6 +329,31 @@ export class DesktopWorkspaceService implements DesktopWorkspacePort {
     };
   }
 
+  async readTextFile(workspaceId: string, path: string): Promise<DesktopWorkspaceFileContentResult> {
+    const workspace = this.requireWorkspace(workspaceId);
+    const rootPath = requireDirectoryPath(workspace.directoryPath);
+    const { absolutePath, normalizedPath } = ensureInsideWorkspace(rootPath, path);
+    const buffer = await readFile(absolutePath);
+    const mimeType = detectMimeType(absolutePath);
+    const isImage = Boolean(mimeType?.startsWith("image/"));
+    const isText = !isImage && isProbablyTextFile(absolutePath, mimeType, buffer);
+
+    if (!isText) {
+      return this.getFileContent(workspaceId, path);
+    }
+
+    return {
+      workspaceId: workspace.workspaceId,
+      rootPath,
+      path: normalizedPath,
+      absolutePath,
+      content: buffer.toString("utf-8"),
+      binary: false,
+      truncated: false,
+      mimeType,
+    };
+  }
+
   async writeTextFile(workspaceId: string, path: string, content: string): Promise<DesktopWorkspaceFileContentResult> {
     return this.runMutation(async () => {
       const workspace = this.requireWorkspace(workspaceId);

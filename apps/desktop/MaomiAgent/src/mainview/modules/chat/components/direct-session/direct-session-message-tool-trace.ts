@@ -45,6 +45,15 @@ function isTerminalToolName(toolName: string) {
   return trimText(toolName).toLowerCase().startsWith("terminal_");
 }
 
+function readErrorCode(error: unknown) {
+  if (!error || typeof error !== "object" || Array.isArray(error)) {
+    return undefined;
+  }
+
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" && code.trim() ? code.trim() : undefined;
+}
+
 function titleCaseWords(value: string) {
   return value
     .split(/\s+/u)
@@ -57,6 +66,14 @@ const TOOL_LABEL_FALLBACKS = {
   workspace_read_file: {
     "en-US": "Read workspace file",
     "zh-CN": "读取工作区文件",
+  },
+  workspace_edit_file: {
+    "en-US": "Edit workspace file",
+    "zh-CN": "编辑工作区文件",
+  },
+  workspace_apply_patch: {
+    "en-US": "Apply workspace patch",
+    "zh-CN": "应用工作区补丁",
   },
   git_list_changes: {
     "en-US": "Inspect git changes",
@@ -172,6 +189,39 @@ export function resolveToolDisplayNameFallback(toolName: string, isEn: boolean) 
 
   const humanized = titleCaseWords(normalizedToolName.replace(/[_-]+/gu, " "));
   return humanized || (isEn ? "Tool" : "工具");
+}
+
+export function resolveToolTraceStatusLabel(input: {
+  toolName: string;
+  operationKind?: string;
+  status?: string;
+  error?: unknown;
+  isEn: boolean;
+}) {
+  const commandLike = isTerminalToolName(input.toolName) || input.operationKind === "command_execution";
+  const errorCode = readErrorCode(input.error);
+
+  switch (input.status) {
+    case "blocked":
+      return commandLike
+        ? (input.isEn ? "Command approval" : "命令待审批")
+        : (input.isEn ? "Tool approval" : "工具待审批");
+    case "failed":
+      if (errorCode === "tool_loop_detected") {
+        return input.isEn ? "Repeated tool calls stopped" : "连续重复调用已中止";
+      }
+      return commandLike
+        ? (input.isEn ? "Command failed" : "命令失败")
+        : (input.isEn ? "Tool failed" : "工具失败");
+    case "completed":
+      return commandLike
+        ? (input.isEn ? "Ran command" : "已运行命令")
+        : (input.isEn ? "Ran tool" : "已调用工具");
+    default:
+      return commandLike
+        ? (input.isEn ? "Running command" : "正在运行命令")
+        : (input.isEn ? "Running tool" : "正在运行工具");
+  }
 }
 
 export function resolveCommandLikeToolHeadline(input: ResolveCommandLikeToolHeadlineInput) {

@@ -311,7 +311,8 @@ describe("OpenAIChatCompletionsPromptCodec", () => {
       && Array.isArray(message.tool_calls)
       && message.tool_calls.length > 0)?.tool_calls?.[0];
 
-    expect(toolCall?.function.arguments).toContain("contentSummary");
+    expect(toolCall?.function.arguments).toContain("\"content\"");
+    expect(toolCall?.function.arguments).toContain("Historical file body omitted");
     expect(toolCall?.function.arguments).not.toContain("A".repeat(300));
   });
 

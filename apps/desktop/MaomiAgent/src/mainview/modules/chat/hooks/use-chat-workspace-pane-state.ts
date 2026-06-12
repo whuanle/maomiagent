@@ -195,9 +195,14 @@ function readComposerModeMetadata(metadata: Record<string, unknown> | undefined)
 function resolveNextComposerAgentId(
   options: ChatComposerAgentOption[],
   currentValue: string | undefined,
+  preferredValue?: string,
 ) {
   if (currentValue && options.some((item) => item.value === currentValue)) {
     return currentValue;
+  }
+
+  if (preferredValue && options.some((item) => item.value === preferredValue)) {
+    return preferredValue;
   }
 
   if (options.some((item) => item.value === DEFAULT_DESKTOP_PRIMARY_AGENT_ID)) {
@@ -462,6 +467,8 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
   const selectedSessionSummaryModelId = normalizeOptionalText(selectedSession?.metadata?.selectedModelId);
   const selectedSessionDetailChannelId = normalizeOptionalText(selectedSessionDetail?.metadata?.selectedChannelId);
   const selectedSessionDetailModelId = normalizeOptionalText(selectedSessionDetail?.metadata?.selectedModelId);
+  const selectedSessionSummaryAgentId = normalizeOptionalText(selectedSession?.metadata?.selectedAgentId);
+  const selectedSessionDetailAgentId = normalizeOptionalText(selectedSessionDetail?.metadata?.selectedAgentId);
 
   useEffect(() => {
     executionOverlaysRef.current = executionOverlays;
@@ -861,6 +868,12 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
     }
 
     try {
+      const resolvedDetailAgentId = selectedSessionId && _detail?.sessionId === selectedSessionId
+        ? normalizeOptionalText(_detail.metadata?.selectedAgentId)
+        : undefined;
+      const preferredAgentId = resolvedDetailAgentId
+        ?? selectedSessionDetailAgentId
+        ?? selectedSessionSummaryAgentId;
       const response = await listDesktopAgents({
         enabled: true,
         includeRuntimeAgents: true,
@@ -877,12 +890,13 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
       setSelectedComposerAgentId((currentValue) => resolveNextComposerAgentId(
         options,
         currentValue,
+        preferredAgentId,
       ));
     } catch {
       setComposerAgentOptions([]);
       setSelectedComposerAgentId(undefined);
     }
-  }, [agentsBridgeAvailable]);
+  }, [agentsBridgeAvailable, selectedSessionDetailAgentId, selectedSessionId, selectedSessionSummaryAgentId]);
 
   const reloadSessions = useCallback(async (preferredSessionId?: string) => {
     if (!bridgeAvailable) {
@@ -1198,11 +1212,15 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
   const createSession = useCallback(async (options?: { selectedAgentId?: string }) => {
     setCreatingSession(true);
     try {
+      const requestedSelectedAgentId = options?.selectedAgentId?.trim() || selectedComposerAgentId;
       await waitForConversationWorkspaceSettingsSaves(workspaceId);
       const response = await createDesktopConversationSession({
         workspaceId,
-        selectedAgentId: options?.selectedAgentId?.trim() || selectedComposerAgentId,
+        selectedAgentId: requestedSelectedAgentId,
       });
+      if (requestedSelectedAgentId) {
+        setSelectedComposerAgentId(requestedSelectedAgentId);
+      }
       await reloadSessions(response.item.sessionId);
       await reloadSessionDetail(response.item.sessionId);
       await reloadComposerAgents();
@@ -1380,12 +1398,12 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
     }
   }, [onError, updateSessionDetailsById]);
 
-  const sendMessage = useCallback(async () => {
+  const sendMessage = useCallback(async (options?: { textOverride?: string }) => {
     if (!selectedSessionId || sendingMessage) {
       return false;
     }
 
-    const text = draftMessage.trim();
+    const text = (options?.textOverride ?? draftMessage).trim();
     const attachments = buildComposerAttachmentInputs(composerAttachments);
 
     if (!text && attachments.length === 0) {
@@ -1550,11 +1568,16 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
   ) => {
     const targetSessionId = selectedSessionId;
     if (targetSessionId) {
+      setSendingSessionIds((current) => setSessionFlag(current, targetSessionId));
       setReplyingInteractionIdsBySessionId((current) =>
         markSessionReplying(current, targetSessionId, interactionId));
     }
     const stopPolling = targetSessionId
-      ? startSessionDetailFallbackPolling(targetSessionId, applySessionDetail)
+      ? startSessionDetailFallbackPolling(targetSessionId, (detail) => {
+          applySessionDetail(detail, {
+            clearSendingForSessionId: targetSessionId,
+          });
+        })
       : undefined;
 
     try {
@@ -1564,13 +1587,20 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
         response: interactionResponse,
       });
       stopPolling?.();
-      applySessionDetail(response.detail);
-      await reloadSessions(response.detail.sessionId);
-      await reloadComposerAgents(response.detail);
-      await reloadComposerModels(response.detail);
+      applySessionDetail(response.detail, {
+        clearSendingForSessionId: targetSessionId ?? undefined,
+      });
+      void Promise.allSettled([
+        reloadSessions(response.detail.sessionId),
+        reloadComposerAgents(response.detail),
+        reloadComposerModels(response.detail),
+      ]);
       return true;
     } catch (error) {
       stopPolling?.();
+      if (targetSessionId) {
+        setSendingSessionIds((current) => removeSessionFlag(current, targetSessionId));
+      }
       onError("replyInteraction", error);
       return false;
     } finally {
@@ -1584,11 +1614,16 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
   const rejectInteraction = useCallback(async (interactionId: string) => {
     const targetSessionId = selectedSessionId;
     if (targetSessionId) {
+      setSendingSessionIds((current) => setSessionFlag(current, targetSessionId));
       setReplyingInteractionIdsBySessionId((current) =>
         markSessionReplying(current, targetSessionId, interactionId));
     }
     const stopPolling = targetSessionId
-      ? startSessionDetailFallbackPolling(targetSessionId, applySessionDetail)
+      ? startSessionDetailFallbackPolling(targetSessionId, (detail) => {
+          applySessionDetail(detail, {
+            clearSendingForSessionId: targetSessionId,
+          });
+        })
       : undefined;
 
     try {
@@ -1597,13 +1632,20 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
         interactionId,
       });
       stopPolling?.();
-      applySessionDetail(response.detail);
-      await reloadSessions(response.detail.sessionId);
-      await reloadComposerAgents(response.detail);
-      await reloadComposerModels(response.detail);
+      applySessionDetail(response.detail, {
+        clearSendingForSessionId: targetSessionId ?? undefined,
+      });
+      void Promise.allSettled([
+        reloadSessions(response.detail.sessionId),
+        reloadComposerAgents(response.detail),
+        reloadComposerModels(response.detail),
+      ]);
       return true;
     } catch (error) {
       stopPolling?.();
+      if (targetSessionId) {
+        setSendingSessionIds((current) => removeSessionFlag(current, targetSessionId));
+      }
       onError("replyInteraction", error);
       return false;
     } finally {

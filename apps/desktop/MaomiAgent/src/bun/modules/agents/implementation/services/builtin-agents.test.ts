@@ -50,9 +50,16 @@ test("builtin feishu doc agent is visible in both primary and subagent contexts 
     source: "builtin-maomi",
   });
   expect(item?.prompt).toContain("本地草稿");
+  expect(item?.prompt).toContain("字面量工作区相对路径");
+  expect(item?.prompt).toContain("严格 Markdown");
   expect(item?.prompt).toContain("不直接推送");
+  expect(item?.prompt).toContain("`# 标题`");
   expect(item?.prompt).toContain("标题层级");
   expect(item?.prompt).toContain("callout");
+  expect(item?.prompt).toContain("`workspace_edit_file`");
+  expect(item?.prompt).toContain("`workspace_apply_patch`");
+  expect(item?.prompt).toContain("`content` 字段");
+  expect(item?.prompt).toContain("不要先输出大段计划");
   expect(item?.prompt).toContain("同步块");
   expect(item?.prompt).toContain("不臆造资源 token");
 });

@@ -35,6 +35,9 @@ describe("desktop conversation builtin tools", () => {
   test("lists the builtin tool catalog and executes workspace/git query handlers", async () => {
     const managedRootTaskPatches: Array<Record<string, unknown>> = [];
     const terminalInputs: string[] = [];
+    const fileContents = new Map<string, string>([
+      ["src/index.ts", "export const value = 1;"],
+    ]);
     const bundle = createDesktopConversationBuiltinToolBundle({
       workspaceQuery: {
         async list() {
@@ -75,15 +78,28 @@ describe("desktop conversation builtin tools", () => {
             rootPath: "E:/workspace/MaomiAgent",
             path,
             absolutePath: `E:/workspace/MaomiAgent/${path}`,
-            content: "export const value = 1;",
+            content: fileContents.get(path) ?? "",
             binary: false,
             truncated: false,
-            mimeType: "application/typescript",
+            mimeType: path.endsWith(".ts") ? "application/typescript" : "text/markdown",
+          };
+        },
+        async readTextFile(workspaceId, path) {
+          return {
+            workspaceId,
+            rootPath: "E:/workspace/MaomiAgent",
+            path,
+            absolutePath: `E:/workspace/MaomiAgent/${path}`,
+            content: fileContents.get(path) ?? "",
+            binary: false,
+            truncated: false,
+            mimeType: path.endsWith(".ts") ? "application/typescript" : "text/markdown",
           };
         },
       },
       workspaceCommand: {
         async writeTextFile(workspaceId, path, content) {
+          fileContents.set(path, content);
           return {
             workspaceId,
             rootPath: "E:/workspace/MaomiAgent",
@@ -292,6 +308,8 @@ describe("desktop conversation builtin tools", () => {
     expect(catalog.tools.map((tool) => tool.name)).toEqual([
       "workspace_read_file",
       "workspace_write_file",
+      "workspace_edit_file",
+      "workspace_apply_patch",
       "workspace_write_document",
       "git_list_changes",
       "git_review_file",
@@ -308,6 +326,8 @@ describe("desktop conversation builtin tools", () => {
 
     const workspaceReadHandler = bundle.toolHandlers.find((handler) => handler.descriptor.name === "workspace_read_file");
     const workspaceWriteFileHandler = bundle.toolHandlers.find((handler) => handler.descriptor.name === "workspace_write_file");
+    const workspaceEditFileHandler = bundle.toolHandlers.find((handler) => handler.descriptor.name === "workspace_edit_file");
+    const workspaceApplyPatchHandler = bundle.toolHandlers.find((handler) => handler.descriptor.name === "workspace_apply_patch");
     const workspaceWriteDocumentHandler = bundle.toolHandlers.find((handler) => handler.descriptor.name === "workspace_write_document");
     const gitReviewHandler = bundle.toolHandlers.find((handler) => handler.descriptor.name === "git_review_file");
     const terminalCreateHandler = bundle.toolHandlers.find((handler) => handler.descriptor.name === "terminal_create_session");
@@ -318,6 +338,8 @@ describe("desktop conversation builtin tools", () => {
 
     expect(workspaceReadHandler).toBeTruthy();
     expect(workspaceWriteFileHandler).toBeTruthy();
+    expect(workspaceEditFileHandler).toBeTruthy();
+    expect(workspaceApplyPatchHandler).toBeTruthy();
     expect(workspaceWriteDocumentHandler).toBeTruthy();
     expect(gitReviewHandler).toBeTruthy();
     expect(terminalCreateHandler).toBeTruthy();
@@ -390,6 +412,38 @@ describe("desktop conversation builtin tools", () => {
       path: "src/index.ts",
       binary: false,
       content: "export const value = 1;",
+      numberedContent: "1: export const value = 1;",
+    }));
+
+    fileContents.set("docs/long.md", ["line 1", "line 2", "line 3", "line 4"].join("\n"));
+    const workspaceReadWindowResult = await workspaceReadHandler!.execute({
+      call: {
+        id: asToolCallId("tool_call_workspace_read_window"),
+        sessionId: asSessionId("session_builtin_tools"),
+        runId: asRunId("run_builtin_tools"),
+        turnId: asTurnId("turn_builtin_tools"),
+        messageId: asMessageId("message_assistant_1"),
+        toolName: "workspace_read_file",
+        input: {
+          path: "docs/long.md",
+          offset: 2,
+          limit: 2,
+        },
+        status: "executing",
+        startedAt: 4,
+        updatedAt: 4,
+      },
+      context,
+    });
+
+    expect(workspaceReadWindowResult).toEqual(expect.objectContaining({
+      path: "docs/long.md",
+      content: "line 2\nline 3",
+      numberedContent: "2: line 2\n3: line 3",
+      lineOffset: 2,
+      lineLimit: 2,
+      totalLines: 4,
+      nextOffset: 4,
     }));
 
     const workspaceWriteFileResult = await workspaceWriteFileHandler!.execute({
@@ -417,6 +471,127 @@ describe("desktop conversation builtin tools", () => {
     expect(workspaceWriteFileResult).toEqual(expect.objectContaining({
       path: ".gitea/workflows/build.yml",
       content: "name: build\n",
+    }));
+
+    const feishuDraftWriteResult = await workspaceWriteFileHandler!.execute({
+      call: {
+        id: asToolCallId("tool_call_workspace_write_feishu_draft"),
+        sessionId: asSessionId("session_builtin_tools"),
+        runId: asRunId("run_builtin_tools"),
+        turnId: asTurnId("turn_builtin_tools"),
+        messageId: asMessageId("message_assistant_1"),
+        toolName: "workspace_write_file",
+        input: {
+          path: ".maomi/feishu-docs/drafts/demo.draft.md",
+          content: "##第一部分\n-条目一\n1.条目二\n>引用\n```md\n##保持原样\n-保持原样\n```",
+        },
+        status: "executing",
+        startedAt: 4,
+        updatedAt: 4,
+      },
+      context: {
+        ...context,
+        descriptor: workspaceWriteFileHandler!.descriptor,
+      },
+    });
+
+    expect(feishuDraftWriteResult).toEqual(expect.objectContaining({
+      path: ".maomi/feishu-docs/drafts/demo.draft.md",
+      content: "## 第一部分\n- 条目一\n1. 条目二\n> 引用\n```md\n##保持原样\n-保持原样\n```",
+    }));
+
+    const normalizedHeadingWriteResult = await workspaceWriteFileHandler!.execute({
+      call: {
+        id: asToolCallId("tool_call_workspace_write_feishu_heading_safe"),
+        sessionId: asSessionId("session_builtin_tools"),
+        runId: asRunId("run_builtin_tools"),
+        turnId: asTurnId("turn_builtin_tools"),
+        messageId: asMessageId("message_assistant_1"),
+        toolName: "workspace_write_file",
+        input: {
+          path: ".maomi/feishu-docs/drafts/heading-safe.draft.md",
+          content: "## 第一部分\n- 条目一",
+        },
+        status: "executing",
+        startedAt: 4,
+        updatedAt: 4,
+      },
+      context: {
+        ...context,
+        descriptor: workspaceWriteFileHandler!.descriptor,
+      },
+    });
+
+    expect(normalizedHeadingWriteResult).toEqual(expect.objectContaining({
+      path: ".maomi/feishu-docs/drafts/heading-safe.draft.md",
+      content: "## 第一部分\n- 条目一",
+    }));
+
+    const workspaceEditResult = await workspaceEditFileHandler!.execute({
+      call: {
+        id: asToolCallId("tool_call_workspace_edit_file"),
+        sessionId: asSessionId("session_builtin_tools"),
+        runId: asRunId("run_builtin_tools"),
+        turnId: asTurnId("turn_builtin_tools"),
+        messageId: asMessageId("message_assistant_1"),
+        toolName: "workspace_edit_file",
+        input: {
+          path: ".maomi/feishu-docs/drafts/demo.draft.md",
+          oldText: "## 第一部分\n- 条目一",
+          newText: "## 第一部分\n- 条目一\n- 条目三",
+        },
+        status: "executing",
+        startedAt: 4,
+        updatedAt: 4,
+      },
+      context: {
+        ...context,
+        descriptor: workspaceEditFileHandler!.descriptor,
+      },
+    });
+
+    expect(workspaceEditResult).toEqual(expect.objectContaining({
+      path: ".maomi/feishu-docs/drafts/demo.draft.md",
+      replacementsApplied: 1,
+      content: "## 第一部分\n- 条目一\n- 条目三\n1. 条目二\n> 引用\n```md\n##保持原样\n-保持原样\n```",
+    }));
+
+    const workspaceApplyPatchResult = await workspaceApplyPatchHandler!.execute({
+      call: {
+        id: asToolCallId("tool_call_workspace_apply_patch"),
+        sessionId: asSessionId("session_builtin_tools"),
+        runId: asRunId("run_builtin_tools"),
+        turnId: asTurnId("turn_builtin_tools"),
+        messageId: asMessageId("message_assistant_1"),
+        toolName: "workspace_apply_patch",
+        input: {
+          patchText: [
+            "*** Begin Patch",
+            "*** Update File: .maomi/feishu-docs/drafts/demo.draft.md",
+            "@@",
+            " ## 第一部分",
+            " - 条目一",
+            " - 条目三",
+            " 1. 条目二",
+            "+2. 条目四",
+            " > 引用",
+            "*** End Patch",
+          ].join("\n"),
+        },
+        status: "executing",
+        startedAt: 4,
+        updatedAt: 4,
+      },
+      context: {
+        ...context,
+        descriptor: workspaceApplyPatchHandler!.descriptor,
+      },
+    });
+
+    expect(workspaceApplyPatchResult).toEqual(expect.objectContaining({
+      workspaceId: "workspace-1",
+      patch: expect.stringContaining("*** Update File: .maomi/feishu-docs/drafts/demo.draft.md"),
+      content: "## 第一部分\n- 条目一\n- 条目三\n1. 条目二\n2. 条目四\n> 引用\n```md\n##保持原样\n-保持原样\n```",
     }));
 
     const workspaceWriteResult = await workspaceWriteDocumentHandler!.execute({

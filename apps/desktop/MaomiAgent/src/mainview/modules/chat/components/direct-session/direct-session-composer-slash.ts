@@ -1,4 +1,5 @@
 import type { ChatSlashCommandOption } from "../../types";
+import { removeDirectSessionComposerSlashToken } from "./direct-session-composer-submit";
 
 export type DirectSessionComposerSlashMatch = {
   query: string;
@@ -11,7 +12,7 @@ export type ApplyDirectSessionComposerSlashCommandInput = {
   draft: string;
   replaceStart: number;
   replaceEnd: number;
-  command: Pick<ChatSlashCommandOption, "insertText">;
+  command: Pick<ChatSlashCommandOption, "key" | "label" | "insertText" | "description">;
 };
 
 function isWhitespace(value: string | undefined) {
@@ -78,14 +79,14 @@ export function resolveDirectSessionComposerSlashMatch(input: {
 export function applyDirectSessionComposerSlashCommand(
   input: ApplyDirectSessionComposerSlashCommandInput,
 ) {
-  const prefix = input.draft.slice(0, input.replaceStart);
-  const suffix = input.draft.slice(input.replaceEnd);
-  const separator = suffix.startsWith(" ") || suffix.startsWith("\n") || !suffix ? "" : " ";
-  const nextDraft = `${prefix}/${input.command.insertText}${separator}${suffix}`;
-  const nextSelectionStart = `${prefix}/${input.command.insertText}`.length + separator.length;
+  const nextState = removeDirectSessionComposerSlashToken({
+    draft: input.draft,
+    replaceStart: input.replaceStart,
+    replaceEnd: input.replaceEnd,
+  });
 
   return {
-    draft: nextDraft,
-    selectionStart: nextSelectionStart,
+    ...nextState,
+    selectedCommand: input.command,
   };
 }

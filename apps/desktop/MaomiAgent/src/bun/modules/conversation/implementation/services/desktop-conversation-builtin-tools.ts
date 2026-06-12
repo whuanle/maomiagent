@@ -13,6 +13,7 @@ import { DesktopShellProfileService } from "../../../terminals";
 import type { DesktopConversationTaskBridgePort } from "../../../tasks";
 import type {
   DesktopWorkspaceCommandPort,
+  DesktopWorkspaceFileContentResult,
   DesktopWorkspaceItem,
   DesktopWorkspaceQueryPort,
 } from "../../../workspace";
@@ -24,7 +25,12 @@ import {
 } from "./desktop-terminal-shell-prompt";
 
 type DesktopConversationBuiltinToolBundleOptions = {
-  workspaceQuery: Pick<DesktopWorkspaceQueryPort, "list" | "get" | "getFileContent">;
+  workspaceQuery: Pick<DesktopWorkspaceQueryPort, "list" | "get" | "getFileContent"> & {
+    readTextFile?: (
+      workspaceId: string,
+      path: string,
+    ) => Promise<DesktopWorkspaceFileContentResult>;
+  };
   workspaceCommand?: Pick<DesktopWorkspaceCommandPort, "writeTextFile">;
   gitQuery: Pick<DesktopGitQueryPort, "getGitChanges" | "getGitReviewDetail">;
   terminalQuery: Pick<DesktopTerminalsQueryPort, "getDetail">;
@@ -39,7 +45,7 @@ export type DesktopConversationBuiltinToolBundle = {
 
 const BUILTIN_TOOL_SOURCE = {
   sourceId: "builtin.desktop.conversation",
-  signature: "desktop-conversation-builtin-v4",
+  signature: "desktop-conversation-builtin-v5",
   metadata: {
     toolSourceKind: "builtin",
   },
@@ -47,15 +53,19 @@ const BUILTIN_TOOL_SOURCE = {
 
 const TOOL_RESULT_ITEM_LIMIT = 200;
 const TOOL_TEXT_OUTPUT_MAX_CHARS = 64_000;
+const WORKSPACE_READ_DEFAULT_LINE_LIMIT = 200;
+const WORKSPACE_READ_MAX_LINE_LIMIT = 1_000;
 
 const WORKSPACE_READ_FILE_DESCRIPTOR: ToolDescriptor = {
   name: "workspace_read_file",
-  description: "Read a text file from the current workspace. Binary files return metadata only.",
+  description: "Read a text file from the current workspace. Use `offset` and `limit` to read only the needed line window from large files. Binary files return metadata only.",
   inputSchema: {
     type: "object",
     properties: {
       workspaceId: { type: "string" },
       path: { type: "string" },
+      offset: { type: "number" },
+      limit: { type: "number" },
     },
     required: ["path"],
     additionalProperties: false,
@@ -65,6 +75,25 @@ const WORKSPACE_READ_FILE_DESCRIPTOR: ToolDescriptor = {
     operationKind: "file_read",
     operationLabel: "Read workspace file",
     planModeAccess: "read",
+  },
+};
+
+const WORKSPACE_APPLY_PATCH_DESCRIPTOR: ToolDescriptor = {
+  name: "workspace_apply_patch",
+  description: "Apply a structured multi-file patch. Prefer this for coordinated edits across one or more existing files.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      workspaceId: { type: "string" },
+      patchText: { type: "string" },
+    },
+    required: ["patchText"],
+    additionalProperties: false,
+  },
+  metadata: {
+    toolSourceKind: "builtin",
+    operationKind: "file_write",
+    operationLabel: "Apply workspace patch",
   },
 };
 
@@ -85,6 +114,28 @@ const WORKSPACE_WRITE_FILE_DESCRIPTOR: ToolDescriptor = {
     toolSourceKind: "builtin",
     operationKind: "file_write",
     operationLabel: "Write workspace file",
+  },
+};
+
+const WORKSPACE_EDIT_FILE_DESCRIPTOR: ToolDescriptor = {
+  name: "workspace_edit_file",
+  description: "Edit an existing text file by replacing an exact text fragment. Prefer this for targeted updates to long files.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      workspaceId: { type: "string" },
+      path: { type: "string" },
+      oldText: { type: "string" },
+      newText: { type: "string" },
+      replaceAll: { type: "boolean" },
+    },
+    required: ["path", "oldText", "newText"],
+    additionalProperties: false,
+  },
+  metadata: {
+    toolSourceKind: "builtin",
+    operationKind: "file_write",
+    operationLabel: "Edit workspace file",
   },
 };
 
@@ -455,6 +506,48 @@ function normalizePositiveInteger(value: unknown): number | undefined {
     : undefined;
 }
 
+function countTextLines(value: string): number {
+  if (!value) {
+    return 0;
+  }
+
+  return value.replace(/\r\n?/g, "\n").split("\n").length;
+}
+
+function toLineWindow(input: {
+  content: string;
+  offset?: number;
+  limit?: number;
+}) {
+  const normalized = input.content.replace(/\r\n?/g, "\n");
+  const lines = normalized.split("\n");
+  const totalLines = lines.length;
+  const offset = Math.max(1, input.offset ?? 1);
+  const limit = Math.min(
+    Math.max(1, input.limit ?? WORKSPACE_READ_DEFAULT_LINE_LIMIT),
+    WORKSPACE_READ_MAX_LINE_LIMIT,
+  );
+  const startIndex = Math.min(totalLines, offset - 1);
+  const windowLines = lines.slice(startIndex, startIndex + limit);
+  const content = windowLines.join("\n");
+  const numberedContent = windowLines
+    .map((line, index) => `${startIndex + index + 1}: ${line}`)
+    .join("\n");
+  const nextOffset = startIndex + windowLines.length < totalLines
+    ? startIndex + windowLines.length + 1
+    : undefined;
+
+  return {
+    content,
+    numberedContent,
+    lineOffset: offset,
+    lineLimit: limit,
+    totalLines,
+    truncated: Boolean(nextOffset) || startIndex > 0,
+    ...(nextOffset ? { nextOffset } : {}),
+  };
+}
+
 function normalizeTerminalShellKind(value: unknown): DesktopTerminalShellKind | undefined {
   return value === "powershell" || value === "cmd" || value === "bash" || value === "sh"
     ? value
@@ -535,8 +628,30 @@ function createStaticToolSource(descriptors: ToolDescriptor[]): ToolSource {
   };
 }
 
+async function readWorkspaceFileForEditing(
+  workspaceQuery: Pick<DesktopWorkspaceQueryPort, "getFileContent"> & {
+    readTextFile?: (
+      workspaceId: string,
+      path: string,
+    ) => Promise<DesktopWorkspaceFileContentResult>;
+  },
+  workspaceId: string,
+  path: string,
+): Promise<DesktopWorkspaceFileContentResult> {
+  if (typeof workspaceQuery.readTextFile === "function") {
+    return workspaceQuery.readTextFile(workspaceId, path);
+  }
+
+  return workspaceQuery.getFileContent(workspaceId, path);
+}
+
 function createWorkspaceReadFileHandler(
-  workspaceQuery: Pick<DesktopWorkspaceQueryPort, "list" | "get" | "getFileContent">,
+  workspaceQuery: Pick<DesktopWorkspaceQueryPort, "list" | "get" | "getFileContent"> & {
+    readTextFile?: (
+      workspaceId: string,
+      path: string,
+    ) => Promise<DesktopWorkspaceFileContentResult>;
+  },
 ): RegisteredToolHandler {
   return {
     descriptor: WORKSPACE_READ_FILE_DESCRIPTOR,
@@ -544,6 +659,8 @@ function createWorkspaceReadFileHandler(
       const input = isRecord(call.input) ? call.input : {};
       const workspaceId = await resolveWorkspaceId(workspaceQuery, input, context.session.metadata);
       const path = normalizeOptionalText(input.path);
+      const offset = normalizePositiveInteger(input.offset);
+      const limit = normalizePositiveInteger(input.limit);
 
       if (!workspaceId) {
         return asToolFailure("workspace_id_required", "workspaceId is required for workspace_read_file.");
@@ -554,7 +671,7 @@ function createWorkspaceReadFileHandler(
       }
 
       try {
-        const file = await workspaceQuery.getFileContent(workspaceId, path);
+        const file = await readWorkspaceFileForEditing(workspaceQuery, workspaceId, path);
         if (file.binary) {
           return {
             workspaceId: file.workspaceId,
@@ -569,7 +686,13 @@ function createWorkspaceReadFileHandler(
           };
         }
 
-        const content = truncateText(file.content);
+        const lineWindow = toLineWindow({
+          content: file.content,
+          offset,
+          limit,
+        });
+        const content = truncateText(lineWindow.content);
+        const numberedContent = truncateText(lineWindow.numberedContent);
 
         return {
           workspaceId: file.workspaceId,
@@ -577,9 +700,14 @@ function createWorkspaceReadFileHandler(
           path: file.path,
           absolutePath: file.absolutePath,
           binary: false,
-          truncated: file.truncated || content.truncated,
+          truncated: file.truncated || lineWindow.truncated || content.truncated || numberedContent.truncated,
           ...(file.mimeType ? { mimeType: file.mimeType } : {}),
           content: content.text,
+          numberedContent: numberedContent.text,
+          lineOffset: lineWindow.lineOffset,
+          lineLimit: lineWindow.lineLimit,
+          totalLines: lineWindow.totalLines,
+          ...(lineWindow.nextOffset ? { nextOffset: lineWindow.nextOffset } : {}),
         };
       } catch (error) {
         return asToolFailure(
@@ -594,9 +722,48 @@ function createWorkspaceReadFileHandler(
 
 const DOCUMENT_WRITE_EXTENSIONS = new Set([".md", ".mdx", ".txt", ".rst", ".adoc"]);
 const ROOT_README_RE = /^README(?:[._-][^/\\]+)?\.md$/i;
+const FEISHU_DOC_CACHE_PATH_RE = /^\.maomi\/feishu-docs\/.+\.md$/i;
 
 function normalizeWorkspaceWritablePath(value: string): string {
   return value.trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\/+/, "");
+}
+
+function isFeishuDocCacheMarkdownPath(path: string): boolean {
+  return FEISHU_DOC_CACHE_PATH_RE.test(normalizeWorkspaceWritablePath(path));
+}
+
+function normalizeFeishuMarkdownDraftContent(content: string): string {
+  const lines = content.replace(/\r\n?/g, "\n").split("\n");
+  const normalizedLines: string[] = [];
+  let activeFenceMarker: string | undefined;
+
+  for (const line of lines) {
+    const fenceMatch = line.match(/^\s*([`~]{3,})/u);
+    if (fenceMatch) {
+      const marker = fenceMatch[1] ?? "";
+      if (!activeFenceMarker) {
+        activeFenceMarker = marker;
+      } else if (marker.startsWith(activeFenceMarker[0] ?? "")) {
+        activeFenceMarker = undefined;
+      }
+      normalizedLines.push(line);
+      continue;
+    }
+
+    if (activeFenceMarker) {
+      normalizedLines.push(line);
+      continue;
+    }
+
+    let normalizedLine = line;
+    normalizedLine = normalizedLine.replace(/^(\s{0,3}#{1,6})([^#\s].*)$/u, "$1 $2");
+    normalizedLine = normalizedLine.replace(/^(\s*[-+*])(\S.*)$/u, "$1 $2");
+    normalizedLine = normalizedLine.replace(/^(\s*\d+\.)(\S.*)$/u, "$1 $2");
+    normalizedLine = normalizedLine.replace(/^(\s*>)(\S.*)$/u, "$1 $2");
+    normalizedLines.push(normalizedLine);
+  }
+
+  return normalizedLines.join("\n");
 }
 
 function isValidWorkspaceWritablePath(path: string): boolean {
@@ -622,6 +789,150 @@ function isAllowedWorkspaceDocumentPath(path: string): boolean {
     ? normalized.slice(normalized.lastIndexOf(".")).toLowerCase()
     : "";
   return DOCUMENT_WRITE_EXTENSIONS.has(extension);
+}
+
+function countExactMatches(source: string, needle: string): number {
+  if (!needle) {
+    return 0;
+  }
+
+  let count = 0;
+  let startIndex = 0;
+  while (startIndex <= source.length) {
+    const matchIndex = source.indexOf(needle, startIndex);
+    if (matchIndex < 0) {
+      break;
+    }
+    count += 1;
+    startIndex = matchIndex + needle.length;
+  }
+
+  return count;
+}
+
+type WorkspaceApplyPatchOperation =
+  | { kind: "add"; path: string; lines: string[] }
+  | { kind: "update"; path: string; hunks: string[][] }
+  | { kind: "delete"; path: string }
+  | { kind: "move"; path: string; nextPath: string };
+
+function parseWorkspaceApplyPatchText(patchText: string): WorkspaceApplyPatchOperation[] {
+  const normalized = patchText.replace(/\r\n?/g, "\n");
+  const lines = normalized.split("\n");
+  if (lines[0] !== "*** Begin Patch") {
+    throw new Error("workspace_apply_patch requires a patch that starts with '*** Begin Patch'.");
+  }
+
+  const operations: WorkspaceApplyPatchOperation[] = [];
+  let index = 1;
+
+  while (index < lines.length) {
+    const line = lines[index] ?? "";
+    if (line === "*** End Patch") {
+      return operations;
+    }
+
+    if (line.startsWith("*** Add File: ")) {
+      const path = line.slice("*** Add File: ".length).trim();
+      index += 1;
+      const addLines: string[] = [];
+      while (index < lines.length && !lines[index]?.startsWith("*** ")) {
+        const nextLine = lines[index] ?? "";
+        if (!nextLine.startsWith("+")) {
+          throw new Error(`workspace_apply_patch add file lines must start with '+': ${path}`);
+        }
+        addLines.push(nextLine.slice(1));
+        index += 1;
+      }
+      operations.push({ kind: "add", path, lines: addLines });
+      continue;
+    }
+
+    if (line.startsWith("*** Delete File: ")) {
+      operations.push({
+        kind: "delete",
+        path: line.slice("*** Delete File: ".length).trim(),
+      });
+      index += 1;
+      continue;
+    }
+
+    if (line.startsWith("*** Update File: ")) {
+      const path = line.slice("*** Update File: ".length).trim();
+      index += 1;
+      if (lines[index]?.startsWith("*** Move to: ")) {
+        operations.push({
+          kind: "move",
+          path,
+          nextPath: (lines[index] ?? "").slice("*** Move to: ".length).trim(),
+        });
+        index += 1;
+      }
+
+      const hunks: string[][] = [];
+      let currentHunk: string[] = [];
+      while (index < lines.length && !lines[index]?.startsWith("*** ")) {
+        const patchLine = lines[index] ?? "";
+        if (patchLine.startsWith("@@")) {
+          if (currentHunk.length > 0) {
+            hunks.push(currentHunk);
+            currentHunk = [];
+          }
+          index += 1;
+          continue;
+        }
+
+        if (!/^[ +\-]/u.test(patchLine)) {
+          throw new Error(`workspace_apply_patch update lines must start with space, '+' or '-': ${path}`);
+        }
+        currentHunk.push(patchLine);
+        index += 1;
+      }
+
+      if (currentHunk.length > 0) {
+        hunks.push(currentHunk);
+      }
+
+      if (hunks.length === 0) {
+        throw new Error(`workspace_apply_patch update file requires at least one hunk: ${path}`);
+      }
+
+      operations.push({ kind: "update", path, hunks });
+      continue;
+    }
+
+    throw new Error(`workspace_apply_patch encountered an unsupported section header: ${line}`);
+  }
+
+  throw new Error("workspace_apply_patch requires a closing '*** End Patch'.");
+}
+
+function applyWorkspacePatchHunks(source: string, hunks: string[][]): string {
+  let current = source.replace(/\r\n?/g, "\n");
+
+  for (const hunk of hunks) {
+    const oldChunk = hunk
+      .filter((line) => line.startsWith(" ") || line.startsWith("-"))
+      .map((line) => line.slice(1))
+      .join("\n");
+    const newChunk = hunk
+      .filter((line) => line.startsWith(" ") || line.startsWith("+"))
+      .map((line) => line.slice(1))
+      .join("\n");
+
+    if (!oldChunk) {
+      throw new Error("workspace_apply_patch does not support context-free insert hunks in this version.");
+    }
+
+    const matchIndex = current.indexOf(oldChunk);
+    if (matchIndex < 0) {
+      throw new Error("workspace_apply_patch could not match an update hunk against the current file contents.");
+    }
+
+    current = `${current.slice(0, matchIndex)}${newChunk}${current.slice(matchIndex + oldChunk.length)}`;
+  }
+
+  return source.includes("\r\n") ? current.replace(/\n/g, "\r\n") : current;
 }
 
 function createWorkspaceWriteFileHandler(
@@ -666,7 +977,10 @@ function createWorkspaceWriteFileHandler(
       }
 
       try {
-        const file = await workspaceCommand.writeTextFile(workspaceId, normalizedPath, content);
+        const normalizedContent = isFeishuDocCacheMarkdownPath(normalizedPath)
+          ? normalizeFeishuMarkdownDraftContent(content)
+          : content;
+        const file = await workspaceCommand.writeTextFile(workspaceId, normalizedPath, normalizedContent);
 
         return {
           workspaceId: file.workspaceId,
@@ -688,6 +1002,275 @@ function createWorkspaceWriteFileHandler(
           },
         );
       }
+    },
+  };
+}
+
+function createWorkspaceEditFileHandler(
+  workspaceQuery: Pick<DesktopWorkspaceQueryPort, "list" | "get" | "getFileContent"> & {
+    readTextFile?: (
+      workspaceId: string,
+      path: string,
+    ) => Promise<DesktopWorkspaceFileContentResult>;
+  },
+  workspaceCommand: Pick<DesktopWorkspaceCommandPort, "writeTextFile">,
+): RegisteredToolHandler {
+  return {
+    descriptor: WORKSPACE_EDIT_FILE_DESCRIPTOR,
+    async execute({ call, context }) {
+      const input = isRecord(call.input) ? call.input : {};
+      const workspaceId = await resolveWorkspaceId(workspaceQuery, input, context.session.metadata);
+      const path = normalizeOptionalText(input.path);
+      const oldText = typeof input.oldText === "string" ? input.oldText : undefined;
+      const newText = typeof input.newText === "string" ? input.newText : undefined;
+      const replaceAll = input.replaceAll === true;
+
+      if (!workspaceId) {
+        return asToolFailure("workspace_id_required", "workspaceId is required for workspace_edit_file.");
+      }
+
+      if (!path) {
+        return asToolFailure("workspace_path_required", "path is required for workspace_edit_file.", {
+          workspaceId,
+        });
+      }
+
+      if (oldText === undefined) {
+        return asToolFailure("workspace_old_text_required", "oldText is required for workspace_edit_file.", {
+          workspaceId,
+          path,
+        });
+      }
+
+      if (!oldText) {
+        return asToolFailure(
+          "workspace_old_text_empty",
+          "workspace_edit_file requires a non-empty oldText fragment so the edit stays bounded.",
+          {
+            workspaceId,
+            path,
+          },
+        );
+      }
+
+      if (newText === undefined) {
+        return asToolFailure("workspace_new_text_required", "newText is required for workspace_edit_file.", {
+          workspaceId,
+          path,
+        });
+      }
+
+      const normalizedPath = normalizeWorkspaceWritablePath(path);
+      if (!isValidWorkspaceWritablePath(normalizedPath)) {
+        return asToolFailure(
+          "workspace_write_path_invalid",
+          "workspace_edit_file requires a valid workspace-relative file path.",
+          {
+            workspaceId,
+            path: normalizedPath,
+          },
+        );
+      }
+
+      try {
+        const currentFile = await readWorkspaceFileForEditing(workspaceQuery, workspaceId, normalizedPath);
+        if (currentFile.binary) {
+          return asToolFailure(
+            "workspace_edit_binary_forbidden",
+            "workspace_edit_file only supports text files.",
+            {
+              workspaceId,
+              path: normalizedPath,
+            },
+          );
+        }
+
+        const matchCount = countExactMatches(currentFile.content, oldText);
+        if (matchCount === 0) {
+          return asToolFailure(
+            "workspace_edit_match_not_found",
+            "workspace_edit_file could not find the target oldText fragment in the current file.",
+            {
+              workspaceId,
+              path: normalizedPath,
+            },
+          );
+        }
+
+        if (!replaceAll && matchCount > 1) {
+          return asToolFailure(
+            "workspace_edit_match_ambiguous",
+            "workspace_edit_file found multiple matches for oldText. Use a larger unique fragment or set replaceAll to true.",
+            {
+              workspaceId,
+              path: normalizedPath,
+              matchCount,
+            },
+          );
+        }
+
+        const nextContent = replaceAll
+          ? currentFile.content.split(oldText).join(newText)
+          : currentFile.content.replace(oldText, newText);
+        const normalizedContent = isFeishuDocCacheMarkdownPath(normalizedPath)
+          ? normalizeFeishuMarkdownDraftContent(nextContent)
+          : nextContent;
+        const file = await workspaceCommand.writeTextFile(workspaceId, normalizedPath, normalizedContent);
+
+        return {
+          workspaceId: file.workspaceId,
+          rootPath: file.rootPath,
+          path: file.path,
+          absolutePath: file.absolutePath,
+          binary: file.binary,
+          truncated: file.truncated,
+          ...(file.mimeType ? { mimeType: file.mimeType } : {}),
+          replacementsApplied: replaceAll ? matchCount : 1,
+          content: file.content,
+        };
+      } catch (error) {
+        return asToolFailure(
+          "workspace_edit_file_failed",
+          error instanceof Error ? error.message : "Failed to edit workspace file.",
+          {
+            workspaceId,
+            path: normalizedPath,
+          },
+        );
+      }
+    },
+  };
+}
+
+function createWorkspaceApplyPatchHandler(
+  workspaceQuery: Pick<DesktopWorkspaceQueryPort, "list" | "get" | "getFileContent"> & {
+    readTextFile?: (
+      workspaceId: string,
+      path: string,
+    ) => Promise<DesktopWorkspaceFileContentResult>;
+  },
+  workspaceCommand: Pick<DesktopWorkspaceCommandPort, "writeTextFile">,
+): RegisteredToolHandler {
+  return {
+    descriptor: WORKSPACE_APPLY_PATCH_DESCRIPTOR,
+    async execute({ call, context }) {
+      const input = isRecord(call.input) ? call.input : {};
+      const workspaceId = await resolveWorkspaceId(workspaceQuery, input, context.session.metadata);
+      const patchText = typeof input.patchText === "string" ? input.patchText : undefined;
+
+      if (!workspaceId) {
+        return asToolFailure("workspace_id_required", "workspaceId is required for workspace_apply_patch.");
+      }
+
+      if (!patchText?.trim()) {
+        return asToolFailure("workspace_patch_required", "patchText is required for workspace_apply_patch.", {
+          workspaceId,
+        });
+      }
+
+      let operations: WorkspaceApplyPatchOperation[];
+      try {
+        operations = parseWorkspaceApplyPatchText(patchText);
+      } catch (error) {
+        return asToolFailure(
+          "workspace_apply_patch_invalid",
+          error instanceof Error ? error.message : "Invalid workspace patch.",
+          { workspaceId },
+        );
+      }
+
+      const updatedFiles: Array<{
+        path: string;
+        content: string;
+        additions: number;
+        deletions: number;
+      }> = [];
+
+      for (const operation of operations) {
+        if (operation.kind === "delete" || operation.kind === "move") {
+          return asToolFailure(
+            "workspace_apply_patch_unsupported",
+            "workspace_apply_patch currently supports only Add File and Update File operations.",
+            {
+              workspaceId,
+              path: operation.path,
+            },
+          );
+        }
+
+        const normalizedPath = normalizeWorkspaceWritablePath(operation.path);
+        if (!isValidWorkspaceWritablePath(normalizedPath)) {
+          return asToolFailure(
+            "workspace_write_path_invalid",
+            "workspace_apply_patch requires valid workspace-relative file paths.",
+            {
+              workspaceId,
+              path: normalizedPath,
+            },
+          );
+        }
+
+        if (operation.kind === "add") {
+          const nextContent = operation.lines.join("\n");
+          updatedFiles.push({
+            path: normalizedPath,
+            content: isFeishuDocCacheMarkdownPath(normalizedPath)
+              ? normalizeFeishuMarkdownDraftContent(nextContent)
+              : nextContent,
+            additions: countTextLines(nextContent),
+            deletions: 0,
+          });
+          continue;
+        }
+
+        try {
+          const currentFile = await readWorkspaceFileForEditing(workspaceQuery, workspaceId, normalizedPath);
+          if (currentFile.binary) {
+            return asToolFailure(
+              "workspace_apply_patch_binary_forbidden",
+              "workspace_apply_patch only supports text files.",
+              {
+                workspaceId,
+                path: normalizedPath,
+              },
+            );
+          }
+
+          const nextContent = applyWorkspacePatchHunks(currentFile.content, operation.hunks);
+          updatedFiles.push({
+            path: normalizedPath,
+            content: isFeishuDocCacheMarkdownPath(normalizedPath)
+              ? normalizeFeishuMarkdownDraftContent(nextContent)
+              : nextContent,
+            additions: 0,
+            deletions: 0,
+          });
+        } catch (error) {
+          return asToolFailure(
+            "workspace_apply_patch_failed",
+            error instanceof Error ? error.message : "Failed to apply workspace patch.",
+            {
+              workspaceId,
+              path: normalizedPath,
+            },
+          );
+        }
+      }
+
+      const written: DesktopWorkspaceFileContentResult[] = [];
+      for (const file of updatedFiles) {
+        written.push(await workspaceCommand.writeTextFile(workspaceId, file.path, file.content));
+      }
+
+      return {
+        workspaceId,
+        files: written.map((file) => ({
+          path: file.path,
+          absolutePath: file.absolutePath,
+        })),
+        patch: patchText,
+        content: written.length === 1 ? written[0]?.content : undefined,
+      };
     },
   };
 }
@@ -1570,6 +2153,8 @@ export function createDesktopConversationBuiltinToolBundle(
     ...(options.workspaceCommand
       ? [
           createWorkspaceWriteFileHandler(options.workspaceQuery, options.workspaceCommand),
+          createWorkspaceEditFileHandler(options.workspaceQuery, options.workspaceCommand),
+          createWorkspaceApplyPatchHandler(options.workspaceQuery, options.workspaceCommand),
           createWorkspaceWriteDocumentHandler(options.workspaceQuery, options.workspaceCommand),
         ]
       : []),

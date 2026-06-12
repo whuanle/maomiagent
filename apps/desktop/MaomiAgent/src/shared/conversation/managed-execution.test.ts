@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   CONCISE_AGENT_ID,
+  FEISHU_DOC_WRITER_AGENT_ID,
   FULLY_MANAGED_AGENT_ID,
   resolveDesktopConversationExecutionStrategy,
   shouldAutoPromoteDesktopConversationToManagedExecution,
@@ -69,6 +70,28 @@ describe("managed execution strategy", () => {
       executionMode: "interactive",
       runMode: "normal",
       selectedAgentId: CONCISE_AGENT_ID,
+    });
+  });
+
+  test("keeps the feishu doc writer agent in direct interactive mode for document drafting", () => {
+    expect(shouldAutoPromoteDesktopConversationToManagedExecution({
+      text: "帮我创建一篇 AI 自动化运维文档，并整理成清晰章节",
+      selectedAgentId: FEISHU_DOC_WRITER_AGENT_ID,
+    })).toBe(false);
+
+    expect(resolveDesktopConversationExecutionStrategy({
+      text: "帮我创建一篇 AI 自动化运维文档，并整理成清晰章节",
+      selectedAgentId: FEISHU_DOC_WRITER_AGENT_ID,
+      metadata: {
+        conversationSettings: {
+          managedExecutionEnabled: true,
+        },
+      },
+    })).toEqual({
+      autoPromoted: false,
+      executionMode: "interactive",
+      runMode: "normal",
+      selectedAgentId: FEISHU_DOC_WRITER_AGENT_ID,
     });
   });
 

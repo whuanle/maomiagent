@@ -336,7 +336,8 @@ describe("OpenAIResponsesPromptCodec", () => {
       item.type === "function_call"
       && item.call_id === "tool_call_large_write");
 
-    expect(JSON.stringify(toolCall)).toContain("contentSummary");
+    expect(JSON.stringify(toolCall)).toContain("\\\"content\\\"");
+    expect(JSON.stringify(toolCall)).toContain("Historical file body omitted");
     expect(JSON.stringify(toolCall)).not.toContain("A".repeat(300));
   });
 

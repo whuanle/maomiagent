@@ -105,18 +105,22 @@ function TreeNodeList(props: TreeNodeProps) {
                 className={`git-page-change-tree-row is-directory ${resolveIndentClass(props.level)}`}
                 onClick={() => props.onToggleDirectory(node.path)}
               >
-                <span className={collapsed ? "git-page-change-tree-caret" : "git-page-change-tree-caret is-open"}>
-                  <DownOutlined />
+                <span className="git-page-change-tree-directory-main">
+                  <span className={collapsed ? "git-page-change-tree-caret" : "git-page-change-tree-caret is-open"}>
+                    <DownOutlined />
+                  </span>
+                  <WorkspaceFileIcon
+                    path={node.path}
+                    className="git-page-review-file-icon"
+                    isDirectory
+                    expanded={!collapsed}
+                  />
+                  <span className="git-page-change-tree-label">{node.name}</span>
                 </span>
-                <WorkspaceFileIcon
-                  path={node.path}
-                  className="git-page-review-file-icon"
-                  isDirectory
-                  expanded={!collapsed}
-                />
-                <span className="git-page-change-tree-label">{node.name}</span>
-                <span className="git-page-change-tree-count">{node.fileCount}</span>
-                <WorkspaceDiffChanges className="git-page-change-tree-diff" changes={node} />
+                <span className="git-page-change-tree-utility">
+                  <span className="git-page-change-tree-count">{node.fileCount}</span>
+                  <WorkspaceDiffChanges className="git-page-change-tree-diff" changes={node} />
+                </span>
               </button>
               {!collapsed && node.children.length > 0 ? (
                 <TreeNodeList

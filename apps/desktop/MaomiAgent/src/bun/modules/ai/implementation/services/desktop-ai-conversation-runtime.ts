@@ -132,6 +132,7 @@ import {
   resolveActiveConversationCheckpoint,
 } from "../../../../../shared/desktop-conversation";
 import {
+  FEISHU_DOC_WRITER_AGENT_ID,
   UI_DESIGNER_AGENT_ID,
   UI_DESIGNER_CONTEXT_METADATA_KEY,
 } from "../../../../../shared/conversation/managed-execution";
@@ -182,6 +183,7 @@ const CONTEXT_COMPRESSION_THRESHOLD_PERCENT_MAX = 90;
 const MEDIUM_PROMPT_TURN_NO_ACTIVITY_TIMEOUT_MS = 180_000;
 const LARGE_PROMPT_TURN_NO_ACTIVITY_TIMEOUT_MS = 240_000;
 const EXTRA_LARGE_PROMPT_TURN_NO_ACTIVITY_TIMEOUT_MS = 300_000;
+const FEISHU_DOC_WRITER_TURN_NO_ACTIVITY_TIMEOUT_MS = 420_000;
 const MEDIUM_PROMPT_TOKEN_THRESHOLD = 6_000;
 const LARGE_PROMPT_TOKEN_THRESHOLD = 12_000;
 const EXTRA_LARGE_PROMPT_TOKEN_THRESHOLD = 20_000;
@@ -290,9 +292,16 @@ export {
 export function resolveConversationTurnNoActivityTimeoutMs(input: {
   baseTimeoutMs: number;
   estimatedPromptTokens?: number;
+  agentId?: string;
+  hasFeishuDocContext?: boolean;
 }): number {
   const baseTimeoutMs = normalizeTimeoutMs(input.baseTimeoutMs, DEFAULT_TURN_NO_ACTIVITY_TIMEOUT_MS);
   const estimatedPromptTokens = normalizeOptionalPositiveFiniteNumber(input.estimatedPromptTokens);
+  const agentId = normalizeOptionalText(input.agentId);
+
+  if (agentId === FEISHU_DOC_WRITER_AGENT_ID || input.hasFeishuDocContext) {
+    return Math.max(baseTimeoutMs, FEISHU_DOC_WRITER_TURN_NO_ACTIVITY_TIMEOUT_MS);
+  }
 
   if (!estimatedPromptTokens) {
     return baseTimeoutMs;
@@ -311,6 +320,57 @@ export function resolveConversationTurnNoActivityTimeoutMs(input: {
   }
 
   return baseTimeoutMs;
+}
+
+export function resolveConversationTurnAgentId(
+  prompt: AiTurnRequest["prompt"],
+): string | undefined {
+  const desktopAgentBlock = [...prompt.systemBlocks].reverse().find((block) => {
+    if (!isRecord(block.metadata)) {
+      return false;
+    }
+
+    return normalizeOptionalText(block.metadata.source) === "desktop.agent"
+      && Boolean(normalizeOptionalText(block.metadata.agentId));
+  });
+  const systemAgentId = desktopAgentBlock && isRecord(desktopAgentBlock.metadata)
+    ? normalizeOptionalText(desktopAgentBlock.metadata.agentId)
+    : undefined;
+
+  return systemAgentId ?? normalizeOptionalText(prompt.agentId);
+}
+
+export function promptContainsFeishuDocContext(
+  prompt: AiTurnRequest["prompt"],
+): boolean {
+  if (prompt.systemBlocks.some((block) => FEISHU_DOC_CONTEXT_PATH_RE.test(block.content))) {
+    return true;
+  }
+
+  if (prompt.contextBlocks.some((block) => FEISHU_DOC_CONTEXT_PATH_RE.test(block.content))) {
+    return true;
+  }
+
+  return prompt.messages.some((message) => message.parts.some((part) => {
+    if (part.type === "text") {
+      return FEISHU_DOC_CONTEXT_PATH_RE.test(part.text)
+        || part.text.includes(".maomi/feishu-docs/");
+    }
+
+    if (part.type === "tool_call_ref") {
+      const serializedInput = JSON.stringify(part.input);
+      return FEISHU_DOC_CONTEXT_PATH_RE.test(serializedInput)
+        || serializedInput.includes(".maomi/feishu-docs/");
+    }
+
+    if (part.type === "tool_result_ref") {
+      const serializedOutput = JSON.stringify(part.output);
+      return FEISHU_DOC_CONTEXT_PATH_RE.test(serializedOutput)
+        || serializedOutput.includes(".maomi/feishu-docs/");
+    }
+
+    return false;
+  }));
 }
 
 export function buildConversationProviderRetryPolicy(): RetryBackoffPolicy {
@@ -509,6 +569,7 @@ const EXPLANATION_REQUEST_RE = /(what|why|how|explain|tell me|describe|介绍|�
 const STANDALONE_CODE_ACTION_RE = /(write|implement|create|generate|show|give me|make|build|写|实现|创建|生成|给我|做一个|来个|帮我写)/iu;
 const STANDALONE_CODE_SUBJECT_RE = /(algorithm|hash|regex|snippet|example|sample|demo|function|class|component|script|form|sdk|library|cli|算法|哈希|正则|代码片段|示例|例子|函数|类|组件|脚本|表单|库|命令行工具)/iu;
 const PROGRAMMING_LANGUAGE_RE = /(go|golang|python|javascript|typescript|java|rust|c\+\+|c#|ruby|php|swift|kotlin|sql|react|vue|next\.js|node\.js|bun)/iu;
+const FEISHU_DOC_CONTEXT_PATH_RE = /(original_markdown_path|local_draft_path|<feishu_doc_context>)/iu;
 const MANAGED_RUN_MODE_VALUES = new Set(["hosted_autopilot", "long_task_orchestration"]);
 
 let desktopConversationAssetServer: ReturnType<typeof Bun.serve> | null = null;
@@ -673,6 +734,8 @@ function buildToolUsagePolicyLines(tools: readonly ToolDescriptor[]): string[] {
   if (preferredFileEditTools.length > 0) {
     lines.push(
       "- Prefer dedicated file-edit tools for creating or updating workspace files in one operation.",
+      "- When modifying an existing long file, prefer targeted edit/patch tools over rewriting the whole file.",
+      "- As soon as you know the section boundary to change, call the file-edit tool directly instead of drafting a full replacement in assistant text first.",
       "- If a file-edit tool can handle the target path, do not use terminal commands to assemble file contents line by line.",
       "- Avoid shell file-writing patterns like echo >>, printf >, cat <<EOF, tee, Set-Content, Add-Content, and Out-File when a dedicated file-edit tool is available.",
     );
@@ -1084,8 +1147,13 @@ export function shouldRestrictDesktopConversationBuiltinToolsForLatestUserTurn(i
   isManagedToolTurn?: boolean;
   latestUserText?: string;
   hasAttachments?: boolean;
+  selectedAgentId?: string;
 }): boolean {
   if (input.isManagedToolTurn) {
+    return false;
+  }
+
+  if (normalizeOptionalText(input.selectedAgentId) === FEISHU_DOC_WRITER_AGENT_ID) {
     return false;
   }
 
@@ -1099,7 +1167,9 @@ export function shouldRestrictDesktopConversationBuiltinToolsForLatestUserTurn(i
   }
 
   if (
-    WORKSPACE_REFERENCE_RE.test(latestUserText)
+    FEISHU_DOC_CONTEXT_PATH_RE.test(latestUserText)
+    || EXPLICIT_LOCAL_WORKSPACE_REFERENCE_RE.test(latestUserText)
+    || WORKSPACE_REFERENCE_RE.test(latestUserText)
     || DEICTIC_WORKSPACE_SURFACE_RE.test(latestUserText)
     || LOCAL_REPAIR_INTENT_RE.test(latestUserText)
     || COMMAND_OPERATION_INTENT_RE.test(latestUserText)
@@ -1119,11 +1189,14 @@ export function shouldRestrictDesktopConversationBuiltinToolsForLatestUserTurn(i
 
 function shouldRestrictDesktopConversationBuiltinTools(input: DynamicToolRuntimeInput): boolean {
   const latestUserMessage = extractLatestUserMessage(input.visibleMessages);
+  const selectedAgentId = readSelectionMetadata(input.run.metadata).selectedAgentId
+    ?? readSelectionMetadata(input.session.metadata).selectedAgentId;
 
   return shouldRestrictDesktopConversationBuiltinToolsForLatestUserTurn({
     isManagedToolTurn: isManagedConversationToolTurn(input),
     latestUserText: extractMessageText(latestUserMessage),
     hasAttachments: messageHasAttachments(latestUserMessage),
+    selectedAgentId,
   });
 }
 
@@ -2134,6 +2207,7 @@ function buildSessionMetadata(input: {
   item: DesktopConversationSessionItem;
   selectedChannelId?: string;
   selectedModelId?: string;
+  selectedAgentId?: string;
 }): KernelMetadata {
   const metadata: Record<string, unknown> = {
     ...(input.item.metadata ? { ...input.item.metadata } : {}),
@@ -2145,6 +2219,10 @@ function buildSessionMetadata(input: {
   }
   if (input.selectedModelId) {
     metadata.selectedModelId = input.selectedModelId;
+  }
+  if (input.selectedAgentId) {
+    metadata.selectedAgentId = input.selectedAgentId;
+    metadata.preferredAgentId = input.selectedAgentId;
   }
 
   return metadata;
@@ -2724,8 +2802,12 @@ class DesktopConversationAgentPolicyResolver implements AgentPolicyResolver {
 
   async resolve(input: AgentPolicyInput): Promise<AgentPolicyDecision> {
     const executionProfile = readExecutionProfile(input.run, input.session);
-    const preferredAgentId = readSelectionMetadata(input.run.metadata).selectedAgentId
-      ?? readSelectionMetadata(input.session.metadata).selectedAgentId;
+    const runSelection = readSelectionMetadata(input.run.metadata);
+    const sessionSelection = readSelectionMetadata(input.session.metadata);
+    const preferredAgentId = runSelection.selectedAgentId
+      ?? runSelection.preferredAgentId
+      ?? sessionSelection.selectedAgentId
+      ?? sessionSelection.preferredAgentId;
     const runtimeAgents = await loadRuntimeAgents({
       agents: this.agents,
       executionProfile,
@@ -3042,6 +3124,8 @@ class DesktopConversationTurnPort implements AiTurnPort {
       const turnNoActivityTimeoutMs = resolveConversationTurnNoActivityTimeoutMs({
         baseTimeoutMs: this.noActivityTimeoutMs,
         estimatedPromptTokens: contextBudget.estimatedPromptTokens,
+        agentId: resolveConversationTurnAgentId(normalizedInput.prompt),
+        hasFeishuDocContext: promptContainsFeishuDocContext(normalizedInput.prompt),
       });
 
       if (contextBudget.shouldAutoCompress
@@ -4142,6 +4226,7 @@ export class DesktopAiConversationRuntime {
     item: DesktopConversationSessionItem;
     selectedChannelId?: string;
     selectedModelId?: string;
+    selectedAgentId?: string;
   }): Promise<SessionRecord> {
     const sessionId = asSessionId(input.item.sessionId);
     const current = await this.tryGetSession(sessionId);
@@ -4157,6 +4242,7 @@ export class DesktopAiConversationRuntime {
         item: input.item,
         selectedChannelId: input.selectedChannelId,
         selectedModelId: input.selectedModelId,
+        selectedAgentId: input.selectedAgentId,
       }),
     };
 
@@ -4211,6 +4297,7 @@ export class DesktopAiConversationRuntime {
       item: input.item,
       selectedChannelId: materialization.target.channelId,
       selectedModelId: materialization.target.modelId,
+      selectedAgentId: input.selectedAgentId,
     });
     const userMessageId = asMessageId(this.idGenerator.next("message"));
     this.rememberExecutionMaterialization(materialization);
@@ -4290,6 +4377,7 @@ export class DesktopAiConversationRuntime {
       item: input.item,
       selectedChannelId: materialization.target.channelId,
       selectedModelId: materialization.target.modelId,
+      selectedAgentId: input.selectedAgentId,
     });
     this.rememberExecutionMaterialization(materialization);
 

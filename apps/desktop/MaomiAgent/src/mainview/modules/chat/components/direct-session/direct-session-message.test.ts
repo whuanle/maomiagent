@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   resolveCommandLikeToolHeadline,
   resolveToolDisplayNameFallback,
+  resolveToolTraceStatusLabel,
 } from "./direct-session-message-tool-trace";
 import { shouldRenderToolTraceBody } from "./direct-session-message-tool-trace-body";
 import {
@@ -53,11 +54,27 @@ describe("resolveCommandLikeToolHeadline", () => {
 describe("resolveToolDisplayNameFallback", () => {
   test("localizes known builtin tool ids", () => {
     expect(resolveToolDisplayNameFallback("workspace_read_file", false)).toBe("读取工作区文件");
+    expect(resolveToolDisplayNameFallback("workspace_edit_file", false)).toBe("编辑工作区文件");
+    expect(resolveToolDisplayNameFallback("workspace_apply_patch", false)).toBe("应用工作区补丁");
     expect(resolveToolDisplayNameFallback("terminal_execute", true)).toBe("Execute terminal command");
   });
 
   test("humanizes unknown tool ids instead of exposing snake_case", () => {
     expect(resolveToolDisplayNameFallback("custom_unknown_tool", true)).toBe("Custom Unknown Tool");
+  });
+});
+
+describe("resolveToolTraceStatusLabel", () => {
+  test("explains repeated tool-call loops instead of showing a generic tool failure", () => {
+    expect(resolveToolTraceStatusLabel({
+      toolName: "workspace_write_file",
+      status: "failed",
+      error: {
+        code: "tool_loop_detected",
+        message: "Kernel run detected a repeated tool-call batch across consecutive turns",
+      },
+      isEn: false,
+    })).toBe("连续重复调用已中止");
   });
 });
 

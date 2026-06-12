@@ -74,7 +74,7 @@ export function shouldAutoPromoteDesktopConversationToManagedExecution(input: {
     return true;
   }
 
-  if (selectedAgentId === CONCISE_AGENT_ID) {
+  if (selectedAgentId === CONCISE_AGENT_ID || selectedAgentId === FEISHU_DOC_WRITER_AGENT_ID) {
     return false;
   }
 
@@ -164,7 +164,7 @@ export function resolveDesktopConversationExecutionStrategy(input: {
     };
   }
 
-  if (selectedAgentId === CONCISE_AGENT_ID) {
+  if (selectedAgentId === CONCISE_AGENT_ID || selectedAgentId === FEISHU_DOC_WRITER_AGENT_ID) {
     return {
       autoPromoted: false,
       executionMode: "interactive",

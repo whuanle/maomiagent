@@ -14,10 +14,13 @@ import {
   buildDesktopConversationContinuationPolicyBlock,
   buildConversationProviderRetryPolicy,
   mergeConversationExecutionProfile,
+  promptContainsFeishuDocContext,
+  resolveConversationTurnAgentId,
   resolveConversationTurnNoActivityTimeoutMs,
   shouldRestrictDesktopConversationBuiltinToolsForLatestUserTurn,
 } from "../implementation/services/desktop-ai-conversation-runtime";
 import type { AiTurnRequest } from "../kernel-bridge";
+import { FEISHU_DOC_WRITER_AGENT_ID } from "../../../../shared/conversation/managed-execution";
 
 describe("applyConversationThinkingPreferenceToServiceConfig", () => {
   test("drops reasoning service config when thinking is disabled", () => {
@@ -724,6 +727,23 @@ describe("mergeConversationExecutionProfile", () => {
 });
 
 describe("resolveConversationTurnNoActivityTimeoutMs", () => {
+  test("raises the timeout for the feishu doc writer agent even on a small prompt", () => {
+    expect(resolveConversationTurnNoActivityTimeoutMs({
+      baseTimeoutMs: 180_000,
+      estimatedPromptTokens: 1_000,
+      agentId: FEISHU_DOC_WRITER_AGENT_ID,
+    })).toBe(420_000);
+  });
+
+  test("raises the timeout for feishu doc context even when the agent id stays generic", () => {
+    expect(resolveConversationTurnNoActivityTimeoutMs({
+      baseTimeoutMs: 180_000,
+      estimatedPromptTokens: 1_000,
+      agentId: "concise",
+      hasFeishuDocContext: true,
+    })).toBe(420_000);
+  });
+
   test("keeps the base timeout for small prompts", () => {
     expect(resolveConversationTurnNoActivityTimeoutMs({
       baseTimeoutMs: 180_000,
@@ -757,6 +777,100 @@ describe("resolveConversationTurnNoActivityTimeoutMs", () => {
       baseTimeoutMs: 360_000,
       estimatedPromptTokens: 25_000,
     })).toBe(360_000);
+  });
+});
+
+describe("resolveConversationTurnAgentId", () => {
+  test("prefers the desktop agent system block over the prompt agent id", () => {
+    expect(resolveConversationTurnAgentId({
+      sessionId: "session-1" as AiTurnRequest["prompt"]["sessionId"],
+      runId: "run-1" as AiTurnRequest["prompt"]["runId"],
+      turnId: "turn-1" as AiTurnRequest["prompt"]["turnId"],
+      agentId: "desktop.primary",
+      systemBlocks: [{
+        id: "desktop-agent-prompt:feishu" as never,
+        kind: "instruction",
+        content: "feishu prompt",
+        priority: 100,
+        metadata: {
+          source: "desktop.agent",
+          agentId: FEISHU_DOC_WRITER_AGENT_ID,
+        },
+      }],
+      contextBlocks: [],
+      messages: [],
+      tools: [],
+      outputMode: {
+        kind: "text",
+      },
+    })).toBe(FEISHU_DOC_WRITER_AGENT_ID);
+  });
+
+  test("falls back to the prompt agent id when no desktop agent block exists", () => {
+    expect(resolveConversationTurnAgentId({
+      sessionId: "session-1" as AiTurnRequest["prompt"]["sessionId"],
+      runId: "run-1" as AiTurnRequest["prompt"]["runId"],
+      turnId: "turn-1" as AiTurnRequest["prompt"]["turnId"],
+      agentId: FEISHU_DOC_WRITER_AGENT_ID,
+      systemBlocks: [],
+      contextBlocks: [],
+      messages: [],
+      tools: [],
+      outputMode: {
+        kind: "text",
+      },
+    })).toBe(FEISHU_DOC_WRITER_AGENT_ID);
+  });
+});
+
+describe("promptContainsFeishuDocContext", () => {
+  test("detects the injected feishu doc context block", () => {
+    expect(promptContainsFeishuDocContext({
+      sessionId: "session-1" as AiTurnRequest["prompt"]["sessionId"],
+      runId: "run-1" as AiTurnRequest["prompt"]["runId"],
+      turnId: "turn-1" as AiTurnRequest["prompt"]["turnId"],
+      agentId: "concise",
+      systemBlocks: [{
+        id: "feishu-doc-contract" as never,
+        kind: "instruction",
+        content: "<feishu_doc_context>\noriginal_markdown_path: .maomi/feishu-docs/original.md",
+        priority: 100,
+      }],
+      contextBlocks: [],
+      messages: [],
+      tools: [],
+      outputMode: {
+        kind: "text",
+      },
+    })).toBe(true);
+  });
+
+  test("detects feishu doc paths in message history", () => {
+    expect(promptContainsFeishuDocContext({
+      sessionId: "session-1" as AiTurnRequest["prompt"]["sessionId"],
+      runId: "run-1" as AiTurnRequest["prompt"]["runId"],
+      turnId: "turn-1" as AiTurnRequest["prompt"]["turnId"],
+      agentId: "concise",
+      systemBlocks: [],
+      contextBlocks: [],
+      messages: [{
+        message: {
+          id: "message-1" as AiTurnRequest["prompt"]["messages"][number]["message"]["id"],
+          sessionId: "session-1" as AiTurnRequest["prompt"]["sessionId"],
+          role: "tool",
+          createdAt: 1,
+        },
+        parts: [{
+          id: "message-1-text" as AiTurnRequest["prompt"]["messages"][number]["parts"][number]["id"],
+          type: "text",
+          text: "{\"path\": \".maomi/feishu-docs/drafts/doc.draft.md\"}",
+        }],
+      }],
+      tools: [],
+      outputMode: {
+        kind: "text",
+      },
+    })).toBe(true);
   });
 });
 

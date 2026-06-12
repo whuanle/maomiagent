@@ -109,7 +109,7 @@ describe("Feishu docs workbench IR loading bridge", () => {
     expect(bridge).toContain("if (request?.createSession)");
     expect(pane).toContain("openConversation: async (input) => {");
     expect(pane).toContain("const createdSession = await state.createSession({");
-    expect(pane).toContain("selectedAgentId: input.selectedAgentId");
+    expect(pane).toContain("selectedAgentId: requestedSelectedAgentId");
     expect(pane).toContain("Keep session creation and draft prefill resilient");
     expect(services).toContain('window.location.hash = "chat"');
     expect(workbench).not.toContain("if (props.workspaceId && !item.cache)");

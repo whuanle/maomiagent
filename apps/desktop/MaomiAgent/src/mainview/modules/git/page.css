@@ -1368,13 +1368,14 @@
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
   padding-right: 12px;
   border-top: none;
   border-right: none;
   border-left: none;
   background: transparent;
   color: var(--app-text);
+  text-align: left;
   cursor: pointer;
   transition: background-color 0.18s ease;
 }
@@ -1494,6 +1495,14 @@
   padding-left: 156px;
 }
 
+.git-page-change-tree-directory-main {
+  min-width: 0;
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 8px;
+}
+
 .git-page-change-tree-caret {
   width: 12px;
   height: 12px;
@@ -1545,10 +1554,15 @@
 .git-page-change-tree-utility {
   min-width: 0;
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
   padding-right: 12px;
+}
+
+.git-page-change-tree-row.is-directory .git-page-change-tree-utility {
+  padding-right: 0;
 }
 
 .git-page-change-tree-side {

@@ -26,6 +26,7 @@ import type { DesktopConversationTaskBridgePort, DesktopTaskRecord, DesktopTasks
 import {
   CONCISE_AGENT_ID,
   DEFAULT_DESKTOP_PRIMARY_AGENT_ID,
+  FEISHU_DOC_WRITER_AGENT_ID,
   FULLY_MANAGED_AGENT_ID,
   WECHAT_AGENT_ID,
 } from "../../../../shared/conversation/managed-execution";
@@ -464,6 +465,112 @@ class RecordingPromptTurnPort implements AiTurnPort {
   }
 }
 
+class ScriptedFeishuLongDocFollowUpTurnPort implements AiTurnPort {
+  readonly requests: AiTurnRequest[] = [];
+  readonly prompts: AiTurnRequest["prompt"][] = [];
+  private callCount = 0;
+
+  async *stream(input: AiTurnRequest): AsyncIterable<AiTurnEvent> {
+    this.callCount += 1;
+    this.requests.push(input);
+    this.prompts.push(input.prompt);
+
+    const latestUserText = [...input.prompt.messages]
+      .reverse()
+      .find((message) => message.message.role === "user")
+      ?.parts
+      .flatMap((part) => part.type === "text" ? [part.text] : [])
+      .join("\n") ?? "";
+
+    if (this.callCount === 1) {
+      yield {
+        type: "tool.call",
+        toolCallId: asToolCallId("tool_call_feishu_initial_write"),
+        toolName: "workspace_write_file",
+        input: {
+          path: ".maomi/feishu-docs/drafts/demo.draft.md",
+          content: [
+            "# AI 自动化运维",
+            "",
+            "## 第一部分：基础原理与技术认知",
+            "",
+            "### 第1章 认识 AI 自动化运维",
+            "",
+            "- AIOps 是以数据、模型和执行闭环驱动的运维方式。",
+            "- 当前版本仍然偏提纲，需要继续补充细节和图示。",
+            "",
+            "## 第二部分：架构设计",
+            "",
+            "- 架构图待补充",
+          ].join("\n"),
+        },
+      };
+      yield { type: "finish", reason: "tool_calls" };
+      return;
+    }
+
+    if (this.callCount === 2) {
+      yield { type: "text.start" };
+      yield { type: "text.delta", delta: "已写入首版飞书文档草稿。" };
+      yield { type: "text.end" };
+      yield { type: "finish", reason: "stop" };
+      return;
+    }
+
+    if (this.callCount === 3) {
+      yield {
+        type: "tool.call",
+        toolCallId: asToolCallId("tool_call_feishu_followup_read"),
+        toolName: "workspace_read_file",
+        input: {
+          path: ".maomi/feishu-docs/drafts/demo.draft.md",
+          offset: 1,
+          limit: 80,
+        },
+      };
+      yield { type: "finish", reason: "tool_calls" };
+      return;
+    }
+
+    if (this.callCount === 4) {
+      yield {
+        type: "tool.call",
+        toolCallId: asToolCallId("tool_call_feishu_followup_edit"),
+        toolName: "workspace_edit_file",
+        input: {
+          path: ".maomi/feishu-docs/drafts/demo.draft.md",
+          oldText: [
+            "### 第1章 认识 AI 自动化运维",
+            "",
+            "- AIOps 是以数据、模型和执行闭环驱动的运维方式。",
+            "- 当前版本仍然偏提纲，需要继续补充细节和图示。",
+          ].join("\n"),
+          newText: [
+            "### 第1章 认识 AI 自动化运维",
+            "",
+            "- AIOps 是以数据、模型和执行闭环驱动的运维方式，不只是一个概念集合，而是一套围绕观测、分析、决策和执行逐步落地的工程体系。",
+            "- 这一章需要把监控指标、日志、链路、变更事件和告警噪声如何汇入统一数据面讲清楚，而不是停留在名词列表。",
+            "- 可以在这里补一张 Mermaid 流程图，展示事件进入、模型分析、策略决策和执行回写之间的闭环。",
+            "- 可以补一张架构图，说明数据采集层、特征处理层、智能决策层和执行编排层各自承担什么职责。",
+          ].join("\n"),
+        },
+      };
+      yield { type: "finish", reason: "tool_calls" };
+      return;
+    }
+
+    yield { type: "text.start" };
+    yield {
+      type: "text.delta",
+      delta: latestUserText.includes("流程图")
+        ? "已基于现有草稿补充细节、流程图和架构图建议。"
+        : "已完成飞书文档续写。",
+    };
+    yield { type: "text.end" };
+    yield { type: "finish", reason: "stop" };
+  }
+}
+
 class ScriptedUsageTurnPort implements AiTurnPort {
   async *stream(): AsyncIterable<AiTurnEvent> {
     yield {
@@ -507,6 +614,182 @@ function createStaticToolSource(input: {
       };
     },
   };
+}
+
+function createMockWorkspaceBuiltinTools(fileContents: Map<string, string>) {
+  return createDesktopConversationBuiltinToolBundle({
+    workspaceQuery: {
+      async list() {
+        return {
+          items: [{
+            workspaceId: "workspace-1",
+            name: "Mock Workspace",
+            directoryPath: "E:/workspace/mock",
+            isPinned: false,
+            tags: [],
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          }],
+          meta: {
+            total: 1,
+            limit: 20,
+            offset: 0,
+            hasMore: false,
+          },
+        };
+      },
+      async get(workspaceId) {
+        return workspaceId === "workspace-1"
+          ? {
+            workspaceId: "workspace-1",
+            name: "Mock Workspace",
+            directoryPath: "E:/workspace/mock",
+            isPinned: false,
+            tags: [],
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          }
+          : null;
+      },
+      async getFileContent(workspaceId, filePath) {
+        return {
+          workspaceId,
+          rootPath: "E:/workspace/mock",
+          path: filePath,
+          absolutePath: `E:/workspace/mock/${filePath}`,
+          content: fileContents.get(filePath) ?? "",
+          binary: false,
+          truncated: false,
+        };
+      },
+      async readTextFile(workspaceId, filePath) {
+        return {
+          workspaceId,
+          rootPath: "E:/workspace/mock",
+          path: filePath,
+          absolutePath: `E:/workspace/mock/${filePath}`,
+          content: fileContents.get(filePath) ?? "",
+          binary: false,
+          truncated: false,
+        };
+      },
+    },
+    workspaceCommand: {
+      async writeTextFile(workspaceId, filePath, content) {
+        fileContents.set(filePath, content);
+        return {
+          workspaceId,
+          rootPath: "E:/workspace/mock",
+          path: filePath,
+          absolutePath: `E:/workspace/mock/${filePath}`,
+          content,
+          binary: false,
+          truncated: false,
+        };
+      },
+    },
+    gitQuery: {
+      async getGitChanges(workspaceId) {
+        return {
+          workspaceId,
+          rootPath: "E:/workspace/mock",
+          isGitRepo: true,
+          clean: true,
+          detached: false,
+          ahead: 0,
+          behind: 0,
+          stagedSummary: {
+            files: 0,
+            added: 0,
+            modified: 0,
+            deleted: 0,
+            renamed: 0,
+            untracked: 0,
+            conflict: 0,
+            additions: 0,
+            deletions: 0,
+          },
+          unstagedSummary: {
+            files: 0,
+            added: 0,
+            modified: 0,
+            deleted: 0,
+            renamed: 0,
+            untracked: 0,
+            conflict: 0,
+            additions: 0,
+            deletions: 0,
+          },
+          items: [],
+          summary: {
+            files: 0,
+            added: 0,
+            modified: 0,
+            deleted: 0,
+            renamed: 0,
+            untracked: 0,
+            conflict: 0,
+            additions: 0,
+            deletions: 0,
+          },
+        };
+      },
+      async getGitReviewDetail(workspaceId) {
+        return {
+          workspaceId,
+          rootPath: "E:/workspace/mock",
+          isGitRepo: true,
+          baseRef: "main",
+          targetRef: "HEAD",
+          mergeBase: null,
+          commits: [],
+          summary: {
+            files: 0,
+            additions: 0,
+            deletions: 0,
+          },
+          items: [],
+        };
+      },
+    },
+    terminalQuery: {
+      async getDetail() {
+        return null;
+      },
+    },
+    terminalCommand: {
+      async create() {
+        return {
+          sessionId: "terminal-session-1",
+          workspaceId: "workspace-1",
+          rootPath: "E:/workspace/mock",
+          shellKind: "powershell",
+          commandLine: "powershell.exe",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          status: "idle",
+        } as never;
+      },
+      async execute() {
+        return {
+          sessionId: "terminal-session-1",
+          commandId: "command-1",
+          accepted: true,
+          status: "completed",
+        } as never;
+      },
+      async close() {
+        return {
+          closed: true,
+        } as never;
+      },
+    },
+    taskBridge: {
+      async patchManagedConversationRootTask() {
+        return undefined;
+      },
+    },
+  });
 }
 
 function createRuntimeBackedConversationService(input: {
@@ -1800,6 +2083,147 @@ describe("DesktopConversationService", () => {
     }
   });
 
+  test("keeps builtin workspace tools for the feishu doc writer agent on generic drafting asks", async () => {
+    const turnPort = new RecordingPromptTurnPort();
+    const fixture = createRuntimeBackedConversationService({
+      tempPrefix: "maomi-desktop-conversation-feishu-doc-writer-",
+      turnPort,
+      toolSources: [createStaticToolSource({
+        sourceId: "builtin.desktop.conversation",
+        toolName: "workspace_write_file",
+      })],
+    });
+
+    try {
+      const created = await fixture.service.createSession({
+        workspaceId: "workspace-1",
+        title: "Feishu doc writer session",
+        selectedAgentId: FEISHU_DOC_WRITER_AGENT_ID,
+      });
+
+      await fixture.service.sendMessage({
+        sessionId: created.item.sessionId,
+        text: "从 0 开始写一篇 AIOps 文档，并整理成清晰章节。",
+        selectedAgentId: FEISHU_DOC_WRITER_AGENT_ID,
+      });
+
+      expect(turnPort.requests).toHaveLength(1);
+      expect(turnPort.requests[0]?.settings.toolChoice).toBe("auto");
+      expect(turnPort.prompts[0]?.systemBlocks.find((block) => block.metadata?.source === "desktop.runtime.tools")?.content)
+        .toContain("workspace_write_file");
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  test("keeps the feishu doc writer agent prompt on follow-up turns without resending selectedAgentId", async () => {
+    const turnPort = new RecordingPromptTurnPort();
+    const fixture = createRuntimeBackedConversationService({
+      tempPrefix: "maomi-desktop-conversation-feishu-doc-writer-follow-up-",
+      turnPort,
+      agentsList: BUILTIN_MAOMI_AGENTS,
+      toolSources: [createStaticToolSource({
+        sourceId: "builtin.desktop.conversation",
+        toolName: "workspace_write_file",
+      })],
+    });
+
+    try {
+      const created = await fixture.service.createSession({
+        workspaceId: "workspace-1",
+        title: "Feishu doc writer follow-up session",
+        selectedAgentId: FEISHU_DOC_WRITER_AGENT_ID,
+      });
+
+      await fixture.service.sendMessage({
+        sessionId: created.item.sessionId,
+        text: "先写一版飞书文档草稿。",
+        selectedAgentId: FEISHU_DOC_WRITER_AGENT_ID,
+      });
+      expect((await fixture.service.getSession(created.item.sessionId))?.metadata).toMatchObject({
+        selectedAgentId: FEISHU_DOC_WRITER_AGENT_ID,
+      });
+      await fixture.service.sendMessage({
+        sessionId: created.item.sessionId,
+        text: "再把内容展开，补充细节和图示建议。",
+      });
+
+      expect(turnPort.requests).toHaveLength(2);
+      expect(turnPort.prompts[1]?.agentId).toBe(FEISHU_DOC_WRITER_AGENT_ID);
+      expect(turnPort.prompts[1]?.systemBlocks.find((block) => block.metadata?.source === "desktop.runtime.tools")?.content)
+        .toContain("workspace_write_file");
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  test("automatically verifies long feishu doc follow-up edits through read and targeted edit tools", async () => {
+    const turnPort = new ScriptedFeishuLongDocFollowUpTurnPort();
+    const fileContents = new Map<string, string>([
+      [".maomi/feishu-docs/demo.md", "111"],
+      [".maomi/feishu-docs/drafts/demo.draft.md", ""],
+    ]);
+    const builtinTools = createMockWorkspaceBuiltinTools(fileContents);
+    const fixture = createRuntimeBackedConversationService({
+      tempPrefix: "maomi-desktop-conversation-feishu-doc-long-follow-up-",
+      turnPort,
+      agentsList: BUILTIN_MAOMI_AGENTS,
+      toolSources: builtinTools.toolSources,
+      toolHandlers: builtinTools.toolHandlers,
+    });
+
+    try {
+      const created = await fixture.service.createSession({
+        workspaceId: "workspace-1",
+        title: "Feishu doc writer targeted edit session",
+        selectedAgentId: FEISHU_DOC_WRITER_AGENT_ID,
+      });
+
+      const feishuContext = [
+        "请先起草飞书文档。",
+        "<feishu_doc_context>",
+        "original_markdown_path: .maomi/feishu-docs/demo.md",
+        "local_draft_path: .maomi/feishu-docs/drafts/demo.draft.md",
+        "</feishu_doc_context>",
+      ].join("\n");
+      const initial = await fixture.service.sendMessage({
+        sessionId: created.item.sessionId,
+        text: feishuContext,
+        selectedAgentId: FEISHU_DOC_WRITER_AGENT_ID,
+      });
+
+      expect(initial.detail.toolCalls.map((item) => item.toolName)).toContain("workspace_write_file");
+      expect(fileContents.get(".maomi/feishu-docs/drafts/demo.draft.md")).toContain("## 第一部分：基础原理与技术认知");
+
+      const followUp = await fixture.service.sendMessage({
+        sessionId: created.item.sessionId,
+        text: "但是缺少内容细节，不能只列一个个点，并且流程图、思维导图等都可以安排上下，架构图这些也要带上去，这样才能更加清晰做好示范，更加容易理解。",
+      });
+
+      expect(turnPort.requests).toHaveLength(5);
+      expect(turnPort.prompts[2]?.agentId).toBe(FEISHU_DOC_WRITER_AGENT_ID);
+      expect(turnPort.prompts[2]?.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+        "workspace_read_file",
+        "workspace_edit_file",
+        "workspace_apply_patch",
+        "workspace_write_file",
+      ]));
+      expect(turnPort.prompts[2]?.systemBlocks.find((block) => block.metadata?.source === "desktop.runtime.tools")?.content)
+        .toContain("prefer targeted edit/patch tools over rewriting the whole file");
+
+      const followUpToolNames = followUp.detail.toolCalls.map((item) => item.toolName);
+      expect(followUpToolNames.slice(-2)).toEqual([
+        "workspace_read_file",
+        "workspace_edit_file",
+      ]);
+      expect(followUpToolNames.filter((name) => name === "workspace_write_file")).toHaveLength(1);
+      expect(fileContents.get(".maomi/feishu-docs/drafts/demo.draft.md")).toContain("可以在这里补一张 Mermaid 流程图");
+      expect(fileContents.get(".maomi/feishu-docs/drafts/demo.draft.md")).toContain("可以补一张架构图");
+    } finally {
+      fixture.dispose();
+    }
+  });
+
   test("keeps builtin workspace tools for explicit local repair asks", async () => {
     const turnPort = new RecordingPromptTurnPort();
     const fixture = createRuntimeBackedConversationService({
@@ -1845,6 +2269,13 @@ describe("DesktopConversationService", () => {
         }),
         createStaticToolSource({
           sourceId: "builtin.desktop.conversation",
+          toolName: "workspace_edit_file",
+          metadata: {
+            operationKind: "file_write",
+          },
+        }),
+        createStaticToolSource({
+          sourceId: "builtin.desktop.conversation",
           toolName: "terminal_execute",
           metadata: {
             operationKind: "tool_execution",
@@ -1866,9 +2297,12 @@ describe("DesktopConversationService", () => {
 
       const toolsBlock = turnPort.prompts[0]?.systemBlocks.find((block) => block.metadata?.source === "desktop.runtime.tools")?.content;
       expect(toolsBlock).toContain("workspace_write_file");
+      expect(toolsBlock).toContain("workspace_edit_file");
       expect(toolsBlock).toContain("terminal_execute");
       expect(toolsBlock).toContain("Tool usage policy:");
       expect(toolsBlock).toContain("Prefer dedicated file-edit tools for creating or updating workspace files in one operation.");
+      expect(toolsBlock).toContain("prefer targeted edit/patch tools over rewriting the whole file");
+      expect(toolsBlock).toContain("call the file-edit tool directly");
       expect(toolsBlock).toContain("do not use terminal commands to assemble file contents line by line");
     } finally {
       fixture.dispose();
@@ -5889,7 +6323,7 @@ describe("DesktopConversationService", () => {
         runId: sent.detail.runs.at(-1)?.id,
         compressionThresholdPercent: 85,
         contextWindowTokens: 400,
-        shouldAutoCompress: false,
+        shouldAutoCompress: true,
         compaction: expect.objectContaining({
           status: "completed",
           reason: "budget_exceeded",
@@ -5939,7 +6373,7 @@ describe("DesktopConversationService", () => {
         runId: sent.detail.runs.at(-1)?.id,
         compressionThresholdPercent: 80,
         contextWindowTokens: 400,
-        shouldAutoCompress: false,
+        shouldAutoCompress: true,
         compaction: expect.objectContaining({
           status: "completed",
           reason: "budget_exceeded",

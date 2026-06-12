@@ -2,6 +2,10 @@ import { describe, expect, test } from "bun:test";
 
 import { shouldFocusPrefilledDraft } from "./direct-session-composer-prefill";
 import { resolveDirectSessionComposerPopupContainer } from "./direct-session-composer-popup";
+import {
+  assembleDirectSessionComposerSubmitText,
+  removeDirectSessionComposerSlashToken,
+} from "./direct-session-composer-submit";
 import { resolveDirectSessionComposerSubmitState } from "./direct-session-composer-submit-state";
 import {
   applyDirectSessionComposerSlashCommand,
@@ -122,15 +126,44 @@ describe("resolveDirectSessionComposerSlashMatch", () => {
 });
 
 describe("applyDirectSessionComposerSlashCommand", () => {
-  test("replaces the active slash token and keeps the cursor after the inserted command", () => {
+  test("removes the active slash token and returns the selected command separately", () => {
     expect(applyDirectSessionComposerSlashCommand({
       draft: "Run /pla after this",
       replaceStart: 4,
       replaceEnd: 8,
-      command: { insertText: "playwright" },
+      command: {
+        key: "playwright",
+        label: "Playwright",
+        insertText: "playwright",
+      },
     })).toEqual({
+      draft: "Run after this",
+      selectionStart: 3,
+      selectedCommand: {
+        key: "playwright",
+        label: "Playwright",
+        insertText: "playwright",
+      },
+    });
+  });
+});
+
+describe("direct session composer submit helpers", () => {
+  test("assembles the selected slash command and draft into the final submit text", () => {
+    expect(assembleDirectSessionComposerSubmitText({
+      draft: "Inspect localhost:3000",
+      selectedSlashCommand: { insertText: "playwright" },
+    })).toBe("/playwright\n\nInspect localhost:3000");
+  });
+
+  test("removes a slash token without leaving duplicate spaces", () => {
+    expect(removeDirectSessionComposerSlashToken({
       draft: "Run /playwright after this",
-      selectionStart: 15,
+      replaceStart: 4,
+      replaceEnd: 15,
+    })).toEqual({
+      draft: "Run after this",
+      selectionStart: 3,
     });
   });
 });
