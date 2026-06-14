@@ -591,7 +591,45 @@ describe("desktop conversation builtin tools", () => {
     expect(workspaceApplyPatchResult).toEqual(expect.objectContaining({
       workspaceId: "workspace-1",
       patch: expect.stringContaining("*** Update File: .maomi/feishu-docs/drafts/demo.draft.md"),
-      content: "## 第一部分\n- 条目一\n- 条目三\n1. 条目二\n2. 条目四\n> 引用\n```md\n##保持原样\n-保持原样\n```",
+      content: "## 第一部分\n- 条目一\n- 条目三\n1. 条目二\n2. 条目四\n> 引用\n```md\n##保持原样\n-保持原样\n```\n",
+    }));
+
+    fileContents.set("docs/drift.md", ["alpha", "beta   ", "gamma"].join("\n"));
+    const workspaceApplyPatchTrimEndResult = await workspaceApplyPatchHandler!.execute({
+      call: {
+        id: asToolCallId("tool_call_workspace_apply_patch_trim_end"),
+        sessionId: asSessionId("session_builtin_tools"),
+        runId: asRunId("run_builtin_tools"),
+        turnId: asTurnId("turn_builtin_tools"),
+        messageId: asMessageId("message_assistant_1"),
+        toolName: "workspace_apply_patch",
+        input: {
+          path: "docs/drift.md",
+          patchText: [
+            "*** Begin Patch",
+            "*** Update File: docs/drift.md",
+            "@@",
+            " alpha",
+            "-beta",
+            "+BETA",
+            " gamma",
+            "*** End Patch",
+          ].join("\n"),
+        },
+        status: "executing",
+        startedAt: 4,
+        updatedAt: 4,
+      },
+      context: {
+        ...context,
+        descriptor: workspaceApplyPatchHandler!.descriptor,
+      },
+    });
+
+    expect(workspaceApplyPatchTrimEndResult).toEqual(expect.objectContaining({
+      workspaceId: "workspace-1",
+      patch: expect.stringContaining("*** Update File: docs/drift.md"),
+      content: "alpha\nBETA\ngamma\n",
     }));
 
     const workspaceWriteResult = await workspaceWriteDocumentHandler!.execute({

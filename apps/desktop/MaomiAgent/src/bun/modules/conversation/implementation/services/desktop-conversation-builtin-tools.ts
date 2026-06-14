@@ -24,6 +24,10 @@ import {
   renderDesktopTerminalExecuteDescription,
   validateDesktopTerminalCommandForShell,
 } from "./desktop-terminal-shell-prompt";
+import {
+  applyWorkspacePatchUpdateChunks,
+  type WorkspacePatchUpdateChunk,
+} from "../shared/workspace-patch-matcher";
 
 type DesktopConversationBuiltinToolBundleOptions = {
   workspaceQuery: Pick<DesktopWorkspaceQueryPort, "list" | "get" | "getFileContent"> & {
@@ -1103,9 +1107,25 @@ function countExactMatches(source: string, needle: string): number {
 
 type WorkspaceApplyPatchOperation =
   | { kind: "add"; path: string; lines: string[] }
-  | { kind: "update"; path: string; hunks: string[][] }
+  | { kind: "update"; path: string; hunks: WorkspacePatchUpdateChunk[] }
   | { kind: "delete"; path: string }
   | { kind: "move"; path: string; nextPath: string };
+
+function finalizeWorkspacePatchUpdateChunk(
+  hunks: WorkspacePatchUpdateChunk[],
+  currentHunk: WorkspacePatchUpdateChunk,
+) {
+  if (currentHunk.oldLines.length === 0 && currentHunk.newLines.length === 0) {
+    throw new Error("workspace_apply_patch update file requires at least one change line in every hunk.");
+  }
+
+  hunks.push({
+    oldLines: [...currentHunk.oldLines],
+    newLines: [...currentHunk.newLines],
+    ...(currentHunk.changeContext ? { changeContext: currentHunk.changeContext } : {}),
+    ...(currentHunk.isEndOfFile ? { isEndOfFile: true } : {}),
+  });
+}
 
 function parseWorkspaceApplyPatchText(patchText: string): WorkspaceApplyPatchOperation[] {
   const normalized = patchText.replace(/\r\n?/g, "\n");
@@ -1160,15 +1180,33 @@ function parseWorkspaceApplyPatchText(patchText: string): WorkspaceApplyPatchOpe
         index += 1;
       }
 
-      const hunks: string[][] = [];
-      let currentHunk: string[] = [];
+      const hunks: WorkspacePatchUpdateChunk[] = [];
+      let currentHunk: WorkspacePatchUpdateChunk | null = null;
       while (index < lines.length && !lines[index]?.startsWith("*** ")) {
         const patchLine = lines[index] ?? "";
         if (patchLine.startsWith("@@")) {
-          if (currentHunk.length > 0) {
-            hunks.push(currentHunk);
-            currentHunk = [];
+          if (currentHunk) {
+            finalizeWorkspacePatchUpdateChunk(hunks, currentHunk);
           }
+          const changeContext = patchLine === "@@" ? undefined : patchLine.slice(3).trim();
+          currentHunk = {
+            oldLines: [],
+            newLines: [],
+            ...(changeContext ? { changeContext } : {}),
+          };
+          index += 1;
+          continue;
+        }
+
+        if (!currentHunk) {
+          currentHunk = {
+            oldLines: [],
+            newLines: [],
+          };
+        }
+
+        if (patchLine === "*** End of File") {
+          currentHunk.isEndOfFile = true;
           index += 1;
           continue;
         }
@@ -1176,12 +1214,18 @@ function parseWorkspaceApplyPatchText(patchText: string): WorkspaceApplyPatchOpe
         if (!/^[ +\-]/u.test(patchLine)) {
           throw new Error(`workspace_apply_patch update lines must start with space, '+' or '-': ${path}`);
         }
-        currentHunk.push(patchLine);
+        const content = patchLine.slice(1);
+        if (patchLine.startsWith(" ") || patchLine.startsWith("-")) {
+          currentHunk.oldLines.push(content);
+        }
+        if (patchLine.startsWith(" ") || patchLine.startsWith("+")) {
+          currentHunk.newLines.push(content);
+        }
         index += 1;
       }
 
-      if (currentHunk.length > 0) {
-        hunks.push(currentHunk);
+      if (currentHunk) {
+        finalizeWorkspacePatchUpdateChunk(hunks, currentHunk);
       }
 
       if (hunks.length === 0) {
@@ -1198,32 +1242,15 @@ function parseWorkspaceApplyPatchText(patchText: string): WorkspaceApplyPatchOpe
   throw new Error("workspace_apply_patch requires a closing '*** End Patch'.");
 }
 
-function applyWorkspacePatchHunks(source: string, hunks: string[][]): string {
-  let current = source.replace(/\r\n?/g, "\n");
+function applyWorkspacePatchHunks(source: string, filePath: string, hunks: WorkspacePatchUpdateChunk[]): string {
+  const normalizedSource = source.replace(/\r\n?/g, "\n");
+  const updated = applyWorkspacePatchUpdateChunks({
+    source: normalizedSource,
+    filePath,
+    chunks: hunks,
+  }).content;
 
-  for (const hunk of hunks) {
-    const oldChunk = hunk
-      .filter((line) => line.startsWith(" ") || line.startsWith("-"))
-      .map((line) => line.slice(1))
-      .join("\n");
-    const newChunk = hunk
-      .filter((line) => line.startsWith(" ") || line.startsWith("+"))
-      .map((line) => line.slice(1))
-      .join("\n");
-
-    if (!oldChunk) {
-      throw new Error("workspace_apply_patch does not support context-free insert hunks in this version.");
-    }
-
-    const matchIndex = current.indexOf(oldChunk);
-    if (matchIndex < 0) {
-      throw new Error("workspace_apply_patch could not match an update hunk against the current file contents.");
-    }
-
-    current = `${current.slice(0, matchIndex)}${newChunk}${current.slice(matchIndex + oldChunk.length)}`;
-  }
-
-  return source.includes("\r\n") ? current.replace(/\n/g, "\r\n") : current;
+  return source.includes("\r\n") ? updated.replace(/\n/g, "\r\n") : updated;
 }
 
 function createWorkspaceWriteFileHandler(
@@ -1527,7 +1554,7 @@ function createWorkspaceApplyPatchHandler(
             );
           }
 
-          const nextContent = applyWorkspacePatchHunks(currentFile.content, operation.hunks);
+          const nextContent = applyWorkspacePatchHunks(currentFile.content, normalizedPath, operation.hunks);
           updatedFiles.push({
             path: normalizedPath,
             content: isFeishuDocCacheMarkdownPath(normalizedPath)
