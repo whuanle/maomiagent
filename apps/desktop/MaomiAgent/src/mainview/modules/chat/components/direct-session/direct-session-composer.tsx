@@ -29,6 +29,7 @@ export function DirectSessionComposer(props: Props) {
   const isEn = props.language === "en-US";
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textAreaRef = useRef<TextAreaRef | null>(null);
+  const slashOptionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const previousDraftRef = useRef(props.draft);
   const pendingSelectionRef = useRef<number | null>(null);
   const [selectionRange, setSelectionRange] = useState(() => ({
@@ -230,6 +231,17 @@ export function DirectSessionComposer(props: Props) {
   }, [visibleSlashMatch]);
 
   useEffect(() => {
+    if (!visibleSlashMatch) {
+      slashOptionRefs.current = [];
+      return;
+    }
+
+    slashOptionRefs.current[activeSlashIndex]?.scrollIntoView({
+      block: "nearest",
+    });
+  }, [activeSlashIndex, visibleSlashMatch]);
+
+  useEffect(() => {
     if (slashContextKey && dismissedSlashKey && slashContextKey !== dismissedSlashKey) {
       setDismissedSlashKey(null);
     }
@@ -285,7 +297,37 @@ export function DirectSessionComposer(props: Props) {
   }
 
   return (
-    <div className="chat-direct-composer">
+    <div className="chat-direct-composer-layer">
+      {visibleSlashMatch ? (
+        <div className="chat-direct-composer-slash-floating" role="listbox" aria-label={isEn ? "Skill commands" : "技能命令"}>
+          {visibleSlashMatch.commands.map((command, index) => (
+            <button
+              key={command.key}
+              ref={(element) => {
+                slashOptionRefs.current[index] = element;
+              }}
+              type="button"
+              role="option"
+              aria-selected={index === activeSlashIndex}
+              className={`chat-direct-composer-slash-option${index === activeSlashIndex ? " is-active" : ""}`}
+              onMouseDown={(event) => {
+                event.preventDefault();
+              }}
+              onMouseEnter={() => setActiveSlashIndex(index)}
+              onClick={() => applySlashCommandSelection(index)}
+            >
+              <span className="chat-direct-composer-slash-option-head">
+                <span className="chat-direct-composer-slash-option-token">/{command.insertText}</span>
+                <span className="chat-direct-composer-slash-option-label">{command.label}</span>
+              </span>
+              {command.description ? (
+                <span className="chat-direct-composer-slash-option-description">{command.description}</span>
+              ) : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <div className="chat-direct-composer">
         <input
           ref={fileInputRef}
           type="file"
@@ -362,32 +404,6 @@ export function DirectSessionComposer(props: Props) {
             </div>
           ) : null}
           <div className="chat-direct-composer-input-shell">
-            {visibleSlashMatch ? (
-              <div className="chat-direct-composer-slash-floating" role="listbox" aria-label={isEn ? "Skill commands" : "技能命令"}>
-                {visibleSlashMatch.commands.map((command, index) => (
-                  <button
-                    key={command.key}
-                    type="button"
-                    role="option"
-                    aria-selected={index === activeSlashIndex}
-                    className={`chat-direct-composer-slash-option${index === activeSlashIndex ? " is-active" : ""}`}
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                    }}
-                    onMouseEnter={() => setActiveSlashIndex(index)}
-                    onClick={() => applySlashCommandSelection(index)}
-                  >
-                    <span className="chat-direct-composer-slash-option-head">
-                      <span className="chat-direct-composer-slash-option-token">/{command.insertText}</span>
-                      <span className="chat-direct-composer-slash-option-label">{command.label}</span>
-                    </span>
-                    {command.description ? (
-                      <span className="chat-direct-composer-slash-option-description">{command.description}</span>
-                    ) : null}
-                  </button>
-                ))}
-              </div>
-            ) : null}
             <div className="chat-direct-composer-input-stage">
               <Input.TextArea
                 ref={textAreaRef}
@@ -577,6 +593,7 @@ export function DirectSessionComposer(props: Props) {
           </div>
         </div>
       </div>
+    </div>
   );
 }
 

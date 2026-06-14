@@ -70,6 +70,14 @@ function buildHistoricalEditPlaceholder(label: string, value: string): string {
   ].join(" ");
 }
 
+function buildHistoricalTerminalCommandPlaceholder(value: string): string {
+  return [
+    `[Historical terminal command omitted from prompt history.]`,
+    summarizeTextBlob("Executed command", value),
+    `When running another command, keep using the \`command\` field with the full literal command text.`,
+  ].join(" ");
+}
+
 function buildFileOutputSummary(toolName: string, record: Record<string, unknown>, fallbackText: string): string {
   const path = typeof record.path === "string" ? record.path : undefined;
   const mimeType = typeof record.mimeType === "string" ? record.mimeType : undefined;
@@ -159,19 +167,19 @@ export function compactToolCallHistory(input: ToolCallHistoryCompactionInput): u
   if (input.toolName === "terminal_execute") {
     const command = typeof input.input.command === "string" ? input.input.command : "";
     return {
-      workspaceId: input.input.workspaceId,
-      cwd: input.input.cwd,
-      commandPreview: normalizeTextPreview(command),
-      commandChars: command.length,
-      commandLines: countLines(command),
+      sessionId: input.input.sessionId,
+      command: buildHistoricalTerminalCommandPlaceholder(command),
     };
   }
 
-  return {
-    workspaceId: input.input.workspaceId,
-    sessionId: input.input.sessionId,
-    readFrom: input.input.readFrom,
-  };
+  if (input.toolName === "terminal_read_output") {
+    return {
+      sessionId: input.input.sessionId,
+      ...(typeof input.input.limit === "number" ? { limit: input.input.limit } : {}),
+    };
+  }
+
+  return input.input;
 }
 
 export function compactToolResultHistory(input: ToolResultHistoryCompactionInput): string {

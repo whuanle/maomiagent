@@ -1,6 +1,7 @@
 import type { RegisteredToolHandler } from "#maomiagent/kernel/src/adapters";
 import type { MessageRecordWithParts, ToolDescriptor } from "#maomiagent/kernel/core";
 import type { ToolSource } from "#maomiagent/kernel/src/host/tools";
+import { isAbsolute, relative as relativePath } from "node:path";
 
 import type { DesktopGitQueryPort, DesktopGitReviewScope } from "../../../git";
 import type {
@@ -26,6 +27,10 @@ import {
 
 type DesktopConversationBuiltinToolBundleOptions = {
   workspaceQuery: Pick<DesktopWorkspaceQueryPort, "list" | "get" | "getFileContent"> & {
+    getFileTree?: (
+      workspaceId: string,
+      path?: string,
+    ) => Promise<Awaited<ReturnType<DesktopWorkspaceQueryPort["getFileTree"]>>>;
     readTextFile?: (
       workspaceId: string,
       path: string,
@@ -74,6 +79,25 @@ const WORKSPACE_READ_FILE_DESCRIPTOR: ToolDescriptor = {
     toolSourceKind: "builtin",
     operationKind: "file_read",
     operationLabel: "Read workspace file",
+    planModeAccess: "read",
+  },
+};
+
+const WORKSPACE_LIST_DIRECTORY_DESCRIPTOR: ToolDescriptor = {
+  name: "workspace_list_directory",
+  description: "List files and directories inside the current workspace so you can confirm paths before reading files.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      workspaceId: { type: "string" },
+      path: { type: "string" },
+    },
+    additionalProperties: false,
+  },
+  metadata: {
+    toolSourceKind: "builtin",
+    operationKind: "file_read",
+    operationLabel: "List workspace directory",
     planModeAccess: "read",
   },
 };
@@ -364,6 +388,119 @@ function normalizeWorkspaceLookupValue(value: string): string {
   return value.trim().replaceAll("\\", "/").replace(/\/+$/u, "").toLowerCase();
 }
 
+function stripFileProtocol(value: string): string {
+  return value.startsWith("file://") ? value.slice("file://".length) : value;
+}
+
+function stripQueryAndHash(value: string): string {
+  const hashIndex = value.indexOf("#");
+  const queryIndex = value.indexOf("?");
+  if (hashIndex !== -1 && queryIndex !== -1) {
+    return value.slice(0, Math.min(hashIndex, queryIndex));
+  }
+  if (hashIndex !== -1) {
+    return value.slice(0, hashIndex);
+  }
+  if (queryIndex !== -1) {
+    return value.slice(0, queryIndex);
+  }
+  return value;
+}
+
+function decodeWorkspacePath(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function unquoteGitPath(value: string): string {
+  if (!value.startsWith("\"") || !value.endsWith("\"")) {
+    return value;
+  }
+
+  const body = value.slice(1, -1);
+  const bytes: number[] = [];
+
+  for (let index = 0; index < body.length; index += 1) {
+    const char = body[index]!;
+    if (char !== "\\") {
+      bytes.push(char.charCodeAt(0));
+      continue;
+    }
+
+    const next = body[index + 1];
+    if (!next) {
+      bytes.push("\\".charCodeAt(0));
+      continue;
+    }
+
+    if (next >= "0" && next <= "7") {
+      const chunk = body.slice(index + 1, index + 4);
+      const match = chunk.match(/^[0-7]{1,3}/);
+      if (match) {
+        bytes.push(Number.parseInt(match[0], 8));
+        index += match[0].length;
+        continue;
+      }
+    }
+
+    const escaped = next === "n"
+      ? "\n"
+      : next === "r"
+        ? "\r"
+        : next === "t"
+          ? "\t"
+          : next === "b"
+            ? "\b"
+            : next === "f"
+              ? "\f"
+              : next === "v"
+                ? "\v"
+                : next === "\\" || next === "\""
+                  ? next
+                  : undefined;
+    bytes.push((escaped ?? next).charCodeAt(0));
+    index += 1;
+  }
+
+  return new TextDecoder().decode(new Uint8Array(bytes));
+}
+
+function normalizeWindowsPathLike(value: string): string {
+  return value
+    .replace(/^\/([a-zA-Z]):(?:[\\/]|$)/u, (_match, drive: string) => `${drive.toUpperCase()}:/`)
+    .replace(/^\/([a-zA-Z])(?:\/|$)/u, (_match, drive: string) => `${drive.toUpperCase()}:/`)
+    .replace(/^\/cygdrive\/([a-zA-Z])(?:\/|$)/u, (_match, drive: string) => `${drive.toUpperCase()}:/`)
+    .replace(/^\/mnt\/([a-zA-Z])(?:\/|$)/u, (_match, drive: string) => `${drive.toUpperCase()}:/`);
+}
+
+function normalizeWorkspaceToolPathInput(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = normalizeWindowsPathLike(
+    unquoteGitPath(
+      decodeWorkspacePath(
+        stripQueryAndHash(
+          stripFileProtocol(value.trim()),
+        ),
+      ),
+    ),
+  ).replace(/\\/g, "/");
+
+  return normalized || undefined;
+}
+
+function normalizeWorkspaceComparePath(value: string): string {
+  return normalizeWindowsPathLike(value)
+    .replace(/\\/g, "/")
+    .replace(/\/+$/u, "")
+    .toLowerCase();
+}
+
 function readWorkspacePathLeaf(value: string): string | undefined {
   const normalized = normalizeWorkspaceLookupValue(value);
   if (!normalized) {
@@ -431,6 +568,81 @@ async function tryFindWorkspaceByAlias(
   }
 }
 
+async function listWorkspacesSafe(
+  workspaceQuery: Pick<DesktopWorkspaceQueryPort, "list">,
+): Promise<DesktopWorkspaceItem[]> {
+  try {
+    const list = await workspaceQuery.list();
+    return [...list.items];
+  } catch {
+    return [];
+  }
+}
+
+function workspaceContainsPath(
+  item: Pick<DesktopWorkspaceItem, "directoryPath">,
+  candidatePath: string,
+): boolean {
+  const normalizedRoot = normalizeWorkspaceComparePath(item.directoryPath);
+  const normalizedCandidate = normalizeWorkspaceComparePath(candidatePath);
+  return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}/`);
+}
+
+async function tryFindWorkspaceByPath(
+  workspaceQuery: Pick<DesktopWorkspaceQueryPort, "list">,
+  candidatePath: string | undefined,
+  preferredWorkspaceId?: string,
+): Promise<DesktopWorkspaceItem | null> {
+  const normalizedPath = normalizeWorkspaceToolPathInput(candidatePath);
+  if (!normalizedPath || !isAbsolute(normalizeWindowsPathLike(normalizedPath))) {
+    return null;
+  }
+
+  const matches = (await listWorkspacesSafe(workspaceQuery))
+    .filter((item) => workspaceContainsPath(item, normalizedPath))
+    .sort((left, right) => {
+      if (preferredWorkspaceId) {
+        if (left.workspaceId === preferredWorkspaceId && right.workspaceId !== preferredWorkspaceId) {
+          return -1;
+        }
+        if (right.workspaceId === preferredWorkspaceId && left.workspaceId !== preferredWorkspaceId) {
+          return 1;
+        }
+      }
+
+      return normalizeWorkspaceComparePath(right.directoryPath).length
+        - normalizeWorkspaceComparePath(left.directoryPath).length;
+    });
+
+  return matches[0] ?? null;
+}
+
+async function tryGetOnlyWorkspace(
+  workspaceQuery: Pick<DesktopWorkspaceQueryPort, "list">,
+): Promise<DesktopWorkspaceItem | null> {
+  const workspaces = await listWorkspacesSafe(workspaceQuery);
+  return workspaces.length === 1 ? workspaces[0]! : null;
+}
+
+function relativizePathToWorkspace(
+  workspace: Pick<DesktopWorkspaceItem, "directoryPath">,
+  candidatePath: string | undefined,
+): string | undefined {
+  const normalizedPath = normalizeWorkspaceToolPathInput(candidatePath);
+  if (!normalizedPath) {
+    return undefined;
+  }
+
+  const absoluteCandidate = normalizeWindowsPathLike(normalizedPath);
+  if (!isAbsolute(absoluteCandidate) || !workspaceContainsPath(workspace, absoluteCandidate)) {
+    return normalizedPath;
+  }
+
+  const relative = relativePath(normalizeWindowsPathLike(workspace.directoryPath), absoluteCandidate)
+    .replace(/\\/g, "/");
+  return relative || "";
+}
+
 function readSessionWorkspaceId(sessionMetadata: unknown): string | undefined {
   return isRecord(sessionMetadata)
     ? normalizeOptionalText(sessionMetadata.workspaceId)
@@ -468,6 +680,30 @@ async function resolveWorkspaceId(
 
   return normalizeUnresolvedWorkspaceId(explicitWorkspaceId)
     ?? normalizeUnresolvedWorkspaceId(sessionWorkspaceId);
+}
+
+async function resolveWorkspaceTarget(
+  workspaceQuery: Pick<DesktopWorkspaceQueryPort, "list" | "get">,
+  input: Record<string, unknown>,
+  sessionMetadata: unknown,
+): Promise<{ workspaceId: string | undefined; path: string | undefined }> {
+  const sessionWorkspaceId = readSessionWorkspaceId(sessionMetadata);
+  const resolvedWorkspaceId = await resolveWorkspaceId(workspaceQuery, input, sessionMetadata);
+  const path = normalizeWorkspaceToolPathInput(input.path) ?? normalizeOptionalText(input.path);
+
+  let workspace = await tryGetWorkspace(workspaceQuery, resolvedWorkspaceId)
+    ?? await tryFindWorkspaceByAlias(workspaceQuery, resolvedWorkspaceId);
+  if (!workspace && path) {
+    workspace = await tryFindWorkspaceByPath(workspaceQuery, path, sessionWorkspaceId);
+  }
+  if (!workspace) {
+    workspace = await tryGetOnlyWorkspace(workspaceQuery);
+  }
+
+  return {
+    workspaceId: workspace?.workspaceId ?? resolvedWorkspaceId,
+    path: workspace ? relativizePathToWorkspace(workspace, path) : path,
+  };
 }
 
 function asToolFailure(code: string, message: string, metadata?: Record<string, unknown>) {
@@ -645,6 +881,62 @@ async function readWorkspaceFileForEditing(
   return workspaceQuery.getFileContent(workspaceId, path);
 }
 
+function createWorkspaceListDirectoryHandler(
+  workspaceQuery: Pick<DesktopWorkspaceQueryPort, "list" | "get"> & {
+    getFileTree?: (
+      workspaceId: string,
+      path?: string,
+    ) => Promise<Awaited<ReturnType<DesktopWorkspaceQueryPort["getFileTree"]>>>;
+  },
+): RegisteredToolHandler {
+  return {
+    descriptor: WORKSPACE_LIST_DIRECTORY_DESCRIPTOR,
+    async execute({ call, context }) {
+      const input = isRecord(call.input) ? call.input : {};
+      const target = await resolveWorkspaceTarget(workspaceQuery, input, context.session.metadata);
+
+      if (!target.workspaceId) {
+        return asToolFailure("workspace_id_required", "workspaceId is required for workspace_list_directory.");
+      }
+
+      if (typeof workspaceQuery.getFileTree !== "function") {
+        return asToolFailure(
+          "workspace_directory_listing_unavailable",
+          "Directory listing is not available for workspace_list_directory.",
+          { workspaceId: target.workspaceId, path: target.path },
+        );
+      }
+
+      try {
+        const result = await workspaceQuery.getFileTree(target.workspaceId, target.path);
+        const nodes = result.nodes.slice(0, TOOL_RESULT_ITEM_LIMIT).map((node) => ({
+          name: node.name,
+          path: node.path,
+          type: node.type,
+          ...(node.extension ? { extension: node.extension } : {}),
+        }));
+
+        return {
+          workspaceId: result.workspaceId,
+          rootPath: result.rootPath,
+          path: result.path,
+          truncated: result.nodes.length > nodes.length,
+          totalEntries: result.nodes.length,
+          directoryCount: result.nodes.filter((node) => node.type === "directory").length,
+          fileCount: result.nodes.filter((node) => node.type === "file").length,
+          nodes,
+        };
+      } catch (error) {
+        return asToolFailure(
+          "workspace_list_directory_failed",
+          error instanceof Error ? error.message : "Failed to list workspace directory.",
+          { workspaceId: target.workspaceId, path: target.path },
+        );
+      }
+    },
+  };
+}
+
 function createWorkspaceReadFileHandler(
   workspaceQuery: Pick<DesktopWorkspaceQueryPort, "list" | "get" | "getFileContent"> & {
     readTextFile?: (
@@ -657,21 +949,20 @@ function createWorkspaceReadFileHandler(
     descriptor: WORKSPACE_READ_FILE_DESCRIPTOR,
     async execute({ call, context }) {
       const input = isRecord(call.input) ? call.input : {};
-      const workspaceId = await resolveWorkspaceId(workspaceQuery, input, context.session.metadata);
-      const path = normalizeOptionalText(input.path);
+      const target = await resolveWorkspaceTarget(workspaceQuery, input, context.session.metadata);
       const offset = normalizePositiveInteger(input.offset);
       const limit = normalizePositiveInteger(input.limit);
 
-      if (!workspaceId) {
+      if (!target.workspaceId) {
         return asToolFailure("workspace_id_required", "workspaceId is required for workspace_read_file.");
       }
 
-      if (!path) {
+      if (!target.path) {
         return asToolFailure("workspace_path_required", "path is required for workspace_read_file.");
       }
 
       try {
-        const file = await readWorkspaceFileForEditing(workspaceQuery, workspaceId, path);
+        const file = await readWorkspaceFileForEditing(workspaceQuery, target.workspaceId, target.path);
         if (file.binary) {
           return {
             workspaceId: file.workspaceId,
@@ -713,7 +1004,7 @@ function createWorkspaceReadFileHandler(
         return asToolFailure(
           "workspace_read_failed",
           error instanceof Error ? error.message : "Failed to read workspace file.",
-          { workspaceId, path },
+          { workspaceId: target.workspaceId, path: target.path },
         );
       }
     },
@@ -1402,19 +1693,18 @@ function createGitReviewFileHandler(
     descriptor: GIT_REVIEW_FILE_DESCRIPTOR,
     async execute({ call, context }) {
       const input = isRecord(call.input) ? call.input : {};
-      const workspaceId = await resolveWorkspaceId(workspaceQuery, input, context.session.metadata);
-      const path = normalizeOptionalText(input.path);
-      if (!workspaceId) {
+      const target = await resolveWorkspaceTarget(workspaceQuery, input, context.session.metadata);
+      if (!target.workspaceId) {
         return asToolFailure("workspace_id_required", "workspaceId is required for git_review_file.");
       }
 
-      if (!path) {
+      if (!target.path) {
         return asToolFailure("workspace_path_required", "path is required for git_review_file.");
       }
 
       try {
-        const detail = await gitQuery.getGitReviewDetail(workspaceId, {
-          path,
+        const detail = await gitQuery.getGitReviewDetail(target.workspaceId, {
+          path: target.path,
           ...(normalizeReviewScope(input.scope) ? { scope: normalizeReviewScope(input.scope) } : {}),
           ...(normalizeOptionalText(input.baseRef) ? { baseRef: normalizeOptionalText(input.baseRef) } : {}),
           ...(normalizeOptionalText(input.headRef) ? { headRef: normalizeOptionalText(input.headRef) } : {}),
@@ -1459,7 +1749,7 @@ function createGitReviewFileHandler(
         return asToolFailure(
           "git_review_failed",
           error instanceof Error ? error.message : "Failed to review git file diff.",
-          { workspaceId, path },
+          { workspaceId: target.workspaceId, path: target.path },
         );
       }
     },

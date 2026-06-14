@@ -9,6 +9,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 
 import type { DesktopConfigurationPort } from "../../../configuration";
 import type { RuntimeLogger } from "../../../logs";
+import type { DesktopWorkspaceQueryPort } from "../../../workspace";
 import {
   DESKTOP_MCP_MARKET_PROVIDER_VALUES,
   MAX_DESKTOP_MCP_REQUEST_TIMEOUT_MS,
@@ -55,6 +56,7 @@ const MCP_NAME_RE = /^[a-zA-Z0-9._-]{2,64}$/;
 const MANAGED_RUNTIME_PROVIDER_ID = "desktop.mcp.managed";
 const MANAGED_RUNTIME_OWNER_ID = "desktop.mcp";
 const REGISTRY_BASE_URL = "https://registry.modelcontextprotocol.io/v0";
+const WORKSPACE_DIRECTORY_PLACEHOLDER = "{workspace:directory}";
 
 const MARKET_PROVIDERS: DesktopMcpMarketProvider[] = [
   { id: "official", label: "Official" },
@@ -85,7 +87,7 @@ const RECOMMENDED_ITEMS: Omit<DesktopMcpRecommendedItem, "installed">[] = [
     enabled: false,
     timeoutMs: 15_000,
     tags: ["local", "files"],
-    metadata: { args: ["-y", "@modelcontextprotocol/server-filesystem", "{env:HOME}"] },
+    metadata: { args: ["-y", "@modelcontextprotocol/server-filesystem", WORKSPACE_DIRECTORY_PLACEHOLDER] },
   },
   {
     id: "fetch",
@@ -111,7 +113,13 @@ type DesktopMcpStorage = {
 type ProbeInput = Pick<
   DesktopMcpItem,
   "transport" | "endpoint" | "enabled" | "auth" | "timeoutMs" | "metadata"
->;
+> & {
+  workspaceDirectory?: string;
+};
+
+type RuntimePlaceholderContext = {
+  workspaceDirectory?: string;
+};
 
 type RegistryHeaderRow = {
   name?: unknown;
@@ -362,6 +370,33 @@ function validateMetadata(metadata: unknown): Record<string, unknown> | undefine
   return cloneJson(metadata as Record<string, unknown>);
 }
 
+function migrateLegacyFilesystemMetadata(name: string, metadata: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (name !== "filesystem" || !metadata) {
+    return metadata;
+  }
+
+  const args = toStringArray(metadata.args);
+  if (!args || args.length < 3) {
+    return metadata;
+  }
+
+  const target = args[1]?.trim();
+  const root = args[2]?.trim();
+  if (target !== "@modelcontextprotocol/server-filesystem" || root !== "{env:HOME}") {
+    return metadata;
+  }
+
+  return {
+    ...metadata,
+    args: [
+      args[0]!,
+      args[1]!,
+      WORKSPACE_DIRECTORY_PLACEHOLDER,
+      ...args.slice(3),
+    ],
+  };
+}
+
 function validateDescription(description: unknown): string | undefined {
   if (description === undefined || description === null) {
     return undefined;
@@ -380,9 +415,11 @@ function normalizeStoredItem(raw: unknown): DesktopMcpItem | null {
   try {
     const scope = normalizeScope(item.scope, item.workspaceId);
     const transport = normalizeTransport(item.transport);
+    const name = normalizeName(item.name);
+    const metadata = migrateLegacyFilesystemMetadata(name, validateMetadata(item.metadata));
     return {
       id: normalizeOptionalString(item.id) ?? createId("mcp"),
-      name: normalizeName(item.name),
+      name,
       scope: scope.scope,
       workspaceId: scope.workspaceId,
       transport,
@@ -393,7 +430,7 @@ function normalizeStoredItem(raw: unknown): DesktopMcpItem | null {
       retry: validateRetry(item.retry),
       concurrencyHint: validateConcurrency(item.concurrencyHint),
       tags: validateTags(item.tags),
-      metadata: validateMetadata(item.metadata),
+      metadata,
       description: validateDescription(item.description),
       createdAt: normalizeOptionalString(item.createdAt) ?? nowIso(),
       updatedAt: normalizeOptionalString(item.updatedAt) ?? nowIso(),
@@ -561,8 +598,10 @@ function buildEffectiveRows(items: DesktopMcpItem[], health: Map<string, Desktop
   });
 }
 
-function substituteEnvPlaceholders(text: string): string {
-  return text.replace(/\{env:([^}]+)\}/g, (_match, varName: string) => process.env[varName] || "");
+function substituteRuntimePlaceholders(text: string, context: RuntimePlaceholderContext = {}): string {
+  return text
+    .replace(/\{env:([^}]+)\}/g, (_match, varName: string) => process.env[varName] || "")
+    .replaceAll(WORKSPACE_DIRECTORY_PLACEHOLDER, context.workspaceDirectory || homedir());
 }
 
 function toStringArray(value: unknown): string[] | undefined {
@@ -592,18 +631,20 @@ function extractHeaders(input: ProbeInput): Headers {
   const headerRecord = toStringRecord(metadataHeaders);
   if (headerRecord) {
     for (const [key, value] of Object.entries(headerRecord)) {
-      headers.set(key, substituteEnvPlaceholders(value));
+      headers.set(key, substituteRuntimePlaceholders(value, input));
     }
   }
   if (input.auth.mode === "token" && input.auth.token) {
-    headers.set("Authorization", `Bearer ${substituteEnvPlaceholders(input.auth.token)}`);
+    headers.set("Authorization", `Bearer ${substituteRuntimePlaceholders(input.auth.token, input)}`);
   } else if (input.auth.mode === "basic" && input.auth.username && input.auth.password) {
-    const encoded = Buffer.from(`${substituteEnvPlaceholders(input.auth.username)}:${substituteEnvPlaceholders(input.auth.password)}`).toString("base64");
+    const encoded = Buffer.from(
+      `${substituteRuntimePlaceholders(input.auth.username, input)}:${substituteRuntimePlaceholders(input.auth.password, input)}`,
+    ).toString("base64");
     headers.set("Authorization", `Basic ${encoded}`);
   } else if (input.auth.mode === "custom" && input.auth.custom) {
     for (const [key, value] of Object.entries(input.auth.custom)) {
       if (typeof value === "string" && key.trim()) {
-        headers.set(key.trim(), substituteEnvPlaceholders(value));
+        headers.set(key.trim(), substituteRuntimePlaceholders(value, input));
       }
     }
   }
@@ -611,7 +652,7 @@ function extractHeaders(input: ProbeInput): Headers {
 }
 
 function buildProbeUrl(endpoint: string, metadata?: Record<string, unknown>): URL {
-  const url = new URL(substituteEnvPlaceholders(endpoint));
+  const url = new URL(substituteRuntimePlaceholders(endpoint));
   const query = metadata?.query;
   if (query && typeof query === "object" && !Array.isArray(query)) {
     for (const [key, value] of Object.entries(query)) {
@@ -619,7 +660,7 @@ function buildProbeUrl(endpoint: string, metadata?: Record<string, unknown>): UR
         continue;
       }
       if (typeof value === "string") {
-        url.searchParams.set(key.trim(), substituteEnvPlaceholders(value));
+        url.searchParams.set(key.trim(), substituteRuntimePlaceholders(value));
       } else if (typeof value === "number" || typeof value === "boolean") {
         url.searchParams.set(key.trim(), String(value));
       }
@@ -650,11 +691,11 @@ function getProcessEnvRecord(): Record<string, string> {
 
 function buildStdioServerParameters(item: ProbeInput): StdioServerParameters {
   const metadata = item.metadata && typeof item.metadata === "object" ? item.metadata : {};
-  const command = substituteEnvPlaceholders(item.endpoint);
-  const args = (toStringArray(metadata.args) ?? []).map((value) => substituteEnvPlaceholders(value));
+  const command = substituteRuntimePlaceholders(item.endpoint, item);
+  const args = (toStringArray(metadata.args) ?? []).map((value) => substituteRuntimePlaceholders(value, item));
   const metadataEnv = toStringRecord(metadata.env);
   const env = metadataEnv
-    ? Object.fromEntries(Object.entries(metadataEnv).map(([key, value]) => [key, substituteEnvPlaceholders(value)]))
+    ? Object.fromEntries(Object.entries(metadataEnv).map(([key, value]) => [key, substituteRuntimePlaceholders(value, item)]))
     : undefined;
   return {
     command,
@@ -844,13 +885,21 @@ async function runCapabilityProbe(item: ProbeInput): Promise<DesktopMcpCapabilit
   };
 }
 
-function toRuntimeEntry(item: DesktopMcpItem): DesktopMcpRuntimeEntry {
+function toRuntimeEntry(item: DesktopMcpItem, context: RuntimePlaceholderContext = {}): DesktopMcpRuntimeEntry {
   if (item.transport === "stdio") {
     const metadata = item.metadata ?? {};
     return {
       type: "local",
-      command: [item.endpoint, ...(toStringArray(metadata.args) ?? [])],
-      environment: toStringRecord(metadata.env),
+      command: [
+        substituteRuntimePlaceholders(item.endpoint, context),
+        ...(toStringArray(metadata.args) ?? []).map((value) => substituteRuntimePlaceholders(value, context)),
+      ],
+      environment: (() => {
+        const env = toStringRecord(metadata.env);
+        return env
+          ? Object.fromEntries(Object.entries(env).map(([key, value]) => [key, substituteRuntimePlaceholders(value, context)]))
+          : undefined;
+      })(),
       enabled: item.enabled,
       timeout: item.timeoutMs,
     };
@@ -1100,6 +1149,7 @@ export class DesktopMcpService implements DesktopMcpPort {
   constructor(
     private readonly configuration: DesktopConfigurationPort,
     private readonly logger: RuntimeLogger,
+    private readonly workspaceQuery?: Pick<DesktopWorkspaceQueryPort, "get">,
   ) {
     this.stateFilePath = normalizeStatePath(
       this.configuration.getString("mcp.storage.path")
@@ -1230,8 +1280,9 @@ export class DesktopMcpService implements DesktopMcpPort {
   async runtimeConfig(params: { workspaceId?: string } = {}): Promise<DesktopMcpRuntimeConfig> {
     const storage = await this.loadStorage();
     const config: DesktopMcpRuntimeConfig = {};
+    const workspaceDirectory = await this.resolveWorkspaceDirectory(params.workspaceId);
     for (const item of resolveEffectiveItems(storage.items, params.workspaceId)) {
-      config[item.name] = toRuntimeEntry(item);
+      config[item.name] = toRuntimeEntry(item, { workspaceDirectory });
     }
     return config;
   }
@@ -1241,7 +1292,7 @@ export class DesktopMcpService implements DesktopMcpPort {
     const items = resolveEffectiveItems(storage.items, params.workspaceId)
       .filter((item) => item.enabled);
     const results = await Promise.allSettled(items.map(async (item) => {
-      const probe = buildProbeInput(item, { forceEnabled: true });
+      const probe = await this.buildRuntimeProbeInput(item, params.workspaceId, { forceEnabled: true });
       const tools = await listRuntimeToolsForItem(probe);
       return tools.map((tool) => ({
         mcpId: item.id,
@@ -1278,7 +1329,7 @@ export class DesktopMcpService implements DesktopMcpPort {
 
   async testConnection(mcpId: string): Promise<DesktopMcpTestConnectionResult> {
     const item = await this.requireItem(mcpId);
-    return runConnectionProbe(buildProbeInput(item, { forceEnabled: true }));
+    return runConnectionProbe(await this.buildRuntimeProbeInput(item, item.workspaceId, { forceEnabled: true }));
   }
 
   async healthCheck(mcpId: string): Promise<DesktopMcpTestConnectionResult> {
@@ -1287,7 +1338,7 @@ export class DesktopMcpService implements DesktopMcpPort {
     if (!item) {
       throw new DesktopMcpServiceError("NOT_FOUND", "mcp not found", { mcpId });
     }
-    const result = await runConnectionProbe(buildProbeInput(item, { forceEnabled: true }));
+    const result = await runConnectionProbe(await this.buildRuntimeProbeInput(item, item.workspaceId, { forceEnabled: true }));
     storage.healthRecords.push({
       recordId: createId("mhr"),
       mcpId,
@@ -1304,7 +1355,7 @@ export class DesktopMcpService implements DesktopMcpPort {
 
   async capabilities(mcpId: string): Promise<DesktopMcpCapabilityProbeResult> {
     const item = await this.requireItem(mcpId);
-    return runCapabilityProbe(buildProbeInput(item, { forceEnabled: true }));
+    return runCapabilityProbe(await this.buildRuntimeProbeInput(item, item.workspaceId, { forceEnabled: true }));
   }
 
   async executeRuntimeTool(input: {
@@ -1335,7 +1386,7 @@ export class DesktopMcpService implements DesktopMcpPort {
       });
     }
 
-    const probe = buildProbeInput(item, { forceEnabled: true });
+    const probe = await this.buildRuntimeProbeInput(item, input.workspaceId, { forceEnabled: true });
     const timeoutMs = clampDesktopMcpRequestTimeoutMs(input.timeoutMs ?? item.timeoutMs);
     return withSdkClient(probe, `tools/call:${toolName}`, async (client) => {
       await client.listTools(undefined, { timeout: timeoutMs });
@@ -1497,6 +1548,30 @@ export class DesktopMcpService implements DesktopMcpPort {
       throw new DesktopMcpServiceError("NOT_FOUND", "mcp not found", { mcpId });
     }
     return item;
+  }
+
+  private async resolveWorkspaceDirectory(workspaceId?: string): Promise<string | undefined> {
+    if (!workspaceId || !this.workspaceQuery) {
+      return undefined;
+    }
+
+    try {
+      const workspace = await this.workspaceQuery.get(workspaceId);
+      return normalizeOptionalString(workspace?.directoryPath);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async buildRuntimeProbeInput(
+    item: DesktopMcpItem,
+    workspaceId?: string,
+    options?: { forceEnabled?: boolean },
+  ): Promise<ProbeInput> {
+    return {
+      ...buildProbeInput(item, options),
+      workspaceDirectory: await this.resolveWorkspaceDirectory(workspaceId ?? item.workspaceId),
+    };
   }
 
   private async resolveEffectiveItemByName(input: {

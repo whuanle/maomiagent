@@ -358,19 +358,24 @@ export function promptContainsFeishuDocContext(
     }
 
     if (part.type === "tool_call_ref") {
-      const serializedInput = JSON.stringify(part.input);
+      const serializedInput = serializePromptPartValue(part.input);
       return FEISHU_DOC_CONTEXT_PATH_RE.test(serializedInput)
         || serializedInput.includes(".maomi/feishu-docs/");
     }
 
     if (part.type === "tool_result_ref") {
-      const serializedOutput = JSON.stringify(part.output);
+      const serializedOutput = serializePromptPartValue(part.output);
       return FEISHU_DOC_CONTEXT_PATH_RE.test(serializedOutput)
         || serializedOutput.includes(".maomi/feishu-docs/");
     }
 
     return false;
   }));
+}
+
+function serializePromptPartValue(value: unknown): string {
+  const serialized = JSON.stringify(value);
+  return typeof serialized === "string" ? serialized : "";
 }
 
 export function buildConversationProviderRetryPolicy(): RetryBackoffPolicy {

@@ -2326,6 +2326,12 @@ button.chat-direct-tool-path:focus-visible {
   box-shadow: none;
 }
 
+.chat-direct-composer-layer {
+  position: relative;
+  width: 100%;
+  overflow: visible;
+}
+
 .chat-direct-composer {
   width: 100%;
   margin: 0;
@@ -2464,7 +2470,6 @@ button.chat-direct-tool-path:focus-visible {
 }
 
 .chat-direct-composer-input-shell {
-  position: relative;
   display: flex;
   flex-direction: column;
 }
@@ -2496,7 +2501,7 @@ button.chat-direct-tool-path:focus-visible {
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
-  overflow: hidden;
+  overflow: visible;
   text-overflow: ellipsis;
 }
 
@@ -2584,11 +2589,22 @@ button.chat-direct-tool-path:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-  z-index: 4;
+  max-height: min(520px, 60vh);
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--chat-border-soft) 24%, white 76%);
+  border-radius: 22px;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--chat-surface) 99.4%, white 0.6%) 0%,
+      color-mix(in srgb, var(--chat-surface-muted) 92%, var(--chat-surface) 8%) 100%
+    );
+  box-shadow:
+    0 20px 48px color-mix(in srgb, var(--chat-text) 11%, transparent),
+    0 8px 18px color-mix(in srgb, var(--chat-text) 5%, transparent);
+  overscroll-behavior: contain;
+  overflow-y: auto;
+  z-index: 8;
 }
 
 .chat-direct-composer-slash-option {

@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { DesktopConfigurationService } from "../../configuration";
 import type { DesktopRuntimeContext } from "../../foundation";
 import { DesktopMcpService } from "../implementation/services/desktop-mcp-service";
+import type { DesktopWorkspaceQueryPort } from "../../workspace";
 import type { RuntimeLogger, RuntimeLogRecord } from "../../../../shared/runtime-logs";
 
 const DESKTOP_PACKAGE_TMP_ROOT = join(import.meta.dir, "..", "..", "..", "..", "..", "tmp");
@@ -103,6 +104,26 @@ function createRuntimeContext(tempRoot: string): DesktopRuntimeContext {
       throw new Error("not needed");
     },
     installProcessHandlers: false,
+  };
+}
+
+function createWorkspaceQueryStub(workspaces: Record<string, string>): Pick<DesktopWorkspaceQueryPort, "get"> {
+  return {
+    async get(workspaceId) {
+      const directoryPath = workspaces[workspaceId];
+      if (!directoryPath) {
+        return null;
+      }
+      return {
+        workspaceId,
+        name: workspaceId,
+        directoryPath,
+        isPinned: false,
+        tags: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      };
+    },
   };
 }
 
@@ -237,6 +258,133 @@ describe("DesktopMcpService", () => {
           echoed: "hello from runtime tool",
         },
       }));
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("expands workspace directory placeholders for runtime config", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "maomi-desktop-mcp-workspace-runtime-"));
+    const workspaceDirectory = join(tempRoot, "repo");
+
+    try {
+      await mkdir(workspaceDirectory, { recursive: true });
+
+      const configuration = new DesktopConfigurationService(createRuntimeContext(tempRoot));
+      const service = new DesktopMcpService(
+        configuration,
+        createRuntimeLoggerStub(),
+        createWorkspaceQueryStub({
+          "workspace-1": workspaceDirectory,
+        }),
+      );
+
+      await service.create({
+        name: "filesystem",
+        scope: "workspace",
+        workspaceId: "workspace-1",
+        transport: "stdio",
+        endpoint: "npx",
+        enabled: true,
+        timeoutMs: 15_000,
+        auth: { mode: "none" },
+        metadata: {
+          args: ["-y", "@modelcontextprotocol/server-filesystem", "{workspace:directory}"],
+        },
+      });
+
+      const runtimeConfig = await service.runtimeConfig({ workspaceId: "workspace-1" });
+      expect(runtimeConfig.filesystem).toEqual({
+        type: "local",
+        command: ["npx", "-y", "@modelcontextprotocol/server-filesystem", workspaceDirectory],
+        environment: undefined,
+        enabled: true,
+        timeout: 15_000,
+      });
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("falls back to home directory when workspace placeholder cannot resolve", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "maomi-desktop-mcp-home-fallback-"));
+
+    try {
+      const configuration = new DesktopConfigurationService(createRuntimeContext(tempRoot));
+      const service = new DesktopMcpService(configuration, createRuntimeLoggerStub());
+
+      await service.create({
+        name: "filesystem",
+        scope: "global",
+        transport: "stdio",
+        endpoint: "npx",
+        enabled: true,
+        timeoutMs: 15_000,
+        auth: { mode: "none" },
+        metadata: {
+          args: ["-y", "@modelcontextprotocol/server-filesystem", "{workspace:directory}"],
+        },
+      });
+
+      const runtimeConfig = await service.runtimeConfig();
+      expect(runtimeConfig.filesystem).toEqual({
+        type: "local",
+        command: ["npx", "-y", "@modelcontextprotocol/server-filesystem", homedir()],
+        environment: undefined,
+        enabled: true,
+        timeout: 15_000,
+      });
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("migrates legacy filesystem HOME root to workspace-aware placeholder on load", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "maomi-desktop-mcp-legacy-filesystem-"));
+    const workspaceDirectory = join(tempRoot, "repo");
+    const statePath = join(tempRoot, "mcp-state.json");
+
+    try {
+      await mkdir(workspaceDirectory, { recursive: true });
+      await writeFile(statePath, JSON.stringify({
+        version: "1.0",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        items: [{
+          id: "mcp_legacy_filesystem",
+          name: "filesystem",
+          scope: "workspace",
+          workspaceId: "workspace-1",
+          transport: "stdio",
+          endpoint: "npx",
+          enabled: true,
+          auth: { mode: "none" },
+          timeoutMs: 15_000,
+          metadata: {
+            args: ["-y", "@modelcontextprotocol/server-filesystem", "{env:HOME}"],
+          },
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        }],
+        healthRecords: [],
+      }, null, 2), "utf-8");
+
+      const configuration = new DesktopConfigurationService(createRuntimeContext(tempRoot));
+      const service = new DesktopMcpService(
+        configuration,
+        createRuntimeLoggerStub(),
+        createWorkspaceQueryStub({
+          "workspace-1": workspaceDirectory,
+        }),
+      );
+
+      const runtimeConfig = await service.runtimeConfig({ workspaceId: "workspace-1" });
+      expect(runtimeConfig.filesystem).toEqual({
+        type: "local",
+        command: ["npx", "-y", "@modelcontextprotocol/server-filesystem", workspaceDirectory],
+        environment: undefined,
+        enabled: true,
+        timeout: 15_000,
+      });
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }

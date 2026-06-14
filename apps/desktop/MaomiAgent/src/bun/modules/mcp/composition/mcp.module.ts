@@ -12,6 +12,7 @@ import {
 import type { DesktopConversationCapabilityProvider } from "../../conversation/abstraction/ports/desktop-conversation-capabilities.ports";
 import { DESKTOP_CONVERSATION_CAPABILITY_PROVIDER } from "../../conversation/abstraction/tokens/desktop-conversation.tokens";
 import { DesktopLogsModule, RUNTIME_LOGGER_FACTORY_PORT } from "../../logs";
+import { DESKTOP_WORKSPACE_QUERY_PORT, DesktopWorkspaceModule } from "../../workspace";
 import type { DesktopMcpPort } from "../abstraction/ports/desktop-mcp.ports";
 import {
   DESKTOP_MCP_COMMAND_PORT,
@@ -31,7 +32,7 @@ export const DESKTOP_MCP_CONVERSATION_CAPABILITY_PROVIDER_TOKEN =
 
 export class DesktopMcpModule extends DependencyModuleBase {
   static moduleId = "desktop.mcp";
-  static dependencies = [DesktopConfigurationModule, DesktopLogsModule] as const;
+  static dependencies = [DesktopConfigurationModule, DesktopLogsModule, DesktopWorkspaceModule] as const;
 
   override configureServices(context: DependencyModuleContext): void {
     context.addSingleton(DESKTOP_MCP_SERVICE_TOKEN, {
@@ -41,6 +42,7 @@ export class DesktopMcpModule extends DependencyModuleBase {
           source: "desktop",
           module: "desktop.mcp",
         }),
+        services.resolve(DESKTOP_WORKSPACE_QUERY_PORT),
       ),
       source: context.module.moduleId,
     });

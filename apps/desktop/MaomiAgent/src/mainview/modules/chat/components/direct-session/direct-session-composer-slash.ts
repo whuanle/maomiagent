@@ -21,7 +21,7 @@ function isWhitespace(value: string | undefined) {
 
 export function resolveDirectSessionComposerSlashMatch(input: {
   draft: string;
-  selectionStart: number;
+  selectionStart: number | null | undefined;
   commands?: readonly ChatSlashCommandOption[];
 }): DirectSessionComposerSlashMatch | undefined {
   const commands = input.commands ?? [];
@@ -29,7 +29,10 @@ export function resolveDirectSessionComposerSlashMatch(input: {
     return undefined;
   }
 
-  const selectionStart = Math.max(0, Math.min(input.selectionStart, input.draft.length));
+  const requestedSelectionStart = typeof input.selectionStart === "number" && Number.isFinite(input.selectionStart)
+    ? input.selectionStart
+    : input.draft.length;
+  const selectionStart = Math.max(0, Math.min(requestedSelectionStart, input.draft.length));
   let replaceStart = selectionStart;
   while (replaceStart > 0 && !isWhitespace(input.draft[replaceStart - 1])) {
     replaceStart -= 1;

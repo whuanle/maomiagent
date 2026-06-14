@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { basename, dirname, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 
 import type { RuntimeLogger } from "../../../logs";
 import type {
@@ -121,12 +122,109 @@ function normalizeDirectoryPath(input: unknown): string | undefined {
   return typeof input === "string" && input.trim() ? resolve(input.trim()) : undefined;
 }
 
-function normalizeWorkspaceRelativePath(input: unknown): string | undefined {
+function stripFileProtocol(input: string): string {
+  return input.startsWith("file://") ? input.slice("file://".length) : input;
+}
+
+function stripQueryAndHash(input: string): string {
+  const hashIndex = input.indexOf("#");
+  const queryIndex = input.indexOf("?");
+  if (hashIndex !== -1 && queryIndex !== -1) {
+    return input.slice(0, Math.min(hashIndex, queryIndex));
+  }
+  if (hashIndex !== -1) {
+    return input.slice(0, hashIndex);
+  }
+  if (queryIndex !== -1) {
+    return input.slice(0, queryIndex);
+  }
+  return input;
+}
+
+function decodeWorkspacePath(input: string): string {
+  try {
+    return decodeURIComponent(input);
+  } catch {
+    return input;
+  }
+}
+
+function unquoteGitPath(input: string): string {
+  if (!input.startsWith("\"") || !input.endsWith("\"")) {
+    return input;
+  }
+
+  const body = input.slice(1, -1);
+  const bytes: number[] = [];
+
+  for (let index = 0; index < body.length; index += 1) {
+    const char = body[index]!;
+    if (char !== "\\") {
+      bytes.push(char.charCodeAt(0));
+      continue;
+    }
+
+    const next = body[index + 1];
+    if (!next) {
+      bytes.push("\\".charCodeAt(0));
+      continue;
+    }
+
+    if (next >= "0" && next <= "7") {
+      const chunk = body.slice(index + 1, index + 4);
+      const match = chunk.match(/^[0-7]{1,3}/);
+      if (match) {
+        bytes.push(Number.parseInt(match[0], 8));
+        index += match[0].length;
+        continue;
+      }
+    }
+
+    const escaped = next === "n"
+      ? "\n"
+      : next === "r"
+        ? "\r"
+        : next === "t"
+          ? "\t"
+          : next === "b"
+            ? "\b"
+            : next === "f"
+              ? "\f"
+              : next === "v"
+                ? "\v"
+                : next === "\\" || next === "\""
+                  ? next
+                  : undefined;
+    bytes.push((escaped ?? next).charCodeAt(0));
+    index += 1;
+  }
+
+  return new TextDecoder().decode(new Uint8Array(bytes));
+}
+
+function normalizeWindowsPathLike(input: string): string {
+  return input
+    .replace(/^\/([a-zA-Z]):(?:[\\/]|$)/, (_match, drive: string) => `${drive.toUpperCase()}:/`)
+    .replace(/^\/([a-zA-Z])(?:\/|$)/, (_match, drive: string) => `${drive.toUpperCase()}:/`)
+    .replace(/^\/cygdrive\/([a-zA-Z])(?:\/|$)/, (_match, drive: string) => `${drive.toUpperCase()}:/`)
+    .replace(/^\/mnt\/([a-zA-Z])(?:\/|$)/, (_match, drive: string) => `${drive.toUpperCase()}:/`);
+}
+
+function normalizeWorkspacePathInput(input: unknown): string | undefined {
   if (typeof input !== "string") {
     return undefined;
   }
 
-  const normalized = input.trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\/+/, "");
+  const normalized = normalizeWindowsPathLike(
+    unquoteGitPath(
+      decodeWorkspacePath(
+        stripQueryAndHash(
+          stripFileProtocol(input.trim()),
+        ),
+      ),
+    ),
+  );
+
   return normalized || undefined;
 }
 
@@ -139,13 +237,37 @@ function requireDirectoryPath(input: unknown): string {
 }
 
 function normalizePathForCompare(input: string): string {
-  const normalized = resolve(input).replace(/[\/]+/g, "\\").replace(/[\\]+$/, "");
+  const resolved = resolve(normalizeWindowsPathLike(input));
+  const normalized = (() => {
+    try {
+      return (realpathSync.native?.(resolved) ?? realpathSync(resolved));
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+        return resolved;
+      }
+      throw error;
+    }
+  })()
+    .replace(/[\/]+/g, "\\")
+    .replace(/[\\]+$/, "");
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
-function ensureInsideWorkspace(rootPath: string, relativePath?: string): { absolutePath: string; normalizedPath: string } {
-  const normalizedPath = normalizeWorkspaceRelativePath(relativePath) ?? "";
-  const absolutePath = resolve(rootPath, normalizedPath || ".");
+function resolveWorkspaceCandidatePath(rootPath: string, inputPath?: string): string {
+  const normalizedInput = normalizeWorkspacePathInput(inputPath);
+  if (!normalizedInput) {
+    return resolve(rootPath, ".");
+  }
+
+  if (isAbsolute(normalizedInput)) {
+    return resolve(normalizedInput);
+  }
+
+  return resolve(rootPath, normalizedInput);
+}
+
+function ensureInsideWorkspace(rootPath: string, inputPath?: string): { absolutePath: string; normalizedPath: string } {
+  const absolutePath = resolveWorkspaceCandidatePath(rootPath, inputPath);
   const normalizedRoot = normalizePathForCompare(rootPath);
   const normalizedAbsolute = normalizePathForCompare(absolutePath);
 
@@ -155,7 +277,7 @@ function ensureInsideWorkspace(rootPath: string, relativePath?: string): { absol
 
   return {
     absolutePath,
-    normalizedPath,
+    normalizedPath: toWorkspacePath(rootPath, absolutePath),
   };
 }
 

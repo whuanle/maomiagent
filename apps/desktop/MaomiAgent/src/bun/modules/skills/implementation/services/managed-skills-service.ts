@@ -171,6 +171,48 @@ function normalizePathForCompare(pathname: string): string {
     .toLowerCase();
 }
 
+function parseSkillFrontmatter(content: string): {
+  name?: string;
+  description?: string;
+} {
+  const normalized = content.replace(/^\uFEFF/, "");
+  const match = normalized.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  if (!match) {
+    return {};
+  }
+
+  const parsed: {
+    name?: string;
+    description?: string;
+  } = {};
+
+  for (const rawLine of match[1].split(/\r?\n/u)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+
+    const separatorIndex = line.indexOf(":");
+    if (separatorIndex <= 0) {
+      continue;
+    }
+
+    const key = line.slice(0, separatorIndex).trim();
+    const value = line.slice(separatorIndex + 1).trim().replace(/^['"]|['"]$/g, "").trim();
+    if (!value) {
+      continue;
+    }
+
+    if (key === "name") {
+      parsed.name = value;
+    } else if (key === "description") {
+      parsed.description = value;
+    }
+  }
+
+  return parsed;
+}
+
 function resolveCandidateSkillPaths(
   definition: ReturnType<typeof createSkillsDiscoveryDefinitions>[number],
 ): string[] {
@@ -769,7 +811,7 @@ export class ManagedSkillsService implements DesktopSkillsQueryPort, DesktopSkil
       const current = itemsById.get(scanned.skillId);
       itemsById.set(scanned.skillId, {
         skillId: scanned.skillId,
-        name: current?.name || basename(scanned.skillId),
+        name: current?.name || scanned.name || basename(scanned.skillId),
         label: current?.label,
         scope: "global",
         workspaceId: undefined,
@@ -777,7 +819,7 @@ export class ManagedSkillsService implements DesktopSkillsQueryPort, DesktopSkil
         sourcePath: current?.sourcePath,
         managedPath: scanned.managedPath,
         tags: current?.tags,
-        description: current?.description,
+        description: current?.description || scanned.description,
         metadata: current?.metadata,
         createdAt: current?.createdAt || scanned.createdAt,
         updatedAt: current?.updatedAt || scanned.updatedAt,
@@ -797,6 +839,8 @@ export class ManagedSkillsService implements DesktopSkillsQueryPort, DesktopSkil
     managedPath: string;
     createdAt: string;
     updatedAt: string;
+    name?: string;
+    description?: string;
   }>> {
     const environment = this.resolveEnvironment();
     const seenSkillIds = new Set<string>();
@@ -805,6 +849,8 @@ export class ManagedSkillsService implements DesktopSkillsQueryPort, DesktopSkil
       managedPath: string;
       createdAt: string;
       updatedAt: string;
+      name?: string;
+      description?: string;
     }> = [];
 
     for (const root of environment.managedSkillRoots) {
@@ -846,6 +892,8 @@ export class ManagedSkillsService implements DesktopSkillsQueryPort, DesktopSkil
         }
 
         const stat = await fs.stat(managedPath).catch(() => null);
+        const skillFileContent = await fs.readFile(join(managedPath, "SKILL.md"), "utf-8").catch(() => "");
+        const metadata = skillFileContent ? parseSkillFrontmatter(skillFileContent) : {};
         const createdAt =
           stat && !Number.isNaN(stat.birthtime.getTime())
             ? stat.birthtime.toISOString()
@@ -863,6 +911,8 @@ export class ManagedSkillsService implements DesktopSkillsQueryPort, DesktopSkil
           managedPath,
           createdAt,
           updatedAt,
+          name: metadata.name,
+          description: metadata.description,
         });
       }
     }

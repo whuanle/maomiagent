@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { DesktopConfigurationService } from "../../configuration";
 import { DesktopDatabaseService } from "../../database";
@@ -123,10 +124,14 @@ describe("DesktopWorkspaceService", () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "maomi-desktop-workspace-files-"));
     const workspaceDirectory = await mkdtemp(join(tempRoot, "repo-"));
     const sourceDirectory = join(workspaceDirectory, "src");
+    const encodedFilePath = join(sourceDirectory, "notes #1.md");
+    const outsideFilePath = join(tempRoot, "outside.txt");
     const database = new DesktopDatabaseService(new DesktopConfigurationService(createRuntimeContext(tempRoot)));
 
     await mkdir(sourceDirectory, { recursive: true });
     await writeFile(join(workspaceDirectory, "README.md"), "# Desktop Workspace\n\nhello bridge\n", "utf-8");
+    await writeFile(encodedFilePath, "encoded path content\n", "utf-8");
+    await writeFile(outsideFilePath, "outside\n", "utf-8");
     await writeFile(
       join(workspaceDirectory, "big.txt"),
       `start-${"a".repeat(300 * 1024)}\n${"b".repeat(300 * 1024)}-end`,
@@ -157,6 +162,13 @@ describe("DesktopWorkspaceService", () => {
       expect(rootTree.path).toBe("");
       expect(rootTree.nodes.map((node) => node.path)).toEqual(["src", "big.txt", "logo.png", "README.md"]);
 
+      const sourceTree = await workspace.getFileTree(
+        created.item.workspaceId,
+        `${pathToFileURL(sourceDirectory).toString()}?view=list#top`,
+      );
+      expect(sourceTree.path).toBe("src");
+      expect(sourceTree.nodes.map((node) => node.path)).toEqual(["src/notes #1.md"]);
+
       const readme = await workspace.getFileContent(created.item.workspaceId, "README.md");
       expect(readme.binary).toBe(false);
       expect(readme.truncated).toBe(false);
@@ -164,6 +176,21 @@ describe("DesktopWorkspaceService", () => {
       expect(readme.content).toContain("hello bridge");
       expect(readme.previewHeadContent).toBeUndefined();
       expect(readme.previewTailContent).toBeUndefined();
+
+      const readmeByAbsolutePath = await workspace.getFileContent(
+        created.item.workspaceId,
+        join(workspaceDirectory, "README.md"),
+      );
+      expect(readmeByAbsolutePath.path).toBe("README.md");
+      expect(readmeByAbsolutePath.content).toContain("hello bridge");
+
+      const encodedFile = await workspace.getFileContent(
+        created.item.workspaceId,
+        `${pathToFileURL(encodedFilePath).toString()}?line=1#note`,
+      );
+      expect(encodedFile.binary).toBe(false);
+      expect(encodedFile.path).toBe("src/notes #1.md");
+      expect(encodedFile.content).toContain("encoded path content");
 
       const big = await workspace.getFileContent(created.item.workspaceId, "big.txt");
       expect(big.binary).toBe(false);
@@ -198,6 +225,18 @@ describe("DesktopWorkspaceService", () => {
       expect(reviewCache.binary).toBe(false);
       expect(reviewCache.path).toBe(".maomi/git-review/commit/example.json");
       expect(reviewCache.content).toContain("\"version\":1");
+
+      const writtenByFileUrl = await workspace.writeTextFile(
+        created.item.workspaceId,
+        pathToFileURL(join(workspaceDirectory, "docs", "roadmap.md")).toString(),
+        "# Roadmap\n",
+      );
+      expect(writtenByFileUrl.path).toBe("docs/roadmap.md");
+      expect(writtenByFileUrl.content).toContain("# Roadmap");
+
+      await expect(
+        workspace.getFileContent(created.item.workspaceId, outsideFilePath),
+      ).rejects.toThrow("workspace path escapes root directory");
     } finally {
       database.dispose();
       await rm(tempRoot, { recursive: true, force: true });

@@ -872,6 +872,36 @@ describe("promptContainsFeishuDocContext", () => {
       },
     })).toBe(true);
   });
+
+  test("ignores tool results whose output serializes to undefined", () => {
+    expect(promptContainsFeishuDocContext({
+      sessionId: "session-1" as AiTurnRequest["prompt"]["sessionId"],
+      runId: "run-1" as AiTurnRequest["prompt"]["runId"],
+      turnId: "turn-1" as AiTurnRequest["prompt"]["turnId"],
+      agentId: "concise",
+      systemBlocks: [],
+      contextBlocks: [],
+      messages: [{
+        message: {
+          id: "message-1" as AiTurnRequest["prompt"]["messages"][number]["message"]["id"],
+          sessionId: "session-1" as AiTurnRequest["prompt"]["sessionId"],
+          role: "tool",
+          createdAt: 1,
+        },
+        parts: [{
+          id: "message-1-tool-result" as AiTurnRequest["prompt"]["messages"][number]["parts"][number]["id"],
+          type: "tool_result_ref",
+          toolCallId: "call-1",
+          toolName: "brainstorming",
+          output: undefined,
+        }],
+      }],
+      tools: [],
+      outputMode: {
+        kind: "text",
+      },
+    })).toBe(false);
+  });
 });
 
 describe("buildConversationProviderRetryPolicy", () => {

@@ -73,6 +73,42 @@ describe("tool history compaction", () => {
     expect(compacted).not.toContain("x".repeat(300));
   });
 
+  test("summarizes terminal_execute inputs without changing field names", () => {
+    const compacted = compactToolCallHistory({
+      toolName: "terminal_execute",
+      input: {
+        sessionId: "term_1",
+        command: "Get-ChildItem -Recurse -Depth 3 | Select-Object FullName",
+      },
+    }) as Record<string, unknown>;
+
+    expect(compacted).toEqual(expect.objectContaining({
+      sessionId: "term_1",
+      command: expect.stringContaining("Historical terminal command omitted from prompt history"),
+    }));
+    expect(compacted.command).toEqual(expect.stringContaining("`command` field"));
+    expect(compacted.commandPreview).toBeUndefined();
+    expect(compacted.commandChars).toBeUndefined();
+    expect(compacted.commandLines).toBeUndefined();
+  });
+
+  test("summarizes terminal_read_output inputs using only supported fields", () => {
+    const compacted = compactToolCallHistory({
+      toolName: "terminal_read_output",
+      input: {
+        sessionId: "term_1",
+        limit: 200,
+        workspaceId: "workspace-1",
+        readFrom: "tail",
+      },
+    }) as Record<string, unknown>;
+
+    expect(compacted).toEqual({
+      sessionId: "term_1",
+      limit: 200,
+    });
+  });
+
   test("keeps workspace file read/write results uncompressed so the model can verify exact content", () => {
     const fileResult = JSON.stringify({
       path: ".maomi/feishu-docs/drafts/demo.draft.md",

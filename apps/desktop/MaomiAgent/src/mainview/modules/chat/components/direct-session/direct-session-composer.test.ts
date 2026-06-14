@@ -116,6 +116,19 @@ describe("resolveDirectSessionComposerSlashMatch", () => {
     });
   });
 
+  test("falls back to the draft end when the caret position is unavailable", () => {
+    expect(resolveDirectSessionComposerSlashMatch({
+      draft: "/",
+      selectionStart: null,
+      commands,
+    })).toEqual({
+      query: "",
+      replaceStart: 0,
+      replaceEnd: 1,
+      commands,
+    });
+  });
+
   test("ignores slashes inside ordinary paths", () => {
     expect(resolveDirectSessionComposerSlashMatch({
       draft: "See src/main.ts",
