@@ -556,6 +556,72 @@ describe("desktop conversation builtin tools", () => {
       content: "## 第一部分\n- 条目一\n- 条目三\n1. 条目二\n> 引用\n```md\n##保持原样\n-保持原样\n```",
     }));
 
+    fileContents.set("src/drift.ts", "if (ready) {\n    run();\n}\n");
+    const workspaceEditIndentResult = await workspaceEditFileHandler!.execute({
+      call: {
+        id: asToolCallId("tool_call_workspace_edit_file_indent"),
+        sessionId: asSessionId("session_builtin_tools"),
+        runId: asRunId("run_builtin_tools"),
+        turnId: asTurnId("turn_builtin_tools"),
+        messageId: asMessageId("message_assistant_1"),
+        toolName: "workspace_edit_file",
+        input: {
+          path: "src/drift.ts",
+          oldText: "if (ready) {\n  run();\n}",
+          newText: "if (ready) {\n  runFast();\n}",
+        },
+        status: "executing",
+        startedAt: 4,
+        updatedAt: 4,
+      },
+      context: {
+        ...context,
+        descriptor: workspaceEditFileHandler!.descriptor,
+      },
+    });
+
+    expect(workspaceEditIndentResult).toEqual(expect.objectContaining({
+      path: "src/drift.ts",
+      replacementsApplied: 1,
+      content: "if (ready) {\n  runFast();\n}\n",
+    }));
+
+    fileContents.set("docs/missing.md", "alpha\nbeta\n");
+    const workspaceEditMissingResult = await workspaceEditFileHandler!.execute({
+      call: {
+        id: asToolCallId("tool_call_workspace_edit_file_missing"),
+        sessionId: asSessionId("session_builtin_tools"),
+        runId: asRunId("run_builtin_tools"),
+        turnId: asTurnId("turn_builtin_tools"),
+        messageId: asMessageId("message_assistant_1"),
+        toolName: "workspace_edit_file",
+        input: {
+          path: "docs/missing.md",
+          oldText: "missing",
+          newText: "replacement",
+        },
+        status: "executing",
+        startedAt: 4,
+        updatedAt: 4,
+      },
+      context: {
+        ...context,
+        descriptor: workspaceEditFileHandler!.descriptor,
+      },
+    });
+
+    expect(workspaceEditMissingResult).toEqual(expect.objectContaining({
+      kind: "failed",
+      error: expect.objectContaining({
+        code: "workspace_edit_match_not_found",
+        metadata: expect.objectContaining({
+          path: "docs/missing.md",
+          recommendedRecovery: "reread_then_apply_patch",
+          attemptedStrategies: expect.arrayContaining(["exact", "context_aware"]),
+        }),
+      }),
+    }));
+
     const workspaceApplyPatchResult = await workspaceApplyPatchHandler!.execute({
       call: {
         id: asToolCallId("tool_call_workspace_apply_patch"),

@@ -25,6 +25,10 @@ import {
   validateDesktopTerminalCommandForShell,
 } from "./desktop-terminal-shell-prompt";
 import {
+  WorkspaceEditMatchError,
+  resolveWorkspaceEditMatch,
+} from "../shared/workspace-edit-matcher";
+import {
   applyWorkspacePatchUpdateChunks,
   type WorkspacePatchUpdateChunk,
 } from "../shared/workspace-patch-matcher";
@@ -1403,33 +1407,54 @@ function createWorkspaceEditFileHandler(
           );
         }
 
-        const matchCount = countExactMatches(currentFile.content, oldText);
-        if (matchCount === 0) {
-          return asToolFailure(
-            "workspace_edit_match_not_found",
-            "workspace_edit_file could not find the target oldText fragment in the current file.",
-            {
-              workspaceId,
-              path: normalizedPath,
-            },
-          );
+        const exactMatchCount = countExactMatches(currentFile.content, oldText);
+        let replacementsApplied = replaceAll ? exactMatchCount : 1;
+        let nextContent: string;
+
+        if (replaceAll && exactMatchCount > 0) {
+          nextContent = currentFile.content.split(oldText).join(newText);
+        } else {
+          try {
+            const match = resolveWorkspaceEditMatch({
+              content: currentFile.content,
+              oldText,
+            });
+
+            nextContent = currentFile.content.replace(match.resolvedFragment, newText);
+          } catch (error) {
+            if (error instanceof WorkspaceEditMatchError) {
+              if (error.code === "ambiguous") {
+                return asToolFailure(
+                  "workspace_edit_match_ambiguous",
+                  "workspace_edit_file found multiple matches for oldText. Use a larger unique fragment or set replaceAll to true.",
+                  {
+                    workspaceId,
+                    path: normalizedPath,
+                    ...(error.matchCount ? { matchCount: error.matchCount } : {}),
+                    attemptedStrategies: error.attemptedStrategies,
+                    recommendedRecovery: "reread_then_apply_patch",
+                  },
+                );
+              }
+
+              return asToolFailure(
+                "workspace_edit_match_not_found",
+                "workspace_edit_file could not find the target oldText fragment in the current file.",
+                {
+                  workspaceId,
+                  path: normalizedPath,
+                  attemptedStrategies: error.attemptedStrategies,
+                  recommendedRecovery: "reread_then_apply_patch",
+                },
+              );
+            }
+
+            throw error;
+          }
+
+          replacementsApplied = 1;
         }
 
-        if (!replaceAll && matchCount > 1) {
-          return asToolFailure(
-            "workspace_edit_match_ambiguous",
-            "workspace_edit_file found multiple matches for oldText. Use a larger unique fragment or set replaceAll to true.",
-            {
-              workspaceId,
-              path: normalizedPath,
-              matchCount,
-            },
-          );
-        }
-
-        const nextContent = replaceAll
-          ? currentFile.content.split(oldText).join(newText)
-          : currentFile.content.replace(oldText, newText);
         const normalizedContent = isFeishuDocCacheMarkdownPath(normalizedPath)
           ? normalizeFeishuMarkdownDraftContent(nextContent)
           : nextContent;
@@ -1443,7 +1468,7 @@ function createWorkspaceEditFileHandler(
           binary: file.binary,
           truncated: file.truncated,
           ...(file.mimeType ? { mimeType: file.mimeType } : {}),
-          replacementsApplied: replaceAll ? matchCount : 1,
+          replacementsApplied,
           content: file.content,
         };
       } catch (error) {
