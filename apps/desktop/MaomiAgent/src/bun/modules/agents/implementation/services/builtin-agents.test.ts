@@ -58,6 +58,9 @@ test("builtin feishu doc agent is visible in both primary and subagent contexts 
   expect(item?.prompt).toContain("callout");
   expect(item?.prompt).toContain("`workspace_edit_file`");
   expect(item?.prompt).toContain("`workspace_apply_patch`");
+  expect(item?.prompt).toContain("普通局部修改优先使用 `workspace_apply_patch`");
+  expect(item?.prompt).toContain("只有在目标章节是单一连续文本块、边界非常清晰时，才优先使用 `workspace_edit_file`");
+  expect(item?.prompt).toContain("先重新读取目标区域，再改用 `workspace_apply_patch`");
   expect(item?.prompt).toContain("`content` 字段");
   expect(item?.prompt).toContain("不要先输出大段计划");
   expect(item?.prompt).toContain("同步块");
