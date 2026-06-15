@@ -56,7 +56,8 @@ describe("resolveToolDisplayNameFallback", () => {
     expect(resolveToolDisplayNameFallback("workspace_read_file", false)).toBe("读取工作区文件");
     expect(resolveToolDisplayNameFallback("workspace_edit_file", false)).toBe("编辑工作区文件");
     expect(resolveToolDisplayNameFallback("workspace_apply_patch", false)).toBe("应用工作区补丁");
-    expect(resolveToolDisplayNameFallback("terminal_execute", true)).toBe("Execute terminal command");
+    expect(resolveToolDisplayNameFallback("terminal_execute", true)).toBe("Run shell command");
+    expect(resolveToolDisplayNameFallback("terminal_read_output", false)).toBe("查看命令输出");
   });
 
   test("humanizes unknown tool ids instead of exposing snake_case", () => {
@@ -75,6 +76,30 @@ describe("resolveToolTraceStatusLabel", () => {
       },
       isEn: false,
     })).toBe("连续重复调用已中止");
+  });
+
+  test("shows file-not-found for workspace read ENOENT failures", () => {
+    expect(resolveToolTraceStatusLabel({
+      toolName: "workspace_read_file",
+      status: "failed",
+      error: {
+        code: "workspace_read_failed",
+        message: "ENOENT: no such file or directory, open 'E:\\workspace\\hearing\\src\\App.tsx'",
+      },
+      isEn: false,
+    })).toBe("文件不存在");
+  });
+
+  test("shows directory-specific copy when workspace read targets a directory", () => {
+    expect(resolveToolTraceStatusLabel({
+      toolName: "workspace_read_file",
+      status: "failed",
+      error: {
+        code: "workspace_read_failed",
+        message: "EISDIR: illegal operation on a directory, read",
+      },
+      isEn: false,
+    })).toBe("目标是目录");
   });
 });
 

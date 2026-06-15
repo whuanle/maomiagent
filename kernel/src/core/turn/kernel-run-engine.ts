@@ -76,7 +76,7 @@ const REPEATED_TOOL_BATCH_THRESHOLD = 3
 
 type ExecutionGuardPhase = "tool_batch_validation" | "post_tool_execution"
 
-type ExecutionGuardKind = "turn_budget" | "duplicate_tool_batch" | "repeated_tool_batch"
+type ExecutionGuardKind = "turn_budget" | "repeated_tool_batch"
 
 type ExecutionFailurePhase = "model_boundary_validation" | "tool_execution"
 
@@ -385,52 +385,6 @@ function buildToolCallBatchSignature(calls: readonly ToolCallRecord[]): string {
   return calls.map(buildToolCallSignature).join("\u0001")
 }
 
-function detectDuplicateToolCallBatch(input: {
-  turn: TurnRecord
-  calls: readonly ToolCallRecord[]
-}): KernelError | undefined {
-  const groups = new Map<string, ToolCallRecord[]>()
-
-  for (const call of input.calls) {
-    const signature = buildToolCallSignature(call)
-    const existing = groups.get(signature)
-    if (existing) {
-      existing.push(call)
-      continue
-    }
-
-    groups.set(signature, [call])
-  }
-
-  const duplicates = [...groups.entries()]
-    .filter(([, calls]) => calls.length > 1)
-    .map(([signature, calls]) => ({
-      signature,
-      calls,
-    }))
-
-  if (duplicates.length === 0) {
-    return undefined
-  }
-
-  return {
-    code: "duplicate_tool_call_batch",
-    message: "Kernel run detected duplicate tool calls in the same turn",
-    retryable: false,
-    metadata: buildExecutionGuardMetadata({
-      turn: input.turn,
-      phase: "tool_batch_validation",
-      guardKind: "duplicate_tool_batch",
-      metadata: {
-      duplicateCount: duplicates.reduce((total, group) => total + group.calls.length, 0),
-      duplicatedCallIds: duplicates.flatMap((group) => group.calls.map((call) => call.id)),
-      duplicatedSignatures: duplicates.map((group) => group.signature),
-      toolNames: [...new Set(duplicates.flatMap((group) => group.calls.map((call) => call.toolName)))],
-      },
-    }),
-  }
-}
-
 function groupToolCallBatches(calls: readonly ToolCallRecord[]): readonly ToolCallBatch[] {
   const batches: Array<{
     turnId: TurnRecord["id"]
@@ -685,20 +639,6 @@ export class KernelRunEngine implements KernelRunEnginePort {
     const recentMessages = [
       ...await this.options.messageStore.listBySession(toolState.session.id),
     ]
-    const duplicateToolBatchBoundary = await this.failDuplicateToolBatchIfDetected({
-      state: toolState,
-      calls: input.processorResult.toolCalls,
-      finishReason: input.processorResult.finishReason,
-      usage: input.processorResult.usage,
-    })
-
-    if (duplicateToolBatchBoundary) {
-      return {
-        kind: "boundary",
-        boundary: duplicateToolBatchBoundary,
-      }
-    }
-
     const repeatedToolLoopBoundary = await this.failRepeatedToolLoopIfDetected({
       state: toolState,
       calls: input.processorResult.toolCalls,
@@ -782,30 +722,6 @@ export class KernelRunEngine implements KernelRunEnginePort {
       session: continuedState.session,
       run: continuedState.run,
     }
-  }
-
-  private async failDuplicateToolBatchIfDetected(input: {
-    state: ToolExecutionState
-    calls: readonly ToolCallRecord[]
-    finishReason?: TurnRecord["finishReason"]
-    usage?: TurnRecord["usage"]
-  }): Promise<RunBoundary | undefined> {
-    const error = detectDuplicateToolCallBatch({
-      turn: input.state.turn,
-      calls: input.calls,
-    })
-
-    if (!error) {
-      return undefined
-    }
-
-    return this.failCurrentToolBatch({
-      state: input.state,
-      calls: input.calls,
-      error,
-      finishReason: input.finishReason,
-      usage: input.usage,
-    })
   }
 
   private async failRepeatedToolLoopIfDetected(input: {

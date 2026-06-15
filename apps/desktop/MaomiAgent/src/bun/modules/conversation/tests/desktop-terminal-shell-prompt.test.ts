@@ -8,7 +8,7 @@ import {
 } from "../implementation/services/desktop-terminal-shell-prompt";
 
 describe("desktop terminal shell prompt", () => {
-  test("renders cmd guidance for chaining, batch invocation, quoting, and output reads", () => {
+  test("renders cmd guidance for chaining, batch invocation, quoting, and captured output", () => {
     const shell = normalizeDesktopTerminalPromptShell({
       resolvedShellKind: "cmd",
       shellDisplayName: "cmd.exe",
@@ -20,11 +20,12 @@ describe("desktop terminal shell prompt", () => {
     expect(createDescription).toContain("cmd.exe");
     expect(createDescription).toContain("double quotes");
     expect(createDescription).toContain("`call` before `.cmd` or `.bat`");
-    expect(createDescription).toContain("`terminal_read_output`");
+    expect(createDescription).toContain("captured output");
     expect(executeDescription).toContain("`&&`");
     expect(executeDescription).toContain("double quotes");
     expect(executeDescription).toContain("`call` before `.cmd` or `.bat`");
-    expect(executeDescription).toContain("`terminal_read_output`");
+    expect(executeDescription).toContain("returned output");
+    expect(executeDescription).toContain("create a session for you");
     expect(executeDescription).not.toContain("Get-ChildItem");
   });
 
@@ -44,10 +45,11 @@ describe("desktop terminal shell prompt", () => {
     expect(executeDescription).toContain("`cmd1; if ($?) { cmd2 }`");
     expect(executeDescription).toContain("`& 'C:/Path With Spaces/tool.exe'`");
     expect(executeDescription).toContain("unsigned `.ps1` scripts");
-    expect(executeDescription).toContain("`terminal_read_output`");
+    expect(executeDescription).toContain("returned output");
+    expect(executeDescription).toContain("create a session for you");
   });
 
-  test("renders pwsh guidance with && support plus quoting and output reads", () => {
+  test("renders pwsh guidance with && support plus quoting and captured output", () => {
     const shell = normalizeDesktopTerminalPromptShell({
       resolvedShellKind: "pwsh",
       shellDisplayName: "PowerShell 7+",
@@ -61,7 +63,8 @@ describe("desktop terminal shell prompt", () => {
     expect(createDescription).toContain("`& 'C:/Path With Spaces/tool.exe'`");
     expect(executeDescription).toContain("`&&` is available");
     expect(executeDescription).toContain("`& 'C:/Path With Spaces/tool.exe'`");
-    expect(executeDescription).toContain("`terminal_read_output`");
+    expect(executeDescription).toContain("returned output");
+    expect(executeDescription).toContain("create a session for you");
     expect(executeDescription).not.toContain("if ($?)");
   });
 

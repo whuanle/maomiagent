@@ -84,6 +84,23 @@ describe("desktop conversation builtin tools", () => {
             mimeType: path.endsWith(".ts") ? "application/typescript" : "text/markdown",
           };
         },
+        async getFileTree(workspaceId, path) {
+          return {
+            workspaceId,
+            rootPath: "E:/workspace/MaomiAgent",
+            path: path ?? "",
+            nodes: [{
+              name: "src",
+              path: "src",
+              type: "directory" as const,
+            }, {
+              name: "package.json",
+              path: "package.json",
+              type: "file" as const,
+              extension: ".json",
+            }],
+          };
+        },
         async readTextFile(workspaceId, path) {
           return {
             workspaceId,
@@ -306,6 +323,7 @@ describe("desktop conversation builtin tools", () => {
 
     expect(catalog.source.sourceId).toBe("builtin.desktop.conversation");
     expect(catalog.tools.map((tool) => tool.name)).toEqual([
+      "workspace_list_directory",
       "workspace_read_file",
       "workspace_write_file",
       "workspace_edit_file",
@@ -313,17 +331,14 @@ describe("desktop conversation builtin tools", () => {
       "workspace_write_document",
       "git_list_changes",
       "git_review_file",
-      "terminal_create_session",
       "terminal_execute",
-      "terminal_read_output",
-      "terminal_close_session",
       "maomi_managed_task",
     ]);
-    expect(catalog.tools.find((tool) => tool.name === "terminal_create_session")?.description.length)
-      .toBeGreaterThan(20);
     expect(catalog.tools.find((tool) => tool.name === "terminal_execute")?.description.length)
       .toBeGreaterThan(20);
 
+    const workspaceListDirectoryHandler = bundle.toolHandlers.find((handler) =>
+      handler.descriptor.name === "workspace_list_directory");
     const workspaceReadHandler = bundle.toolHandlers.find((handler) => handler.descriptor.name === "workspace_read_file");
     const workspaceWriteFileHandler = bundle.toolHandlers.find((handler) => handler.descriptor.name === "workspace_write_file");
     const workspaceEditFileHandler = bundle.toolHandlers.find((handler) => handler.descriptor.name === "workspace_edit_file");
@@ -336,6 +351,7 @@ describe("desktop conversation builtin tools", () => {
     const terminalCloseHandler = bundle.toolHandlers.find((handler) => handler.descriptor.name === "terminal_close_session");
     const managedTaskHandler = bundle.toolHandlers.find((handler) => handler.descriptor.name === "maomi_managed_task");
 
+    expect(workspaceListDirectoryHandler).toBeTruthy();
     expect(workspaceReadHandler).toBeTruthy();
     expect(workspaceWriteFileHandler).toBeTruthy();
     expect(workspaceEditFileHandler).toBeTruthy();
@@ -389,6 +405,33 @@ describe("desktop conversation builtin tools", () => {
       },
       recentMessages: [],
     };
+
+    const workspaceListResult = await workspaceListDirectoryHandler!.execute({
+      call: {
+        id: asToolCallId("tool_call_workspace_list_directory"),
+        sessionId: asSessionId("session_builtin_tools"),
+        runId: asRunId("run_builtin_tools"),
+        turnId: asTurnId("turn_builtin_tools"),
+        messageId: asMessageId("message_assistant_1"),
+        toolName: "workspace_list_directory",
+        input: {},
+        status: "executing",
+        startedAt: 4,
+        updatedAt: 4,
+      },
+      context: {
+        ...context,
+        descriptor: workspaceListDirectoryHandler!.descriptor,
+      },
+    });
+
+    expect(workspaceListResult).toEqual(expect.objectContaining({
+      workspaceId: "workspace-1",
+      path: "",
+      totalEntries: 2,
+      directoryCount: 1,
+      fileCount: 1,
+    }));
 
     const workspaceReadResult = await workspaceReadHandler!.execute({
       call: {
@@ -839,9 +882,13 @@ describe("desktop conversation builtin tools", () => {
     expect(terminalExecuteResult).toEqual(expect.objectContaining({
       ok: true,
       sessionId: "term_1",
+      command: "Get-Location",
       shellKind: "powershell",
       resolvedShellKind: "pwsh",
       shellDisplayName: "PowerShell 7+",
+      stdout: "term_1:Get-Location",
+      output: "term_1:Get-Location",
+      revision: 1,
     }));
 
     const terminalReadResult = await terminalReadHandler!.execute({
@@ -991,7 +1038,7 @@ describe("desktop conversation builtin tools", () => {
       },
       terminalQuery: {
         async getDetail() {
-          throw new Error("not used");
+          return null;
         },
       },
       terminalCommand: {
@@ -1054,7 +1101,7 @@ describe("desktop conversation builtin tools", () => {
     expect(executeTool?.description).toContain("cmd.exe");
     expect(executeTool?.description).toContain("double quotes");
     expect(executeTool?.description).toContain("`call` before `.cmd` or `.bat`");
-    expect(executeTool?.description).toContain("`terminal_read_output`");
+    expect(executeTool?.description).toContain("returned output");
     expect(executeTool?.description).not.toContain("Get-ChildItem");
   });
 
@@ -1082,7 +1129,7 @@ describe("desktop conversation builtin tools", () => {
       },
       terminalQuery: {
         async getDetail() {
-          throw new Error("not used");
+          return null;
         },
       },
       terminalCommand: {
@@ -1216,7 +1263,7 @@ describe("desktop conversation builtin tools", () => {
       },
       terminalQuery: {
         async getDetail() {
-          throw new Error("not used");
+          return null;
         },
       },
       terminalCommand: {
@@ -1527,7 +1574,7 @@ describe("desktop conversation builtin tools", () => {
       },
       terminalQuery: {
         async getDetail() {
-          throw new Error("not used");
+          return null;
         },
       },
       terminalCommand: {
@@ -1664,7 +1711,7 @@ describe("desktop conversation builtin tools", () => {
       },
       terminalQuery: {
         async getDetail() {
-          throw new Error("not used");
+          return null;
         },
       },
       terminalCommand: {
@@ -1828,7 +1875,7 @@ describe("desktop conversation builtin tools", () => {
       },
       terminalQuery: {
         async getDetail() {
-          throw new Error("not used");
+          return null;
         },
       },
       terminalCommand: {
@@ -1946,6 +1993,191 @@ describe("desktop conversation builtin tools", () => {
     }));
   });
 
+  test("auto-creates a terminal session when terminal_execute is called without a sessionId", async () => {
+    const executedSessionIds: string[] = [];
+    const createdSessions: Array<Record<string, unknown>> = [];
+    const bundle = createDesktopConversationBuiltinToolBundle({
+      workspaceQuery: {
+        async list() {
+          return {
+            items: [{
+              workspaceId: "workspace-1",
+              name: "MaomiAgent",
+              directoryPath: "E:/workspace/MaomiAgent",
+              isPinned: false,
+              tags: [],
+              createdAt: "2026-05-04T00:00:00.000Z",
+              updatedAt: "2026-05-04T00:00:00.000Z",
+            }],
+            meta: {
+              total: 1,
+              limit: 20,
+              offset: 0,
+              hasMore: false,
+            },
+          };
+        },
+        async get(workspaceId) {
+          return workspaceId === "workspace-1"
+            ? {
+              workspaceId: "workspace-1",
+              name: "MaomiAgent",
+              directoryPath: "E:/workspace/MaomiAgent",
+              isPinned: false,
+              tags: [],
+              createdAt: "2026-05-04T00:00:00.000Z",
+              updatedAt: "2026-05-04T00:00:00.000Z",
+            }
+            : null;
+        },
+        async getFileContent() {
+          throw new Error("not used");
+        },
+      },
+      gitQuery: {
+        async getGitChanges() {
+          throw new Error("not used");
+        },
+        async getGitReviewDetail() {
+          throw new Error("not used");
+        },
+      },
+      terminalQuery: {
+        async getDetail(input) {
+          if (input.sessionId !== "term_auto_implicit") {
+            return null;
+          }
+
+          return {
+            session: {
+              sessionId: input.sessionId,
+              title: "Workspace shell",
+              shellKind: "powershell",
+              status: "running",
+              cwd: "E:/workspace/MaomiAgent",
+              workspaceId: "workspace-1",
+              createdAt: "2026-05-04T00:00:00.000Z",
+              updatedAt: "2026-05-04T00:00:00.000Z",
+            },
+            output: "term_auto_implicit:pwd",
+            revision: 1,
+            truncated: false,
+          };
+        },
+      },
+      terminalCommand: {
+        async create(input) {
+          createdSessions.push({ ...input });
+          return {
+            sessionId: "term_auto_implicit",
+            title: "Workspace shell",
+            shellKind: input.shellKind ?? "powershell",
+            status: "running",
+            cwd: input.cwd ?? "E:/workspace/MaomiAgent",
+            workspaceId: input.workspaceId,
+            createdAt: "2026-05-04T00:00:00.000Z",
+            updatedAt: "2026-05-04T00:00:00.000Z",
+          };
+        },
+        async execute(sessionId) {
+          executedSessionIds.push(sessionId);
+          return sessionId === "term_auto_implicit"
+            ? {
+              sessionId,
+              title: "Workspace shell",
+              shellKind: "powershell",
+              status: "running",
+              cwd: "E:/workspace/MaomiAgent",
+              workspaceId: "workspace-1",
+              createdAt: "2026-05-04T00:00:00.000Z",
+              updatedAt: "2026-05-04T00:00:00.000Z",
+            }
+            : null;
+        },
+        async close() {
+          throw new Error("not used");
+        },
+      },
+      taskBridge: {
+        async patchManagedConversationRootTask() {
+          throw new Error("not used");
+        },
+      },
+    });
+
+    const terminalExecuteHandler = bundle.toolHandlers.find((handler) => handler.descriptor.name === "terminal_execute");
+    expect(terminalExecuteHandler).toBeTruthy();
+
+    const result = await terminalExecuteHandler!.execute({
+      call: {
+        id: asToolCallId("tool_call_terminal_execute_no_session"),
+        sessionId: asSessionId("session_builtin_tools"),
+        runId: asRunId("run_builtin_tools"),
+        turnId: asTurnId("turn_builtin_tools"),
+        messageId: asMessageId("message_assistant_1"),
+        toolName: "terminal_execute",
+        input: {
+          command: "pwd",
+        },
+        status: "executing",
+        startedAt: 4,
+        updatedAt: 4,
+      },
+      context: {
+        descriptor: terminalExecuteHandler!.descriptor,
+        signal: new AbortController().signal,
+        session: {
+          id: asSessionId("session_builtin_tools"),
+          title: "Builtin tools",
+          status: "active",
+          createdAt: 1,
+          updatedAt: 1,
+          metadata: {
+            workspaceId: "workspace-1",
+          },
+        },
+        run: {
+          id: asRunId("run_builtin_tools"),
+          sessionId: asSessionId("session_builtin_tools"),
+          status: "streaming",
+          startedAt: 2,
+          updatedAt: 2,
+          trigger: {
+            kind: "user_message",
+            refId: asMessageId("message_user_1"),
+          },
+        },
+        turn: {
+          id: asTurnId("turn_builtin_tools"),
+          sessionId: asSessionId("session_builtin_tools"),
+          runId: asRunId("run_builtin_tools"),
+          sequence: 1,
+          agentId: "desktop.primary",
+          executionProfile: {
+            id: "desktop.openai.test" as never,
+            modelId: "test-model",
+          },
+          status: "streaming",
+          startedAt: 3,
+        },
+        recentMessages: [],
+      },
+    });
+
+    expect(createdSessions).toEqual([{
+      workspaceId: "workspace-1",
+    }]);
+    expect(executedSessionIds).toEqual(["term_auto_implicit"]);
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      sessionId: "term_auto_implicit",
+      command: "pwd",
+      stdout: "term_auto_implicit:pwd",
+      output: "term_auto_implicit:pwd",
+      revision: 1,
+    }));
+  });
+
   test("validates commands against the resolved shell of an auto-created session before execution", async () => {
     const executedSessionIds: string[] = [];
     const bundle = createDesktopConversationBuiltinToolBundle({
@@ -1996,7 +2228,7 @@ describe("desktop conversation builtin tools", () => {
       },
       terminalQuery: {
         async getDetail() {
-          throw new Error("not used");
+          return null;
         },
       },
       terminalCommand: {

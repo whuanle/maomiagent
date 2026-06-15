@@ -2262,6 +2262,20 @@ describe("DesktopConversationService", () => {
       toolSources: [
         createStaticToolSource({
           sourceId: "builtin.desktop.conversation",
+          toolName: "workspace_list_directory",
+          metadata: {
+            operationKind: "file_read",
+          },
+        }),
+        createStaticToolSource({
+          sourceId: "builtin.desktop.conversation",
+          toolName: "workspace_read_file",
+          metadata: {
+            operationKind: "file_read",
+          },
+        }),
+        createStaticToolSource({
+          sourceId: "builtin.desktop.conversation",
           toolName: "workspace_write_file",
           metadata: {
             operationKind: "file_write",
@@ -2296,10 +2310,14 @@ describe("DesktopConversationService", () => {
       });
 
       const toolsBlock = turnPort.prompts[0]?.systemBlocks.find((block) => block.metadata?.source === "desktop.runtime.tools")?.content;
+      expect(toolsBlock).toContain("workspace_list_directory");
+      expect(toolsBlock).toContain("workspace_read_file");
       expect(toolsBlock).toContain("workspace_write_file");
       expect(toolsBlock).toContain("workspace_edit_file");
       expect(toolsBlock).toContain("terminal_execute");
       expect(toolsBlock).toContain("Tool usage policy:");
+      expect(toolsBlock).toContain("call workspace_list_directory before workspace_read_file");
+      expect(toolsBlock).toContain("Do not assume template paths like src/App.tsx");
       expect(toolsBlock).toContain("Prefer dedicated file-edit tools for creating or updating workspace files in one operation.");
       expect(toolsBlock).toContain("prefer targeted edit/patch tools over rewriting the whole file");
       expect(toolsBlock).toContain("call the file-edit tool directly");
@@ -3280,7 +3298,7 @@ describe("DesktopConversationService", () => {
   test("allows non-mutating terminal commands during plan mode", async () => {
     const terminalDescriptor = {
       name: "terminal_execute",
-      description: "Execute a terminal command",
+      description: "Run shell command",
       inputSchema: {
         type: "object",
         properties: {
@@ -3292,7 +3310,7 @@ describe("DesktopConversationService", () => {
       },
       metadata: {
         operationKind: "tool_execution",
-        operationLabel: "Execute terminal command",
+        operationLabel: "Run shell command",
         planModeAccess: "readonly_command",
       },
     };
@@ -3352,7 +3370,7 @@ describe("DesktopConversationService", () => {
   test("blocks mutating terminal commands during plan mode", async () => {
     const terminalDescriptor = {
       name: "terminal_execute",
-      description: "Execute a terminal command",
+      description: "Run shell command",
       inputSchema: {
         type: "object",
         properties: {
@@ -3364,7 +3382,7 @@ describe("DesktopConversationService", () => {
       },
       metadata: {
         operationKind: "tool_execution",
-        operationLabel: "Execute terminal command",
+        operationLabel: "Run shell command",
         planModeAccess: "readonly_command",
       },
     };
@@ -3427,7 +3445,7 @@ describe("DesktopConversationService", () => {
   test("blocks terminal echo-append file writes when a file edit tool is available", async () => {
     const terminalDescriptor = {
       name: "terminal_execute",
-      description: "Execute a terminal command",
+      description: "Run shell command",
       inputSchema: {
         type: "object",
         properties: {
@@ -3439,7 +3457,7 @@ describe("DesktopConversationService", () => {
       },
       metadata: {
         operationKind: "tool_execution",
-        operationLabel: "Execute terminal command",
+        operationLabel: "Run shell command",
       },
     };
     const writeDescriptor = {
@@ -3549,7 +3567,7 @@ describe("DesktopConversationService", () => {
       completedAt: 2,
       metadata: {
         operationKind: "tool_execution",
-        operationLabel: "Execute terminal command",
+        operationLabel: "Run shell command",
       },
     } satisfies ToolCallRecord);
 
@@ -4332,7 +4350,7 @@ describe("DesktopConversationService", () => {
     }
   });
 
-  test("publishes terminal output reading policy when execute and read-output tools are both available", async () => {
+  test("publishes single-step terminal execution policy when terminal_execute is available", async () => {
     const turnPort = new RecordingPromptTurnPort();
     const fixture = createRuntimeBackedConversationService({
       tempPrefix: "maomi-desktop-conversation-terminal-output-policy-",
@@ -4363,23 +4381,22 @@ describe("DesktopConversationService", () => {
 
       await fixture.service.sendMessage({
         sessionId: created.item.sessionId,
-        text: "先检查终端输出，再判断下一步。",
+        text: "先检查命令输出，再判断下一步。",
       });
 
       const toolsBlock = turnPort.prompts[0]?.systemBlocks.find((block) => block.metadata?.source === "desktop.runtime.tools")?.content;
       expect(toolsBlock).toContain("terminal_execute");
-      expect(toolsBlock).toContain("terminal_read_output");
-      expect(toolsBlock).toContain("run the underlying command once with terminal_execute");
+      expect(toolsBlock).toContain("Use terminal_execute as the shell command tool. Run the command once and inspect the captured output returned by that tool call.");
       expect(toolsBlock).toContain("Avoid shell paging or truncation patterns like | more, | less, | head, | tail");
     } finally {
       fixture.dispose();
     }
   });
 
-  test("blocks terminal output truncation commands when terminal_read_output is available", async () => {
+  test("blocks shell paging commands when terminal_execute already captures output", async () => {
     const terminalDescriptor = {
       name: "terminal_execute",
-      description: "Execute a terminal command",
+      description: "Run shell command",
       inputSchema: {
         type: "object",
         properties: {
@@ -4391,12 +4408,12 @@ describe("DesktopConversationService", () => {
       },
       metadata: {
         operationKind: "tool_execution",
-        operationLabel: "Execute terminal command",
+        operationLabel: "Run shell command",
       },
     };
     const readOutputDescriptor = {
       name: "terminal_read_output",
-      description: "Read terminal output",
+      description: "Read shell output",
       inputSchema: {
         type: "object",
         properties: {
@@ -4407,7 +4424,7 @@ describe("DesktopConversationService", () => {
       },
       metadata: {
         operationKind: "file_read",
-        operationLabel: "Read terminal output",
+        operationLabel: "Read shell output",
       },
     };
     let executedTerminalCommand = false;
@@ -4470,7 +4487,7 @@ describe("DesktopConversationService", () => {
       expect(result.detail.toolCalls).toHaveLength(1);
       expect(result.detail.toolCalls[0]?.status).toBe("failed");
       expect(result.detail.toolCalls[0]?.error).toEqual(expect.objectContaining({
-        code: "terminal_output_read_preferred_tool_required",
+        code: "terminal_execute_output_preferred_tool_required",
       }));
     } finally {
       fixture.dispose();
@@ -7332,3 +7349,4 @@ describe("DesktopConversationService", () => {
     }
   });
 });
+

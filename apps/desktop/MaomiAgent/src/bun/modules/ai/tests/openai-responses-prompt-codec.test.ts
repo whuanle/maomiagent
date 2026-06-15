@@ -341,7 +341,7 @@ describe("OpenAIResponsesPromptCodec", () => {
     expect(JSON.stringify(toolCall)).not.toContain("A".repeat(300));
   });
 
-  test("summarizes heavy terminal output for responses", () => {
+  test("summarizes heavy shell output for responses", () => {
     const codec = new OpenAIResponsesPromptCodec();
     const request = createBaseTurnRequest();
 

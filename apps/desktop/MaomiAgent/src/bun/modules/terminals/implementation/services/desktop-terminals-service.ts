@@ -27,6 +27,11 @@ const DEFAULT_TERMINAL_COLS = 120;
 const DEFAULT_TERMINAL_ROWS = 32;
 const TERMINAL_READY_TIMEOUT_MS = 2_000;
 const TERMINAL_HOST_RUNTIME_DIR = fileURLToPath(new URL("../../../../../..", import.meta.url));
+const ANSI_CSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+const ANSI_OSC_RE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
+const ANSI_SINGLE_ESCAPE_RE = /\x1b[@-Z\\-_]/g;
+const POWERSHELL_PROMPT_RE = /PS [^\n>]*>/g;
+const CMD_PROMPT_RE = /[A-Za-z]:\\[^\n>]*>/g;
 
 const PTY_SESSION_HOST_SOURCE = String.raw`
 const fs = require("node:fs");
@@ -249,6 +254,56 @@ function resolveTerminalHostCommand(): string {
   return normalizeOptionalText(process.env.MAOMI_TERMINAL_NODE_PATH) ?? "node";
 }
 
+function stripTerminalControlSequences(input: string): string {
+  return input
+    .replace(ANSI_OSC_RE, "")
+    .replace(ANSI_CSI_RE, "")
+    .replace(ANSI_SINGLE_ESCAPE_RE, "")
+    .replace(/\u0000/g, "");
+}
+
+function stripPromptPrefix(line: string): string {
+  if (!line) {
+    return line;
+  }
+
+  if (line.startsWith("PS ")) {
+    return line.replace(/^PS [^\n>]*>\s*/, "");
+  }
+
+  if (/^[A-Za-z]:\\/u.test(line)) {
+    return line.replace(/^[A-Za-z]:\\[^\n>]*>\s*/, "");
+  }
+
+  return line;
+}
+
+function stripPromptSuffix(line: string): string {
+  if (!line) {
+    return line;
+  }
+
+  return line.replace(
+    new RegExp(String.raw`\s*(?:${POWERSHELL_PROMPT_RE.source}|${CMD_PROMPT_RE.source})\s*$`, "u"),
+    "",
+  );
+}
+
+function sanitizeTerminalOutput(input: string): string {
+  const normalized = stripTerminalControlSequences(input).replace(/\r\n?/g, "\n");
+  const lines = normalized.split("\n").map((line) => stripPromptSuffix(stripPromptPrefix(line)).trimEnd());
+
+  while (lines[0] === "") {
+    lines.shift();
+  }
+
+  while (lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n");
+}
+
 function buildListResponse(input: {
   items: DesktopTerminalSessionRecord[];
   limit?: number;
@@ -302,11 +357,12 @@ export class DesktopTerminalsService implements DesktopTerminalsPort {
     }
 
     const limit = Math.max(1, input.limit ?? DEFAULT_OUTPUT_LIMIT);
-    const truncated = session.output.length > limit;
+    const sanitizedOutput = sanitizeTerminalOutput(session.output);
+    const truncated = sanitizedOutput.length > limit;
 
     return {
       session: { ...session.record },
-      output: truncated ? session.output.slice(-limit) : session.output,
+      output: truncated ? sanitizedOutput.slice(-limit) : sanitizedOutput,
       revision: session.revision,
       truncated,
     };

@@ -703,8 +703,12 @@ function isTerminalExecutionTool(tool: ToolDescriptor): boolean {
   return tool.name === "terminal_execute";
 }
 
-function isTerminalOutputReadTool(tool: ToolDescriptor): boolean {
-  return tool.name === "terminal_read_output";
+function isWorkspaceDirectoryListingTool(tool: ToolDescriptor): boolean {
+  return tool.name === "workspace_list_directory";
+}
+
+function isWorkspaceReadTool(tool: ToolDescriptor): boolean {
+  return tool.name === "workspace_read_file";
 }
 
 function isDedicatedWorkspaceFileEditTool(tool: ToolDescriptor): boolean {
@@ -737,13 +741,26 @@ function buildToolUsagePolicyLines(tools: readonly ToolDescriptor[]): string[] {
     "- Never emit fake tool syntax in assistant text, including <tool_call>, <function=...>, XML tags, JSON wrappers, or handwritten tool transcripts.",
   ];
   const hasTerminalExecution = tools.some((tool) => isTerminalExecutionTool(tool));
-  const hasTerminalOutputRead = tools.some((tool) => isTerminalOutputReadTool(tool));
+  const hasWorkspaceDirectoryListing = tools.some((tool) => isWorkspaceDirectoryListingTool(tool));
+  const hasWorkspaceRead = tools.some((tool) => isWorkspaceReadTool(tool));
   const preferredFileEditTools = tools.filter((tool) => isDedicatedWorkspaceFileEditTool(tool));
-  if (!hasTerminalExecution && !hasTerminalOutputRead) {
+  if (
+    !hasTerminalExecution
+    && !hasWorkspaceDirectoryListing
+    && !hasWorkspaceRead
+    && preferredFileEditTools.length === 0
+  ) {
     return basePolicyLines;
   }
 
   const lines = [...basePolicyLines];
+
+  if (hasWorkspaceDirectoryListing && hasWorkspaceRead) {
+    lines.push(
+      "- When you are not yet sure which workspace path exists, call workspace_list_directory before workspace_read_file instead of guessing common entry files or folders.",
+      "- Do not assume template paths like src/App.tsx, src/main.tsx, app/page.tsx, or similar conventions without confirming them from the workspace tree first.",
+    );
+  }
 
   if (preferredFileEditTools.length > 0) {
     lines.push(
@@ -755,10 +772,10 @@ function buildToolUsagePolicyLines(tools: readonly ToolDescriptor[]): string[] {
     );
   }
 
-  if (hasTerminalExecution && hasTerminalOutputRead) {
+  if (hasTerminalExecution) {
     lines.push(
-      "- When you need command output, run the underlying command once with terminal_execute and inspect the captured result with terminal_read_output.",
-      "- Avoid shell paging or truncation patterns like | more, | less, | head, | tail, or PowerShell Select-Object -First/-Last when terminal_read_output is available.",
+      "- Use terminal_execute as the shell command tool. Run the command once and inspect the captured output returned by that tool call.",
+      "- Avoid shell paging or truncation patterns like | more, | less, | head, | tail, or PowerShell Select-Object -First/-Last when terminal_execute already captures output.",
     );
   }
 
@@ -1106,7 +1123,7 @@ function guardTerminalOutputReadPreference(input: {
 
   const preferredToolNames = input.handlers
     .map((handler) => handler.descriptor)
-    .filter((descriptor) => isTerminalOutputReadTool(descriptor))
+    .filter((descriptor) => isTerminalExecutionTool(descriptor))
     .map((descriptor) => descriptor.name);
   if (preferredToolNames.length === 0) {
     return undefined;
@@ -1116,8 +1133,8 @@ function guardTerminalOutputReadPreference(input: {
     toolName: input.call.toolName,
     command,
     preferredToolNames,
-    code: "terminal_output_read_preferred_tool_required",
-    message: "Run the underlying command with terminal_execute, then inspect the captured output with terminal_read_output instead of adding shell paging or truncation.",
+    code: "terminal_execute_output_preferred_tool_required",
+    message: "Run the underlying command with terminal_execute and rely on its captured output instead of adding shell paging or truncation.",
   });
 }
 

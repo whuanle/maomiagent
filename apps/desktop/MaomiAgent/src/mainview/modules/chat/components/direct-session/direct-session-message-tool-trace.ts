@@ -54,6 +54,43 @@ function readErrorCode(error: unknown) {
   return typeof code === "string" && code.trim() ? code.trim() : undefined;
 }
 
+function readErrorMessage(error: unknown) {
+  if (!error || typeof error !== "object" || Array.isArray(error)) {
+    return undefined;
+  }
+
+  const message = (error as { message?: unknown }).message;
+  return typeof message === "string" && message.trim() ? message.trim() : undefined;
+}
+
+function isWorkspacePathMissingError(toolName: string, error: unknown) {
+  const normalizedToolName = trimText(toolName).toLowerCase();
+  if (normalizedToolName !== "workspace_read_file") {
+    return false;
+  }
+
+  const message = readErrorMessage(error);
+  if (!message) {
+    return false;
+  }
+
+  return /ENOENT:\s*no such file or directory,\s*open\s+/iu.test(message);
+}
+
+function isWorkspaceDirectoryReadError(toolName: string, error: unknown) {
+  const normalizedToolName = trimText(toolName).toLowerCase();
+  if (normalizedToolName !== "workspace_read_file") {
+    return false;
+  }
+
+  const message = readErrorMessage(error);
+  if (!message) {
+    return false;
+  }
+
+  return /EISDIR|illegal operation on a directory|is a directory/iu.test(message);
+}
+
 function titleCaseWords(value: string) {
   return value
     .split(/\s+/u)
@@ -88,20 +125,20 @@ const TOOL_LABEL_FALLBACKS = {
     "zh-CN": "更新任务",
   },
   terminal_create_session: {
-    "en-US": "Create terminal session",
-    "zh-CN": "创建终端会话",
+    "en-US": "Open shell session",
+    "zh-CN": "打开命令会话",
   },
   terminal_execute: {
-    "en-US": "Execute terminal command",
-    "zh-CN": "执行终端命令",
+    "en-US": "Run shell command",
+    "zh-CN": "执行命令",
   },
   terminal_read_output: {
-    "en-US": "Read terminal output",
-    "zh-CN": "读取终端输出",
+    "en-US": "Read shell output",
+    "zh-CN": "查看命令输出",
   },
   terminal_close_session: {
-    "en-US": "Close terminal session",
-    "zh-CN": "关闭终端会话",
+    "en-US": "Close shell session",
+    "zh-CN": "关闭命令会话",
   },
   run_in_terminal: {
     "en-US": "Run command",
@@ -209,6 +246,12 @@ export function resolveToolTraceStatusLabel(input: {
     case "failed":
       if (errorCode === "tool_loop_detected") {
         return input.isEn ? "Repeated tool calls stopped" : "连续重复调用已中止";
+      }
+      if (isWorkspacePathMissingError(input.toolName, input.error)) {
+        return input.isEn ? "File not found" : "文件不存在";
+      }
+      if (isWorkspaceDirectoryReadError(input.toolName, input.error)) {
+        return input.isEn ? "Target is a directory" : "目标是目录";
       }
       return commandLike
         ? (input.isEn ? "Command failed" : "命令失败")

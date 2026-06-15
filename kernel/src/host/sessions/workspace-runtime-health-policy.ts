@@ -64,13 +64,12 @@ function readErrorFailureKind(error: KernelError | undefined): string | undefine
 
 function isExecutionGuardFailure(error: KernelError): boolean {
   const guardKind = readErrorGuardKind(error)
-  if (guardKind && /(turn_budget|duplicate_tool_batch|repeated_tool_batch)/.test(guardKind)) {
+  if (guardKind && /(turn_budget|repeated_tool_batch)/.test(guardKind)) {
     return true
   }
 
   return [
     "max_turns_exceeded",
-    "duplicate_tool_call_batch",
     "tool_loop_detected",
   ].includes(error.code)
 }

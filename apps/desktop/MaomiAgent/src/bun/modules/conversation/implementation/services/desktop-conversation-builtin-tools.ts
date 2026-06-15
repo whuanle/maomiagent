@@ -7,6 +7,7 @@ import type { DesktopGitQueryPort, DesktopGitReviewScope } from "../../../git";
 import type {
   DesktopResolvedShellKind,
   DesktopTerminalShellKind,
+  DesktopTerminalSessionDetail,
   DesktopTerminalsCommandPort,
   DesktopTerminalsQueryPort,
 } from "../../../terminals";
@@ -20,7 +21,6 @@ import type {
 } from "../../../workspace";
 import {
   normalizeDesktopTerminalPromptShell,
-  renderDesktopTerminalCreateSessionDescription,
   renderDesktopTerminalExecuteDescription,
   validateDesktopTerminalCommandForShell,
 } from "./desktop-terminal-shell-prompt";
@@ -289,7 +289,7 @@ const MANAGED_TASK_DESCRIPTOR: ToolDescriptor = {
 
 const TERMINAL_CREATE_SESSION_DESCRIPTOR: ToolDescriptor = {
   name: "terminal_create_session",
-  description: "Create a terminal session that can be reused for command execution and output inspection.",
+  description: "Open a shell session when later commands need to share the same state.",
   inputSchema: {
     type: "object",
     properties: {
@@ -306,34 +306,40 @@ const TERMINAL_CREATE_SESSION_DESCRIPTOR: ToolDescriptor = {
   metadata: {
     toolSourceKind: "builtin",
     operationKind: "tool_execution",
-    operationLabel: "Create terminal session",
+    operationLabel: "Open shell session",
     planModeAccess: "readonly_command",
   },
 };
 
 const TERMINAL_EXECUTE_DESCRIPTOR: ToolDescriptor = {
   name: "terminal_execute",
-  description: "Execute one command in an existing terminal session. Always put the literal command text in `command`.",
+  description: "Run shell command. Reuses a recent shell session when available, creates one when needed, and returns captured output.",
   inputSchema: {
     type: "object",
     properties: {
       sessionId: { type: "string" },
       command: { type: "string" },
+      workspaceId: { type: "string" },
+      cwd: { type: "string" },
+      shellKind: {
+        type: "string",
+        enum: ["powershell", "cmd", "bash", "sh"],
+      },
     },
-    required: ["sessionId", "command"],
+    required: ["command"],
     additionalProperties: false,
   },
   metadata: {
     toolSourceKind: "builtin",
     operationKind: "tool_execution",
-    operationLabel: "Execute terminal command",
+    operationLabel: "Run shell command",
     planModeAccess: "readonly_command",
   },
 };
 
 const TERMINAL_READ_OUTPUT_DESCRIPTOR: ToolDescriptor = {
   name: "terminal_read_output",
-  description: "Read the most recent output from a terminal session.",
+  description: "Read shell output from an existing shell session.",
   inputSchema: {
     type: "object",
     properties: {
@@ -346,14 +352,14 @@ const TERMINAL_READ_OUTPUT_DESCRIPTOR: ToolDescriptor = {
   metadata: {
     toolSourceKind: "builtin",
     operationKind: "file_read",
-    operationLabel: "Read terminal output",
+    operationLabel: "Read shell output",
     planModeAccess: "read",
   },
 };
 
 const TERMINAL_CLOSE_SESSION_DESCRIPTOR: ToolDescriptor = {
   name: "terminal_close_session",
-  description: "Close an existing terminal session.",
+  description: "Close shell session.",
   inputSchema: {
     type: "object",
     properties: {
@@ -365,7 +371,7 @@ const TERMINAL_CLOSE_SESSION_DESCRIPTOR: ToolDescriptor = {
   metadata: {
     toolSourceKind: "builtin",
     operationKind: "tool_execution",
-    operationLabel: "Close terminal session",
+    operationLabel: "Close shell session",
     planModeAccess: "readonly_command",
   },
 };
@@ -394,6 +400,10 @@ function truncateText(text: string): { text: string; truncated: boolean } {
 
 function normalizeWorkspaceLookupValue(value: string): string {
   return value.trim().replaceAll("\\", "/").replace(/\/+$/u, "").toLowerCase();
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function stripFileProtocol(value: string): string {
@@ -850,23 +860,21 @@ function createStaticToolSource(descriptors: ToolDescriptor[]): ToolSource {
 
       return {
         source: BUILTIN_TOOL_SOURCE,
-        tools: descriptors.map((descriptor) => {
-          if (descriptor.name === "terminal_create_session") {
-            return {
-              ...descriptor,
-              description: renderDesktopTerminalCreateSessionDescription(preferredShell),
-            };
-          }
+        tools: descriptors
+          .filter((descriptor) =>
+            descriptor.name !== "terminal_create_session"
+            && descriptor.name !== "terminal_read_output"
+            && descriptor.name !== "terminal_close_session")
+          .map((descriptor) => {
+            if (descriptor.name === "terminal_execute") {
+              return {
+                ...descriptor,
+                description: renderDesktopTerminalExecuteDescription(activeShell),
+              };
+            }
 
-          if (descriptor.name === "terminal_execute") {
-            return {
-              ...descriptor,
-              description: renderDesktopTerminalExecuteDescription(activeShell),
-            };
-          }
-
-          return descriptor;
-        }),
+            return descriptor;
+          }),
       };
     },
   };
@@ -2097,6 +2105,30 @@ async function resolveTerminalPromptShellForExecution(input: {
       : undefined);
 }
 
+async function readTerminalExecuteSnapshot(input: {
+  terminalQuery: Pick<DesktopTerminalsQueryPort, "getDetail">;
+  sessionId: string;
+  baselineRevision?: number;
+}): Promise<DesktopTerminalSessionDetail | null> {
+  const read = () => input.terminalQuery.getDetail({
+    sessionId: input.sessionId,
+    limit: TOOL_TEXT_OUTPUT_MAX_CHARS,
+  });
+
+  let detail = await read();
+  if (detail && (
+    input.baselineRevision == null
+    || detail.revision > input.baselineRevision
+    || detail.output.trim().length > 0
+  )) {
+    return detail;
+  }
+
+  await sleep(150);
+  detail = await read();
+  return detail;
+}
+
 function createTerminalExecuteHandler(
   workspaceQuery: Pick<DesktopWorkspaceQueryPort, "list" | "get">,
   terminalQuery: Pick<DesktopTerminalsQueryPort, "getDetail">,
@@ -2111,23 +2143,27 @@ function createTerminalExecuteHandler(
       const sessionId = requestedSessionId ?? recentSessionId;
       const command = normalizeOptionalText(input.command) ?? normalizeOptionalText(input.text);
 
-      if (!sessionId) {
-        return asToolFailure("terminal_session_required", "sessionId is required for terminal_execute.");
-      }
-
       if (!command) {
         return asToolFailure("terminal_command_required", "command is required for terminal_execute.", {
-          sessionId,
+          ...(sessionId ? { sessionId } : {}),
         });
       }
 
-      const targetShell = await resolveTerminalPromptShellForExecution({
-        terminalQuery,
-        recentMessages: context.recentMessages,
-        sessionId,
-        ...(recentSessionId ? { fallbackSessionId: recentSessionId } : {}),
-      });
-      if (targetShell) {
+      const previousDetail = sessionId
+        ? await terminalQuery.getDetail({
+          sessionId,
+          limit: 1,
+        })
+        : null;
+      const targetShell = sessionId
+        ? await resolveTerminalPromptShellForExecution({
+          terminalQuery,
+          recentMessages: context.recentMessages,
+          sessionId,
+          ...(recentSessionId ? { fallbackSessionId: recentSessionId } : {}),
+        })
+        : undefined;
+      if (targetShell && sessionId) {
         const validation = validateDesktopTerminalCommandForShell({
           shell: targetShell,
           command,
@@ -2143,10 +2179,12 @@ function createTerminalExecuteHandler(
         }
       }
 
-      let session = await terminalCommand.execute(sessionId, {
-        text: command,
-        appendNewline: true,
-      });
+      let session = sessionId
+        ? await terminalCommand.execute(sessionId, {
+          text: command,
+          appendNewline: true,
+        })
+        : null;
       let resolvedSessionId = sessionId;
 
       if (!session && recentSessionId && recentSessionId !== sessionId) {
@@ -2157,7 +2195,7 @@ function createTerminalExecuteHandler(
         resolvedSessionId = recentSessionId;
       }
 
-      if (!session && requestedSessionId && !recentSessionId) {
+      if (!session) {
         const workspaceId = await resolveWorkspaceId(workspaceQuery, input, context.session.metadata);
         const createdSession = await terminalCommand.create({
           ...(workspaceId ? { workspaceId } : {}),
@@ -2199,14 +2237,31 @@ function createTerminalExecuteHandler(
         });
       }
 
+      const outputDetail = await readTerminalExecuteSnapshot({
+        terminalQuery,
+        sessionId: resolvedSessionId,
+        ...(resolvedSessionId === sessionId && previousDetail
+          ? { baselineRevision: previousDetail.revision }
+          : {}),
+      });
+      const output = outputDetail ? truncateText(outputDetail.output) : undefined;
+
       return {
         ok: true,
         sessionId: resolvedSessionId,
         status: session.status,
+        command,
         shellKind: session.shellKind,
         ...(session.resolvedShellKind ? { resolvedShellKind: session.resolvedShellKind } : {}),
         ...(session.shellDisplayName ? { shellDisplayName: session.shellDisplayName } : {}),
         cwd: session.cwd,
+        ...(outputDetail ? {
+          revision: outputDetail.revision,
+          truncated: outputDetail.truncated || Boolean(output?.truncated),
+          stdout: output?.text ?? "",
+          stderr: "",
+          output: output?.text ?? "",
+        } : {}),
       };
     },
   };
@@ -2491,6 +2546,7 @@ export function createDesktopConversationBuiltinToolBundle(
   options: DesktopConversationBuiltinToolBundleOptions,
 ): DesktopConversationBuiltinToolBundle {
   const toolHandlers = [
+    createWorkspaceListDirectoryHandler(options.workspaceQuery),
     createWorkspaceReadFileHandler(options.workspaceQuery),
     ...(options.workspaceCommand
       ? [

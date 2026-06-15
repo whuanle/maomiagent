@@ -56,7 +56,7 @@ async function waitForOutput(
     await new Promise((resolve) => setTimeout(resolve, 80));
   }
 
-  throw new Error(`Timed out waiting for terminal output matching ${matcher}`);
+  throw new Error(`Timed out waiting for shell output matching ${matcher}`);
 }
 
 afterEach(async () => {
@@ -126,6 +126,7 @@ describe("DesktopTerminalsService", () => {
 
     const output = await waitForOutput(service, session.sessionId, /hello-from-terminal/);
     expect(output).toContain("hello-from-terminal");
+    expect(output).not.toContain("\u001b[");
 
     const closeResult = await service.close(session.sessionId);
     expect(closeResult).toEqual({
@@ -188,5 +189,57 @@ describe("DesktopTerminalsService", () => {
 
     await service.close(session.sessionId);
     activeSessionIds.delete(session.sessionId);
+  });
+
+  test("sanitizes control sequences and prompt noise from terminal detail output", async () => {
+    const service = new DesktopTerminalsService({
+      async get() {
+        return null;
+      },
+    }, logger);
+    currentService = service;
+
+    const sessions = (service as unknown as {
+      sessions: Map<string, unknown>;
+    }).sessions;
+
+    sessions.set("term_sanitized", {
+      record: {
+        sessionId: "term_sanitized",
+        title: "sanitized",
+        shellKind: "powershell",
+        status: "running",
+        cwd: "E:/workspace/hearing",
+        createdAt: "2026-06-15T00:00:00.000Z",
+        updatedAt: "2026-06-15T00:00:00.000Z",
+      },
+      process: {
+        stdout: { on() {} },
+        stderr: { on() {} },
+        stdin: { writable: true, write() {} },
+        on() {},
+        kill() {},
+      },
+      output: "\u001b[?9001h\u001b]0;C:\\\\WINDOWS\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe\u0007"
+        + "PS E:\\workspace\\hearing> Get-ChildItem src -Directory | Select-Object Name\r\n"
+        + "\u001b[?25h\u001b[m\r\nName    \r\n----    \r\nmain    \r\nshared  \u001b[12;1HPS E:\\workspace\\hearing> ",
+      revision: 3,
+      stdoutBuffer: "",
+      ready: {
+        promise: Promise.resolve(),
+        resolve() {},
+        reject() {},
+        settled: true,
+      },
+      exited: false,
+    });
+
+    const detail = await service.getDetail({ sessionId: "term_sanitized", limit: 10_000 });
+    expect(detail).not.toBeNull();
+    expect(detail?.output).toBe(
+      "Get-ChildItem src -Directory | Select-Object Name\n\nName\n----\nmain\nshared",
+    );
+    expect(detail?.output).not.toContain("\u001b");
+    expect(detail?.output).not.toContain("PS E:\\workspace\\hearing>");
   });
 });

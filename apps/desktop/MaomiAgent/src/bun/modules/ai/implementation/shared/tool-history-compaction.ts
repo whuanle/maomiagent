@@ -100,7 +100,11 @@ function buildFileOutputSummary(toolName: string, record: Record<string, unknown
 
 function buildTerminalOutputSummary(toolName: string, record: Record<string, unknown> | undefined, fallbackText: string): string {
   const source = record ?? {};
-  const stdout = typeof source.stdout === "string" ? source.stdout : "";
+  const stdout = typeof source.stdout === "string"
+    ? source.stdout
+    : typeof source.output === "string"
+    ? source.output
+    : "";
   const stderr = typeof source.stderr === "string" ? source.stderr : "";
   const command = typeof source.command === "string" ? source.command : undefined;
   const cwd = typeof source.cwd === "string" ? source.cwd : undefined;
@@ -108,8 +112,8 @@ function buildTerminalOutputSummary(toolName: string, record: Record<string, unk
   const status = typeof source.status === "string" ? source.status : undefined;
   const previewSource = stderr || stdout || fallbackText;
   const summary = toolName === "terminal_execute"
-    ? "Started terminal command"
-    : "Read terminal output";
+    ? "Executed shell command"
+    : "Read shell output";
 
   return JSON.stringify({
     summary,
@@ -167,7 +171,7 @@ export function compactToolCallHistory(input: ToolCallHistoryCompactionInput): u
   if (input.toolName === "terminal_execute") {
     const command = typeof input.input.command === "string" ? input.input.command : "";
     return {
-      sessionId: input.input.sessionId,
+      ...(typeof input.input.sessionId === "string" ? { sessionId: input.input.sessionId } : {}),
       command: buildHistoricalTerminalCommandPlaceholder(command),
     };
   }

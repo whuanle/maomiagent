@@ -59,7 +59,7 @@ describe("tool history compaction", () => {
     }));
   });
 
-  test("summarizes terminal output into metadata and short status text", () => {
+  test("summarizes shell output into metadata and short status text", () => {
     const compacted = compactToolResultHistory({
       toolName: "terminal_read_output",
       text: JSON.stringify({
@@ -90,6 +90,24 @@ describe("tool history compaction", () => {
     expect(compacted.commandPreview).toBeUndefined();
     expect(compacted.commandChars).toBeUndefined();
     expect(compacted.commandLines).toBeUndefined();
+  });
+
+  test("summarizes terminal_execute results as single shell command output", () => {
+    const compacted = compactToolResultHistory({
+      toolName: "terminal_execute",
+      text: JSON.stringify({
+        command: "git status --short",
+        cwd: "E:/workspace/MaomiAgent",
+        status: "running",
+        output: "M src/index.ts\n" + "x".repeat(4000),
+        truncated: true,
+      }),
+    });
+
+    expect(compacted).toContain("Executed shell command");
+    expect(compacted).toContain("git status --short");
+    expect(compacted).toContain("src/index.ts");
+    expect(compacted).not.toContain("x".repeat(300));
   });
 
   test("summarizes terminal_read_output inputs using only supported fields", () => {
