@@ -1,4 +1,4 @@
-import { BrowserWindow, Screen, Updater, Utils, defineElectrobunRPC } from "electrobun/bun";
+import { BrowserWindow, Updater, Utils, defineElectrobunRPC } from "electrobun/bun";
 import { writeFile } from "node:fs/promises";
 
 import {
@@ -81,6 +81,16 @@ import {
   DESKTOP_UI_DESIGNER_QUERY_PORT,
 } from "./modules/ui-designer";
 import {
+  ensureWindowFrameVisible,
+  fitFrameToVisibleWorkArea,
+  resolveNearestWorkArea,
+} from "./modules/window/implementation/services/window-frame-visibility";
+import {
+  resolveCenteredFrameInWorkArea,
+  resolveRestoreFrameForDrag,
+  resizeFrameFromPointer,
+} from "./modules/window/implementation/services/window-frame-operations";
+import {
   DESKTOP_FEISHU_COMMAND_PORT,
   DESKTOP_FEISHU_QUERY_PORT,
 } from "./modules/feishu";
@@ -88,6 +98,7 @@ import type {
   DesktopMemoryMaintenanceRequest,
   DesktopMemoryProjectionQuery,
 } from "../shared/desktop-memory";
+import type { DesktopWindowResizePointer } from "../shared/desktop-rpc";
 
 const APP_IDENTIFIER = "com.maomiagent.desktop";
 const DEFAULT_MAIN_VIEW_URL = "views://mainview/index.html";
@@ -209,128 +220,21 @@ type DesktopWindowDragPointer = {
 };
 
 let lastNormalWindowFrame: DesktopWindowFrame | null = null;
-const MIN_WINDOW_WIDTH = 480;
-const MIN_WINDOW_HEIGHT = 320;
-const MIN_VISIBLE_TITLEBAR_HEIGHT = 56;
-const MIN_VISIBLE_DRAG_WIDTH = 160;
 let restoreFrameTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
+function isEffectivelyMaximized(window: BrowserWindow): boolean {
+  return window.isMaximized();
 }
 
-function framesEqual(left: DesktopWindowFrame, right: DesktopWindowFrame): boolean {
-  return left.x === right.x
-    && left.y === right.y
-    && left.width === right.width
-    && left.height === right.height;
-}
-
-function resolveDisplayWorkAreas(): DesktopWindowFrame[] {
-  const displays = Screen.getAllDisplays()
-    .map((display) => {
-      const source = display.workArea.width > 0 && display.workArea.height > 0
-        ? display.workArea
-        : display.bounds;
-      return {
-        x: Math.round(source.x),
-        y: Math.round(source.y),
-        width: Math.round(source.width),
-        height: Math.round(source.height),
-      };
-    })
-    .filter((frame) => frame.width > 0 && frame.height > 0);
-
-  if (displays.length > 0) {
-    return displays;
-  }
-
-  const primaryDisplay = Screen.getPrimaryDisplay();
-  const fallback = primaryDisplay.workArea.width > 0 && primaryDisplay.workArea.height > 0
-    ? primaryDisplay.workArea
-    : primaryDisplay.bounds;
-
-  return [{
-    x: Math.round(fallback.x),
-    y: Math.round(fallback.y),
-    width: Math.max(1, Math.round(fallback.width)),
-    height: Math.max(1, Math.round(fallback.height)),
-  }];
-}
-
-function resolveIntersectionArea(left: DesktopWindowFrame, right: DesktopWindowFrame): number {
-  const overlapWidth = Math.max(
-    0,
-    Math.min(left.x + left.width, right.x + right.width) - Math.max(left.x, right.x),
-  );
-  const overlapHeight = Math.max(
-    0,
-    Math.min(left.y + left.height, right.y + right.height) - Math.max(left.y, right.y),
-  );
-
-  return overlapWidth * overlapHeight;
-}
-
-function resolveNearestWorkArea(frame: DesktopWindowFrame): DesktopWindowFrame {
-  const workAreas = resolveDisplayWorkAreas();
-  const frameCenterX = frame.x + frame.width / 2;
-  const frameCenterY = frame.y + frame.height / 2;
-
-  let bestWorkArea = workAreas[0]!;
-  let bestIntersection = -1;
-  let bestDistance = Number.POSITIVE_INFINITY;
-
-  for (const workArea of workAreas) {
-    const intersection = resolveIntersectionArea(frame, workArea);
-    const workAreaCenterX = workArea.x + workArea.width / 2;
-    const workAreaCenterY = workArea.y + workArea.height / 2;
-    const distance = Math.hypot(frameCenterX - workAreaCenterX, frameCenterY - workAreaCenterY);
-
-    if (intersection > bestIntersection || (intersection === bestIntersection && distance < bestDistance)) {
-      bestWorkArea = workArea;
-      bestIntersection = intersection;
-      bestDistance = distance;
-    }
-  }
-
-  return bestWorkArea;
-}
-
-function fitFrameToVisibleWorkArea(frame: DesktopWindowFrame): DesktopWindowFrame {
-  const workArea = resolveNearestWorkArea(frame);
-  const maxWidth = Math.max(1, Math.round(workArea.width));
-  const maxHeight = Math.max(1, Math.round(workArea.height));
-  const width = clamp(Math.round(frame.width), Math.min(MIN_WINDOW_WIDTH, maxWidth), maxWidth);
-  const height = clamp(Math.round(frame.height), Math.min(MIN_WINDOW_HEIGHT, maxHeight), maxHeight);
-  const visibleDragWidth = Math.min(MIN_VISIBLE_DRAG_WIDTH, width);
-  const visibleTitlebarHeight = Math.min(MIN_VISIBLE_TITLEBAR_HEIGHT, height);
-  const minX = Math.round(workArea.x - width + visibleDragWidth);
-  const maxX = Math.round(workArea.x + workArea.width - visibleDragWidth);
-  const minY = Math.round(workArea.y);
-  const maxY = Math.round(workArea.y + workArea.height - visibleTitlebarHeight);
-
-  return {
-    x: clamp(Math.round(frame.x), minX, Math.max(minX, maxX)),
-    y: clamp(Math.round(frame.y), minY, Math.max(minY, maxY)),
-    width,
-    height,
-  };
-}
-
-function ensureWindowFrameVisible(
+function ensureWindowFrameVisibleAndRemember(
   window: BrowserWindow,
   options?: {
     rememberAsNormalFrame?: boolean;
   },
 ): DesktopWindowFrame {
-  const currentFrame = window.getFrame();
-  const fittedFrame = fitFrameToVisibleWorkArea(currentFrame);
+  const fittedFrame = ensureWindowFrameVisible(window);
 
-  if (!framesEqual(currentFrame, fittedFrame)) {
-    window.setFrame(fittedFrame.x, fittedFrame.y, fittedFrame.width, fittedFrame.height);
-  }
-
-  if (options?.rememberAsNormalFrame !== false && !window.isMaximized() && !window.isFullScreen()) {
+  if (options?.rememberAsNormalFrame !== false && !isEffectivelyMaximized(window) && !window.isFullScreen()) {
     lastNormalWindowFrame = { ...fittedFrame };
   }
 
@@ -362,7 +266,7 @@ function restoreWindowForDrag(
   window: BrowserWindow,
   dragPointer?: DesktopWindowDragPointer,
 ): void {
-  if (!window.isMaximized()) {
+  if (!isEffectivelyMaximized(window)) {
     return;
   }
 
@@ -377,8 +281,8 @@ function restoreWindowForDrag(
   const fittedRestoreFrame: DesktopWindowFrame = {
     x: restoreFrame.x,
     y: restoreFrame.y,
-    width: clamp(Math.round(restoreFrame.width), 480, Math.round(maximizedFrame.width)),
-    height: clamp(Math.round(restoreFrame.height), 320, Math.round(maximizedFrame.height)),
+    width: Math.min(Math.max(Math.round(restoreFrame.width), 480), Math.round(maximizedFrame.width)),
+    height: Math.min(Math.max(Math.round(restoreFrame.height), 320), Math.round(maximizedFrame.height)),
   };
 
   window.unmaximize();
@@ -388,32 +292,53 @@ function restoreWindowForDrag(
     return;
   }
 
-  const pointerScreenX = maximizedFrame.x + dragPointer.offsetX;
-  const pointerScreenY = maximizedFrame.y + dragPointer.offsetY;
-  const pointerRatioX = clamp(dragPointer.offsetX / Math.max(1, dragPointer.windowWidth), 0, 1);
-  const targetX = Math.round(pointerScreenX - fittedRestoreFrame.width * pointerRatioX);
-  const targetY = Math.round(pointerScreenY - clamp(dragPointer.offsetY, 8, 72));
+  lastNormalWindowFrame = applyRestoreFrame(window, resolveRestoreFrameForDrag({
+    maximizedFrame,
+    restoreFrame: fittedRestoreFrame,
+    dragPointer,
+  }));
+}
 
-  // Keep restored window anchored to the current display bounds during drag restore.
-  const minX = Math.round(maximizedFrame.x);
-  const maxX = Math.round(maximizedFrame.x + maximizedFrame.width - fittedRestoreFrame.width);
-  const minY = Math.round(maximizedFrame.y);
-  const maxY = Math.round(maximizedFrame.y + maximizedFrame.height - MIN_VISIBLE_TITLEBAR_HEIGHT);
-  const boundedX = clamp(targetX, minX, Math.max(minX, maxX));
-  const boundedY = clamp(targetY, minY, Math.max(minY, maxY));
+function maximizeWindow(window: BrowserWindow): void {
+  lastNormalWindowFrame = { ...window.getFrame() };
+  window.maximize();
+}
 
-  lastNormalWindowFrame = applyRestoreFrame(window, {
-    x: boundedX,
-    y: boundedY,
-    width: fittedRestoreFrame.width,
-    height: fittedRestoreFrame.height,
-  });
+function unmaximizeWindow(window: BrowserWindow): void {
+  const maximizedFrame = window.getFrame();
+  const workArea = resolveNearestWorkArea(maximizedFrame);
+  const fallbackFrame: DesktopWindowFrame = {
+    x: workArea.x,
+    y: workArea.y,
+    width: Math.max(900, Math.round(workArea.width * 0.86)),
+    height: Math.max(640, Math.round(workArea.height * 0.86)),
+  };
+  const restoreSize = lastNormalWindowFrame ?? fallbackFrame;
+
+  window.unmaximize();
+  lastNormalWindowFrame = applyRestoreFrame(window, resolveCenteredFrameInWorkArea({
+    workArea,
+    frame: {
+      width: restoreSize.width,
+      height: restoreSize.height,
+    },
+  }));
+}
+
+function resizeWindow(window: BrowserWindow, resizePointer?: DesktopWindowResizePointer): void {
+  if (!resizePointer || isEffectivelyMaximized(window)) {
+    return;
+  }
+
+  const resizedFrame = resizeFrameFromPointer(resizePointer);
+  lastNormalWindowFrame = applyRestoreFrame(window, resizedFrame);
 }
 
 function handleWindowAction(
   window: BrowserWindow | null,
   action: DesktopWindowAction,
   dragPointer?: DesktopWindowDragPointer,
+  resizePointer?: DesktopWindowResizePointer,
 ) {
   if (!window) {
     return { maximized: false };
@@ -422,19 +347,15 @@ function handleWindowAction(
   if (action === "minimize") {
     window.minimize();
   } else if (action === "toggleMaximize") {
-    if (window.isMaximized()) {
-      window.unmaximize();
-      if (lastNormalWindowFrame) {
-        lastNormalWindowFrame = applyRestoreFrame(window, lastNormalWindowFrame);
-      } else {
-        ensureWindowFrameVisible(window);
-      }
+    if (isEffectivelyMaximized(window)) {
+      unmaximizeWindow(window);
     } else {
-      lastNormalWindowFrame = ensureWindowFrameVisible(window);
-      window.maximize();
+      maximizeWindow(window);
     }
   } else if (action === "restoreForDrag") {
     restoreWindowForDrag(window, dragPointer);
+  } else if (action === "resizeWindow") {
+    resizeWindow(window, resizePointer);
   } else if (action === "exitFullScreen") {
     if (window.isFullScreen()) {
       window.setFullScreen(false);
@@ -442,8 +363,7 @@ function handleWindowAction(
   } else if (action === "close") {
     window.close();
   }
-
-  return { maximized: window.isMaximized() };
+  return { maximized: isEffectivelyMaximized(window) };
 }
 
 async function chooseDirectory(startingFolder?: string): Promise<string | null> {
@@ -912,6 +832,7 @@ try {
     },
     createWindow(options) {
       let window: BrowserWindow | null = null;
+      lastNormalWindowFrame = null;
       const singleInstanceAppKey = resolveSingleInstanceAppKey(channel);
       singleInstance.registerHttpRoute({
         method: "POST",
@@ -964,8 +885,9 @@ try {
         maxRequestTime: Infinity,
         handlers: {
           requests: {
-            getWindowState: () => ({ maximized: window?.isMaximized() ?? false }),
-            windowControl: ({ action, dragPointer }) => handleWindowAction(window, action, dragPointer),
+            getWindowState: () => ({ maximized: window ? isEffectivelyMaximized(window) : false }),
+            windowControl: ({ action, dragPointer, resizePointer }) =>
+              handleWindowAction(window, action, dragPointer, resizePointer),
             refreshMainView: () => refreshMainView(window, channel),
             chooseDirectory: (options) => chooseDirectory(options?.startingFolder),
             saveTextFileWithDialog: (input) => saveTextFileWithDialog(input),
@@ -1390,21 +1312,31 @@ try {
         ...options,
         rpc,
         titleBarStyle: "hidden",
-        // On Windows, hidden custom chrome should also be borderless; otherwise
-        // native resize borders can show through as an opaque frame after scale/
-        // restore transitions when window transparency is disabled.
+        // Hidden custom chrome on Windows still needs a borderless host so
+        // the renderer can own the titlebar while native maximize stays intact.
         styleMask: process.platform === "win32" ? { Borderless: true } : undefined,
         // Electrobun hidden+transparent windows on Windows can leak right-edge clicks
         // into the window behind the app. Keep transparency on other platforms.
         transparent: process.platform === "win32" ? false : true,
       });
       resetDesktopPageZoom(createdWindow);
-      ensureWindowFrameVisible(createdWindow);
+      ensureWindowFrameVisibleAndRemember(createdWindow, {
+        rememberAsNormalFrame: !isEffectivelyMaximized(createdWindow),
+      });
+      const rememberNormalFrame = () => {
+        if (isEffectivelyMaximized(createdWindow) || createdWindow.isFullScreen()) {
+          return;
+        }
+
+        lastNormalWindowFrame = createdWindow.getFrame();
+      };
       createdWindow.webview.on("dom-ready", () => {
         resetDesktopPageZoom(createdWindow);
       });
-      createdWindow.on("focus", () => {
-        ensureWindowFrameVisible(createdWindow);
+      createdWindow.on("move", rememberNormalFrame);
+      createdWindow.on("resize", rememberNormalFrame);
+      createdWindow.on("close", () => {
+        lastNormalWindowFrame = null;
       });
       window = createdWindow;
       return createdWindow;

@@ -1,10 +1,7 @@
 import {
-  DEFAULT_DEV_SERVER_PORT,
-  DEV_SERVER_HOST,
-  DEV_SERVER_PORT_ENV_NAME,
-  resolveDevServerPort,
-  resolveDevServerPortSource,
-} from "./dev-server-port";
+  startManagedViteDevServer,
+  stopManagedViteDevServer,
+} from "./vite-dev-server";
 
 await main().catch((error) => {
   console.error(error);
@@ -13,26 +10,14 @@ await main().catch((error) => {
 
 async function main(): Promise<void> {
   await runCommand(["bun", "run", "brand:generate"]);
-
-  const devServerPort = resolveDevServerPort();
-  const devServerPortSource = resolveDevServerPortSource();
-  console.log(
-    `Starting MaomiAgent web dev server at http://${DEV_SERVER_HOST}:${devServerPort} `
-    + `(${devServerPortSource === "env"
-      ? `from ${DEV_SERVER_PORT_ENV_NAME}`
-      : `default fixed port ${DEFAULT_DEV_SERVER_PORT}`}).`,
-  );
-
-  await runCommand([
-    "bun",
-    "x",
-    "vite",
-    "--host",
-    DEV_SERVER_HOST,
-    "--port",
-    String(devServerPort),
-    "--strictPort",
-  ]);
+  const { devServerProcess } = await startManagedViteDevServer({
+    label: "web",
+  });
+  try {
+    await devServerProcess.exited;
+  } finally {
+    stopManagedViteDevServer(devServerProcess);
+  }
 }
 
 async function runCommand(command: string[]): Promise<void> {

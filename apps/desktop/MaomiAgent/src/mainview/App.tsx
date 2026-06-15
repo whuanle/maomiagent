@@ -12,6 +12,7 @@ import { LogsPage } from "./components/logs-page/page";
 import { SettingsPage } from "./components/settings-page/page";
 import { WorkspacePage } from "./components/workspace-page/page";
 import { RoutePlaceholder } from "./components/window-shell/RoutePlaceholder";
+import { WindowResizeHandles } from "./components/window-shell/WindowResizeHandles";
 import { WindowTitlebar } from "./components/window-shell/WindowTitlebar";
 import { createTranslator } from "./i18n";
 import {
@@ -429,6 +430,7 @@ export default function App() {
         <BrowserProvider>
           <NotificationApiBinder />
           <Layout className="app-shell">
+            <WindowResizeHandles />
             <WindowTitlebar
               status={status}
               language={language}

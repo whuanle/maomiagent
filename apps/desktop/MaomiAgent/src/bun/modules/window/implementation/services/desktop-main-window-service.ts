@@ -2,10 +2,21 @@ import type { DesktopRuntimeContext } from "../../../foundation";
 import type { RuntimeLogger } from "../../../logs/abstraction/models/runtime-log.models";
 import type { DesktopTracePort } from "../../../observability/abstraction/ports/desktop-tracing.port";
 import type { DesktopMainWindowServicePort } from "../../abstraction/ports/desktop-main-window-service.port";
-import type { DesktopBrowserWindow } from "../../abstraction/models/desktop-window";
+import type {
+  DesktopBrowserWindow,
+  DesktopWindowFrame,
+} from "../../abstraction/models/desktop-window";
+import {
+  ensureWindowFrameVisible,
+  fitFrameToVisibleWorkArea,
+  resolveNearestWorkArea,
+} from "./window-frame-visibility";
+import { resolveCenteredFrameInWorkArea } from "./window-frame-operations";
 
 export class DesktopMainWindowService implements DesktopMainWindowServicePort {
   private window: DesktopBrowserWindow | null = null;
+  private lastNormalWindowFrame: DesktopWindowFrame | null = null;
+  private lastNormalWorkArea: DesktopWindowFrame | null = null;
 
   constructor(
     private readonly runtimeContext: DesktopRuntimeContext,
@@ -33,12 +44,29 @@ export class DesktopMainWindowService implements DesktopMainWindowServicePort {
         url: this.runtimeContext.mainViewUrl,
         frame: { ...this.runtimeContext.window.frame },
       });
+      const rememberNormalFrame = () => {
+        if (
+          createdWindow.isMinimized()
+          || createdWindow.isMaximized()
+          || createdWindow.isFullScreen()
+        ) {
+          return;
+        }
+
+        this.lastNormalWindowFrame = ensureWindowFrameVisible(createdWindow);
+        this.lastNormalWorkArea = resolveNearestWorkArea(this.lastNormalWindowFrame);
+      };
       createdWindow.on("close", () => {
         this.window = null;
+        this.lastNormalWindowFrame = null;
+        this.lastNormalWorkArea = null;
         this.trace.push("window:closed");
         void this.logger.info("Desktop main window closed");
       });
+      createdWindow.on("move", rememberNormalFrame);
+      createdWindow.on("resize", rememberNormalFrame);
       this.window = createdWindow;
+      rememberNormalFrame();
       this.trace.push("window:created");
       void this.logger.info("Desktop main window created", {
         traceId: span.traceId,
@@ -69,9 +97,35 @@ export class DesktopMainWindowService implements DesktopMainWindowServicePort {
 
     try {
       const window = this.ensureMainWindow();
+      const wasMinimized = window.isMinimized();
       window.show();
-      if (window.isMinimized()) {
+      if (wasMinimized) {
         window.unminimize();
+      }
+      if (!window.isMaximized() && !window.isFullScreen()) {
+        if (wasMinimized) {
+          const restoreSize = this.lastNormalWindowFrame ?? this.runtimeContext.window.frame;
+          const workArea = this.lastNormalWorkArea
+            ?? resolveNearestWorkArea(this.lastNormalWindowFrame ?? window.getFrame());
+          const fittedFrame = fitFrameToVisibleWorkArea(resolveCenteredFrameInWorkArea({
+            workArea,
+            frame: {
+              width: restoreSize.width,
+              height: restoreSize.height,
+            },
+          }));
+          window.setFrame(
+            fittedFrame.x,
+            fittedFrame.y,
+            fittedFrame.width,
+            fittedFrame.height,
+          );
+          this.lastNormalWindowFrame = fittedFrame;
+          this.lastNormalWorkArea = resolveNearestWorkArea(fittedFrame);
+        } else {
+          this.lastNormalWindowFrame = ensureWindowFrameVisible(window);
+          this.lastNormalWorkArea = resolveNearestWorkArea(this.lastNormalWindowFrame);
+        }
       }
       window.focus();
       this.trace.push("window:activated");

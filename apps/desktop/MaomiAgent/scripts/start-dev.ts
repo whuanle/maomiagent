@@ -3,12 +3,9 @@ import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  DEFAULT_DEV_SERVER_PORT,
-  DEV_SERVER_HOST,
-  DEV_SERVER_PORT_ENV_NAME,
-  resolveDevServerPort,
-  resolveDevServerPortSource,
-} from "./dev-server-port";
+  startManagedViteDevServer,
+  stopManagedViteDevServer,
+} from "./vite-dev-server";
 import {
   createPackagedDesktopAppUpdateConfig,
 } from "../src/bun/desktop-app-update/config";
@@ -21,7 +18,6 @@ import { DESKTOP_LOCAL_CONTROL_PORT } from "../src/shared/desktop-feishu-oauth";
 const APP_NAME = "MaomiAgent";
 const APP_IDENTIFIER = "com.maomiagent.desktop";
 const APP_VERSION = "0.1.0";
-const DEV_SERVER_START_TIMEOUT_MS = 30_000;
 const projectRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const useHmrDevServer = process.argv.includes("--hmr");
 const devInstanceMode = useHmrDevServer ? "hmr" : "stable";
@@ -80,7 +76,7 @@ async function main(): Promise<void> {
   try {
     await runDesktopDevApp(devServerUrl);
   } finally {
-    stopCommand(devServerProcess);
+    stopManagedViteDevServer(devServerProcess);
   }
 }
 
@@ -94,7 +90,7 @@ async function attachExistingHmrInstance(): Promise<void> {
   });
 
   if (!refreshed) {
-    stopCommand(devServerProcess);
+    stopManagedViteDevServer(devServerProcess);
     console.warn("Activated existing MaomiAgent hmr dev instance, but could not refresh its main view.");
     return;
   }
@@ -103,7 +99,7 @@ async function attachExistingHmrInstance(): Promise<void> {
   try {
     await devServerProcess.exited;
   } finally {
-    stopCommand(devServerProcess);
+    stopManagedViteDevServer(devServerProcess);
   }
 }
 
@@ -111,37 +107,10 @@ async function startManagedHmrDevServer(): Promise<{
   devServerProcess: ReturnType<typeof spawnCommand>;
   devServerUrl: string;
 }> {
-  const devServerPort = resolveDevServerPort();
-  const devServerPortSource = resolveDevServerPortSource();
-  const devServerUrl = `http://${DEV_SERVER_HOST}:${devServerPort}`;
-  console.log(
-    `Starting MaomiAgent HMR dev server at ${devServerUrl} `
-    + `(${devServerPortSource === "env"
-      ? `from ${DEV_SERVER_PORT_ENV_NAME}`
-      : `default fixed port ${DEFAULT_DEV_SERVER_PORT}`}).`,
-  );
-  const devServerProcess = spawnCommand([
-    "bun",
-    "x",
-    "vite",
-    "--host",
-    DEV_SERVER_HOST,
-    "--port",
-    String(devServerPort),
-    "--strictPort",
-  ]);
-
-  let devServerExitCode: number | null = null;
-  void devServerProcess.exited.then((exitCode) => {
-    devServerExitCode = exitCode;
+  const { devServerProcess, devServerUrl } = await startManagedViteDevServer({
+    label: "HMR",
   });
-
-  await waitForDevServer(devServerUrl, devServerPort, () => devServerExitCode);
-
-  return {
-    devServerProcess,
-    devServerUrl,
-  };
+  return { devServerProcess, devServerUrl };
 }
 
 async function runDesktopDevApp(devServerUrl?: string): Promise<void> {
@@ -264,40 +233,6 @@ function isBusyCleanupError(error: unknown): error is { code: string } {
 
   const record = error as { code?: unknown };
   return record.code === "EACCES" || record.code === "EBUSY" || record.code === "EPERM";
-}
-
-async function waitForDevServer(
-  devServerUrl: string,
-  devServerPort: number,
-  getExitCode: () => number | null,
-): Promise<void> {
-  const deadline = Date.now() + DEV_SERVER_START_TIMEOUT_MS;
-
-  while (Date.now() < deadline) {
-    const exitCode = getExitCode();
-    if (exitCode !== null) {
-      throw new Error(
-        `Vite dev server exited before it became ready on ${DEV_SERVER_HOST}:${devServerPort} (code ${exitCode}). `
-        + `If the port is already in use, set ${DEV_SERVER_PORT_ENV_NAME} to another port and retry.`,
-      );
-    }
-
-    try {
-      const response = await fetch(devServerUrl, { method: "HEAD" });
-      if (response.ok || response.status < 500) {
-        return;
-      }
-    } catch {
-      // Retry until the managed dev server is reachable or times out.
-    }
-
-    await delay(250);
-  }
-
-  throw new Error(
-    `Timed out waiting for the Vite dev server at ${devServerUrl}. `
-    + `If the port is already in use, set ${DEV_SERVER_PORT_ENV_NAME} to another port and retry.`,
-  );
 }
 
 function delay(milliseconds: number): Promise<void> {

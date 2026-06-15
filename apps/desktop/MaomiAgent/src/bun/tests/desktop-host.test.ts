@@ -66,13 +66,27 @@ function createFakeWindow(input?: { minimized?: boolean }): {
   window: DesktopBrowserWindow;
   metrics: {
     focusCalls: number;
+    frame: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    };
     showCalls: number;
+    setFrameCalls: number;
     unminimizeCalls: number;
   };
 } {
   const metrics = {
     focusCalls: 0,
+    frame: {
+      x: 160,
+      y: 80,
+      width: 1240,
+      height: 840,
+    },
     showCalls: 0,
+    setFrameCalls: 0,
     unminimizeCalls: 0,
   };
 
@@ -83,16 +97,31 @@ function createFakeWindow(input?: { minimized?: boolean }): {
       focus() {
         metrics.focusCalls += 1;
       },
+      getFrame() {
+        return { ...metrics.frame };
+      },
+      isFullScreen() {
+        return false;
+      },
+      isMaximized() {
+        return false;
+      },
       isMinimized() {
         return minimized;
       },
       on() {},
+      setFrame(x, y, width, height) {
+        metrics.frame = { x, y, width, height };
+        metrics.setFrameCalls += 1;
+      },
       show() {
         metrics.showCalls += 1;
       },
       unminimize() {
         minimized = false;
         metrics.unminimizeCalls += 1;
+      },
+      unmaximize() {
       },
     },
     metrics,
@@ -151,6 +180,7 @@ describe("startDesktopApplication", () => {
         "desktop.logs",
         "desktop.observability",
         "desktop.window",
+        "desktop.browser",
         "desktop.workspace",
         "desktop.git",
         "desktop.models",
@@ -162,6 +192,7 @@ describe("startDesktopApplication", () => {
         "desktop.memory",
         "desktop.skills",
         "desktop.mcp",
+        "desktop.ui-designer",
         "desktop.wechat",
         "desktop.feishu",
         "desktop.shell",

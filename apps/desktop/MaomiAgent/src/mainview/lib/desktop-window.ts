@@ -1,9 +1,39 @@
-export type DesktopWindowAction = "minimize" | "toggleMaximize" | "restoreForDrag" | "exitFullScreen" | "close";
+export type DesktopWindowAction =
+  | "minimize"
+  | "toggleMaximize"
+  | "restoreForDrag"
+  | "resizeWindow"
+  | "exitFullScreen"
+  | "close";
 
 export type DesktopWindowDragPointer = {
   offsetX: number;
   offsetY: number;
   windowWidth: number;
+};
+
+export type DesktopWindowResizeEdge =
+  | "n"
+  | "s"
+  | "e"
+  | "w"
+  | "ne"
+  | "nw"
+  | "se"
+  | "sw";
+
+export type DesktopWindowResizePointer = {
+  edge: DesktopWindowResizeEdge;
+  startScreenX: number;
+  startScreenY: number;
+  screenX: number;
+  screenY: number;
+  startFrame: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
 };
 
 import type {
@@ -20,6 +50,7 @@ type DesktopWindowBridge = {
   windowControl: (
     action: DesktopWindowAction,
     dragPointer?: DesktopWindowDragPointer,
+    resizePointer?: DesktopWindowResizePointer,
   ) => Promise<{ maximized: boolean }>;
   refreshMainView: () => Promise<DesktopMainViewRefreshResult>;
   chooseDirectory: (options?: DesktopDirectoryDialogOptions) => Promise<string | null>;
@@ -49,6 +80,7 @@ export async function isWindowMaximized(): Promise<boolean> {
 export async function runDesktopWindowAction(
   action: DesktopWindowAction,
   dragPointer?: DesktopWindowDragPointer,
+  resizePointer?: DesktopWindowResizePointer,
 ): Promise<{ maximized: boolean }> {
   const bridge = window.maomiDesktopWindow;
   if (!bridge) {
@@ -57,7 +89,7 @@ export async function runDesktopWindowAction(
     }
     return { maximized: false };
   }
-  return bridge.windowControl(action, dragPointer);
+  return bridge.windowControl(action, dragPointer, resizePointer);
 }
 
 export async function refreshDesktopMainView(): Promise<DesktopMainViewRefreshResult> {

@@ -21,39 +21,7 @@ import { StatusPopover } from "./StatusPopover";
 
 const appLogoUrl = "/branding/package.png";
 const COLLAPSED_ACTIVE_TAB_KEY = "__collapsed_active__";
-const TITLEBAR_DRAG_RESTORE_THRESHOLD = 1;
-
-type ElectrobunInternalBridge = {
-  postMessage: (message: string) => void;
-};
-
-function postElectrobunWindowMove(type: "startWindowMove" | "stopWindowMove") {
-  const candidate = window as Window & {
-    __electrobunInternalBridge?: ElectrobunInternalBridge;
-    __electrobunWindowId?: number;
-  };
-  if (!candidate.__electrobunInternalBridge || typeof candidate.__electrobunWindowId !== "number") {
-    return;
-  }
-
-  candidate.__electrobunInternalBridge.postMessage(JSON.stringify([
-    JSON.stringify({
-      type: "message",
-      id: type,
-      payload: { id: candidate.__electrobunWindowId },
-    }),
-  ]));
-}
-
-function restartElectrobunWindowMove() {
-  postElectrobunWindowMove("startWindowMove");
-  requestAnimationFrame(() => {
-    postElectrobunWindowMove("startWindowMove");
-  });
-  window.setTimeout(() => {
-    postElectrobunWindowMove("startWindowMove");
-  }, 16);
-}
+const TITLEBAR_DRAG_EXIT_THRESHOLD = 8;
 
 type Props = {
   status: RuntimeStatus;
@@ -103,9 +71,59 @@ function renderThemeIcon(mode: AppThemeMode, iconSize: number): ReactNode {
   return <Sun size={iconSize} strokeWidth={1.9} />;
 }
 
+function WindowMaximizeIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+      <rect
+        x="2.25"
+        y="2.25"
+        width="9.5"
+        height="9.5"
+        rx="1"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+    </svg>
+  );
+}
+
+function WindowRestoreIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+      <rect
+        x="4.25"
+        y="2.25"
+        width="7.5"
+        height="7.5"
+        rx="1"
+        fill="var(--app-surface)"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+      <rect
+        x="2.25"
+        y="4.25"
+        width="7.5"
+        height="7.5"
+        rx="1"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+    </svg>
+  );
+}
+
 export function WindowTitlebar(props: Props) {
   const [hasWindowControls, setHasWindowControls] = useState(() => hasDesktopWindowBridge());
   const [maximized, setMaximized] = useState(false);
+  const titlebarDragGestureRef = useRef<{
+    startX: number;
+    startY: number;
+    maximized: boolean;
+    handled: boolean;
+  } | null>(null);
   const iconSize = 16;
   const currentThemeLabel = resolveThemeLabel(props.themeMode, props.t);
   const themeMenuLabel = `${props.t("标题栏.主题")} · ${currentThemeLabel}`;
@@ -147,13 +165,6 @@ export function WindowTitlebar(props: Props) {
     { key: "dark", label: props.t("标题栏.主题.暗色"), icon: <Moon size={iconSize} strokeWidth={1.9} /> },
     { key: "tomorrow-night-blue", label: props.t("标题栏.主题.TomorrowNightBlue"), icon: <Moon size={iconSize} strokeWidth={1.9} /> },
   ]), [iconSize, props.t]);
-  const dragGestureRef = useRef<{
-    startX: number;
-    startY: number;
-    handled: boolean;
-    interceptNativeMove: boolean;
-  } | null>(null);
-
   const refreshMaximized = useCallback(async () => {
     if (!hasWindowControls) {
       return;
@@ -190,6 +201,54 @@ export function WindowTitlebar(props: Props) {
     };
   }, [refreshMaximized]);
 
+  useEffect(() => {
+    const clearTitlebarDragGesture = () => {
+      titlebarDragGestureRef.current = null;
+    };
+
+    const handleTitlebarDragMove = (event: MouseEvent) => {
+      const dragGesture = titlebarDragGestureRef.current;
+      if (!dragGesture || dragGesture.handled || !hasWindowControls) {
+        return;
+      }
+
+      const moveX = Math.abs(event.clientX - dragGesture.startX);
+      const moveY = Math.abs(event.clientY - dragGesture.startY);
+      if (moveX < TITLEBAR_DRAG_EXIT_THRESHOLD && moveY < TITLEBAR_DRAG_EXIT_THRESHOLD) {
+        return;
+      }
+
+      dragGesture.handled = true;
+      const action = dragGesture.maximized
+        ? runDesktopWindowAction("restoreForDrag", {
+          offsetX: event.clientX,
+          offsetY: event.clientY,
+          windowWidth: window.innerWidth,
+        })
+        : runDesktopWindowAction("exitFullScreen");
+
+      void action
+        .then((state) => {
+          setMaximized(state.maximized);
+        })
+        .catch((error) => {
+          console.error(props.t("标题栏.切换窗口状态失败"), error);
+        })
+        .finally(() => {
+          titlebarDragGestureRef.current = null;
+        });
+    };
+
+    window.addEventListener("mousemove", handleTitlebarDragMove);
+    window.addEventListener("mouseup", clearTitlebarDragGesture);
+    window.addEventListener("blur", clearTitlebarDragGesture);
+    return () => {
+      window.removeEventListener("mousemove", handleTitlebarDragMove);
+      window.removeEventListener("mouseup", clearTitlebarDragGesture);
+      window.removeEventListener("blur", clearTitlebarDragGesture);
+    };
+  }, [hasWindowControls, props.t]);
+
   const handleTitlebarDoubleClick = useCallback((event: ReactMouseEvent<HTMLElement>) => {
     const target = event.target as HTMLElement;
     if (target.closest("[data-no-maximize]") || !hasWindowControls) {
@@ -197,76 +256,6 @@ export function WindowTitlebar(props: Props) {
     }
     void runDesktopWindowAction("toggleMaximize").then((state) => setMaximized(state.maximized));
   }, [hasWindowControls]);
-
-  const clearDragGesture = useCallback(() => {
-    postElectrobunWindowMove("stopWindowMove");
-    dragGestureRef.current = null;
-  }, []);
-
-  useEffect(() => {
-    window.addEventListener("mouseup", clearDragGesture);
-    window.addEventListener("blur", clearDragGesture);
-    return () => {
-      window.removeEventListener("mouseup", clearDragGesture);
-      window.removeEventListener("blur", clearDragGesture);
-    };
-  }, [clearDragGesture]);
-
-  const handleTitlebarMouseDownCapture = useCallback((event: ReactMouseEvent<HTMLElement>) => {
-    if (!hasWindowControls || event.button !== 0) {
-      return;
-    }
-
-    const target = event.target as HTMLElement;
-    if (target.closest("[data-no-drag], .electrobun-webkit-app-region-no-drag")) {
-      return;
-    }
-
-    const interceptNativeMove = maximized;
-    if (interceptNativeMove) {
-      event.stopPropagation();
-      event.nativeEvent.stopImmediatePropagation?.();
-    }
-
-    dragGestureRef.current = {
-      startX: event.clientX,
-      startY: event.clientY,
-      handled: false,
-      interceptNativeMove,
-    };
-
-  }, [hasWindowControls, maximized]);
-
-  const handleTitlebarMouseMoveCapture = useCallback((event: ReactMouseEvent<HTMLElement>) => {
-    const dragGesture = dragGestureRef.current;
-    if (!dragGesture || dragGesture.handled || !hasWindowControls) {
-      return;
-    }
-
-    const moveX = Math.abs(event.clientX - dragGesture.startX);
-    const moveY = Math.abs(event.clientY - dragGesture.startY);
-    if (moveX < TITLEBAR_DRAG_RESTORE_THRESHOLD && moveY < TITLEBAR_DRAG_RESTORE_THRESHOLD) {
-      return;
-    }
-
-    dragGesture.handled = true;
-
-    if (dragGesture.interceptNativeMove) {
-      event.stopPropagation();
-      event.nativeEvent.stopImmediatePropagation?.();
-      void runDesktopWindowAction("restoreForDrag", {
-        offsetX: event.clientX,
-        offsetY: event.clientY,
-        windowWidth: window.innerWidth,
-      }).then((state) => {
-        setMaximized(state.maximized);
-        restartElectrobunWindowMove();
-      });
-      return;
-    }
-
-    void runDesktopWindowAction("exitFullScreen").then((state) => setMaximized(state.maximized));
-  }, [hasWindowControls, maximized]);
 
   const runWindowAction = useCallback(async (
     event: ReactMouseEvent<HTMLElement>,
@@ -281,21 +270,24 @@ export function WindowTitlebar(props: Props) {
     }
   }, [props]);
 
+  const handleTitlebarDragMouseDown = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!hasWindowControls || event.button !== 0) {
+      return;
+    }
+
+    titlebarDragGestureRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      maximized,
+      handled: false,
+    };
+  }, [hasWindowControls, maximized]);
+
   return (
     <header
-      className="window-titlebar electrobun-webkit-app-region-drag"
-      data-desktop-drag-region
-      onMouseDownCapture={handleTitlebarMouseDownCapture}
-      onMouseMoveCapture={handleTitlebarMouseMoveCapture}
-      onMouseUpCapture={clearDragGesture}
+      className="window-titlebar"
       onDoubleClick={handleTitlebarDoubleClick}
     >
-      <div
-        className="window-titlebar-drag-layer electrobun-webkit-app-region-drag"
-        data-desktop-drag-region
-        aria-hidden="true"
-      />
-
       <div className="window-titlebar-status" data-no-maximize>
         <img src={appLogoUrl} alt="" className="window-titlebar-logo" draggable={false} />
         <Typography.Text className="window-titlebar-status-title">MaomiAgent</Typography.Text>
@@ -331,7 +323,11 @@ export function WindowTitlebar(props: Props) {
         ) : null}
       </nav>
 
-      <div className="window-titlebar-drag electrobun-webkit-app-region-drag" data-desktop-drag-region />
+      <div
+        className="window-titlebar-drag electrobun-webkit-app-region-drag"
+        data-desktop-drag-region
+        onMouseDown={handleTitlebarDragMouseDown}
+      />
 
       <div className="window-titlebar-right electrobun-webkit-app-region-no-drag" data-no-drag data-no-maximize>
         <div className="titlebar-tool-group electrobun-webkit-app-region-no-drag">
@@ -357,9 +353,21 @@ export function WindowTitlebar(props: Props) {
               <Button type="text" className="window-control-btn" aria-label={props.t("标题栏.最小化")} icon={<Minus size={iconSize} strokeWidth={1.9} />} data-no-drag onMouseDown={consumeTitlebarEvent} onClick={(event) => { void runWindowAction(event, () => runDesktopWindowAction("minimize"), "标题栏.最小化窗口失败"); }} />
             </Tooltip>
             <Tooltip title={maximized ? props.t("标题栏.还原") : props.t("标题栏.最大化")}>
-              <Button type="text" className="window-control-btn" aria-label={maximized ? props.t("标题栏.还原") : props.t("标题栏.最大化")} data-no-drag onMouseDown={consumeTitlebarEvent} onClick={(event) => { void runWindowAction(event, () => runDesktopWindowAction("toggleMaximize").then((state) => setMaximized(state.maximized)), "标题栏.切换窗口状态失败"); }}>
-                {maximized ? <span className="window-restore-glyph" aria-hidden="true" /> : <span className="window-maximize-glyph" aria-hidden="true" />}
-              </Button>
+              <Button
+                type="text"
+                className="window-control-btn"
+                aria-label={maximized ? props.t("标题栏.还原") : props.t("标题栏.最大化")}
+                icon={maximized ? <WindowRestoreIcon /> : <WindowMaximizeIcon />}
+                data-no-drag
+                onMouseDown={consumeTitlebarEvent}
+                onClick={(event) => {
+                  void runWindowAction(
+                    event,
+                    () => runDesktopWindowAction("toggleMaximize").then((state) => setMaximized(state.maximized)),
+                    "标题栏.切换窗口状态失败",
+                  );
+                }}
+              />
             </Tooltip>
             <Tooltip title={props.t("标题栏.关闭")}>
               <Button type="text" danger className="window-control-btn danger" aria-label={props.t("标题栏.关闭")} icon={<X size={iconSize} strokeWidth={1.9} />} data-no-drag onMouseDown={consumeTitlebarEvent} onClick={(event) => { void runWindowAction(event, () => runDesktopWindowAction("close"), "标题栏.关闭窗口失败"); }} />

@@ -39,6 +39,8 @@ type ParsedPseudoToolCall = {
   input: Record<string, unknown>
 }
 
+type ReasoningStreamingMode = "full" | "coalesced"
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value)
 }
@@ -124,6 +126,22 @@ function shouldRecoverPseudoToolCalls(start: ProcessorStartInput): boolean {
     : undefined
   return runMetadata?.pseudoToolCallRecovery !== false
     && sessionMetadata?.pseudoToolCallRecovery !== false
+}
+
+function readReasoningStreamingMode(start: ProcessorStartInput): ReasoningStreamingMode {
+  const runMetadata = isRecord(start.run.metadata)
+    ? start.run.metadata
+    : undefined
+  const sessionMetadata = isRecord(start.session.metadata)
+    ? start.session.metadata
+    : undefined
+  const detailLevel = typeof runMetadata?.thinkingDetailLevel === "string"
+    ? runMetadata.thinkingDetailLevel
+    : typeof sessionMetadata?.thinkingDetailLevel === "string"
+      ? sessionMetadata.thinkingDetailLevel
+      : undefined
+
+  return detailLevel === "full" ? "full" : "coalesced"
 }
 
 function normalizePseudoToolName(input: string): string {
@@ -301,12 +319,14 @@ class TextProcessorHandle implements ProcessorHandle {
   private terminalErrorPersisted = false
   private assistantMessagePersisted = false
   private readonly pseudoToolCallRecoveryEnabled: boolean
+  private readonly reasoningStreamingMode: ReasoningStreamingMode
 
   constructor(
     private readonly options: TextStreamProcessorOptions,
     private readonly start: ProcessorStartInput,
   ) {
     this.pseudoToolCallRecoveryEnabled = shouldRecoverPseudoToolCalls(start)
+    this.reasoningStreamingMode = readReasoningStreamingMode(start)
   }
 
   async accept(event: AiTurnEvent): Promise<void> {
@@ -324,7 +344,9 @@ class TextProcessorHandle implements ProcessorHandle {
         return
       case "reasoning.delta":
         this.reasoningBuffer += event.delta
-        await this.flushReasoningBuffer()
+        if (this.reasoningStreamingMode === "full") {
+          await this.flushReasoningBuffer()
+        }
         return
       case "reasoning.end":
         await this.flushReasoningBuffer()

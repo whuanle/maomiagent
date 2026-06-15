@@ -149,6 +149,28 @@ describe("mergeDesktopConversationRuntimeEvents", () => {
     expect(result.detail.updatedAt).toBe("2026-05-04T00:00:00.020Z");
   });
 
+  test("keeps thinkingDetailLevel when a run.started runtime event is merged", () => {
+    const result = mergeDesktopConversationRuntimeEvents(createDetail(), [{
+      type: "run.started",
+      eventId: "event-thinking-detail",
+      occurredAt: BASE_TIME + 25,
+      sessionId: "session-1",
+      runId: "run-1",
+      run: {
+        runId: "run-1",
+        sessionId: "session-1",
+        status: "streaming",
+        startedAt: BASE_TIME + 25,
+        updatedAt: BASE_TIME + 25,
+        currentTurnId: "turn-1",
+        trigger: { kind: "user_message" },
+        metadata: { thinkingDetailLevel: "compact" },
+      },
+    }]);
+
+    expect(result.detail.runs[0]?.metadata?.thinkingDetailLevel).toBe("compact");
+  });
+
   test("keeps pending interactions locally in sync", () => {
     const detail = createDetail();
 

@@ -52,6 +52,7 @@ import {
 import { AssistantThinkingText } from "./assistant-thinking-text";
 import {
   buildReasoningPreviewText,
+  resolveReasoningPresentation,
   shouldInlineReasoningBody,
   splitReasoningHeading,
 } from "./direct-session-message-reasoning";
@@ -140,6 +141,13 @@ function formatRelativeDateTime(value: string | number, language: LanguageCode) 
 function resolveMessageWorkspaceId(message: ConversationMessageEntry) {
   const workspaceId = message.metadata?.workspaceId;
   return typeof workspaceId === "string" && workspaceId.trim() ? workspaceId.trim() : undefined;
+}
+
+function readThinkingDetailLevel(message: ConversationMessageEntry) {
+  const value = message.metadata?.thinkingDetailLevel;
+  return value === "full" || value === "compact" || value === "minimal"
+    ? value
+    : "compact";
 }
 
 function extractPathLeaf(path: string) {
@@ -1036,6 +1044,7 @@ function renderMessagePart(
   part: ConversationMessagePartView,
   parts: readonly ConversationMessagePartView[],
   language: LanguageCode,
+  thinkingDetailLevel: "full" | "compact" | "minimal",
   messageId: string,
   sessionId: string,
   messageRole: ConversationMessageEntry["role"],
@@ -1100,7 +1109,15 @@ function renderMessagePart(
     const live = isLivePart;
     const reasoning = splitReasoningHeading(part.text, language);
     const hasBody = Boolean(reasoning.body);
-    const inlineBody = hasBody && shouldInlineReasoningBody({
+    const presentation = resolveReasoningPresentation({
+      thinkingDetailLevel,
+      body: reasoning.body,
+      live,
+    });
+    if (presentation.hideDuringStreaming) {
+      return null;
+    }
+    const inlineBody = hasBody && presentation.renderBody && shouldInlineReasoningBody({
       body: reasoning.body,
       live,
     });
@@ -1119,7 +1136,7 @@ function renderMessagePart(
             ) : null}
           </span>
         </span>
-        {live ? (
+        {presentation.showLiveBadge ? (
           <span className="chat-direct-message-execution-side">
             <span className="chat-direct-message-reasoning-badge is-live">
               {isEn ? "Live" : "进行中"}
@@ -1161,6 +1178,19 @@ function renderMessagePart(
               partIndex: index,
               onOpenCodePreview,
             })}
+          </div>
+        </div>
+      );
+    }
+
+    if (!presentation.collapsible) {
+      return (
+        <div
+          key={part.partId || `${part.type}-${index}`}
+          className={`chat-direct-message-execution-row chat-direct-message-reasoning${live ? " is-live" : ""} is-static`}
+        >
+          <div className="chat-direct-message-execution-summary chat-direct-message-reasoning-summary is-static">
+            {reasoningHeader}
           </div>
         </div>
       );
@@ -1441,6 +1471,7 @@ function DirectSessionMessageInner(props: Props) {
     props.message.parts,
     props.message.role,
   ]);
+  const thinkingDetailLevel = readThinkingDetailLevel(props.message);
   const hasInlineFailurePart = useMemo(() => renderableParts.some((part) => {
     if (part.type === "error") {
       return true;
@@ -1691,6 +1722,7 @@ function DirectSessionMessageInner(props: Props) {
                 part,
                 renderableParts,
                 props.language,
+                thinkingDetailLevel,
                 props.message.messageId,
                 props.message.sessionId,
                 props.message.role,
@@ -1747,6 +1779,7 @@ function DirectSessionMessageInner(props: Props) {
                       part,
                       renderableParts,
                       props.language,
+                      thinkingDetailLevel,
                       props.message.messageId,
                       props.message.sessionId,
                       props.message.role,

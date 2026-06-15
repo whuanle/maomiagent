@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   buildReasoningPreviewText,
+  resolveReasoningPresentation,
   shouldInlineReasoningBody,
   splitReasoningHeading,
 } from "./direct-session-message-reasoning";
@@ -50,5 +51,44 @@ describe("splitReasoningHeading", () => {
       ].join("\n"),
       live: false,
     })).toBe(false);
+  });
+
+  test("keeps full-detail live reasoning expanded", () => {
+    expect(resolveReasoningPresentation({
+      thinkingDetailLevel: "full",
+      body: "Collect runtime evidence",
+      live: true,
+    })).toEqual({
+      renderBody: true,
+      collapsible: false,
+      showLiveBadge: true,
+      hideDuringStreaming: false,
+    });
+  });
+
+  test("hides compact reasoning body while streaming", () => {
+    expect(resolveReasoningPresentation({
+      thinkingDetailLevel: "compact",
+      body: "Collect runtime evidence\nCheck tool calls",
+      live: true,
+    })).toEqual({
+      renderBody: false,
+      collapsible: false,
+      showLiveBadge: false,
+      hideDuringStreaming: true,
+    });
+  });
+
+  test("keeps minimal reasoning hidden while streaming and collapsible after completion", () => {
+    expect(resolveReasoningPresentation({
+      thinkingDetailLevel: "minimal",
+      body: "Short final reasoning summary",
+      live: false,
+    })).toEqual({
+      renderBody: false,
+      collapsible: true,
+      showLiveBadge: false,
+      hideDuringStreaming: false,
+    });
   });
 });

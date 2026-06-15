@@ -1,8 +1,10 @@
 import type { DesktopConversationComposerMode } from "../desktop-conversation";
+import type { DesktopConversationThinkingDetailLevel } from "../desktop-conversation";
 import type {
   DesktopTaskExecutionMode,
   DesktopTaskRunMode,
 } from "../desktop-tasks";
+import { resolveDesktopConversationThinkingDetailLevel } from "./thinking-detail";
 
 export const FULLY_MANAGED_AGENT_ID = "managed-autopilot";
 export const CONCISE_AGENT_ID = "concise";
@@ -28,6 +30,16 @@ export type DesktopConversationExecutionStrategy = {
   runMetadata?: Record<string, unknown>;
   taskMetadata?: Record<string, unknown>;
 };
+
+function withThinkingDetailLevel(
+  metadata: Record<string, unknown> | undefined,
+  thinkingDetailLevel: DesktopConversationThinkingDetailLevel,
+): Record<string, unknown> {
+  return {
+    ...(metadata ?? {}),
+    thinkingDetailLevel,
+  };
+}
 
 function normalizeOptionalText(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
@@ -130,6 +142,12 @@ export function resolveDesktopConversationExecutionStrategy(input: {
     metadata,
     "managedExecutionEnabled",
   );
+  const thinkingDetailLevel = resolveDesktopConversationThinkingDetailLevel({
+    composerMode,
+    selectedAgentId,
+    text: input.text,
+    attachmentCount: input.attachmentCount,
+  });
 
   if (composerMode === "plan") {
     return {
@@ -137,6 +155,9 @@ export function resolveDesktopConversationExecutionStrategy(input: {
       executionMode: "interactive",
       runMode: "normal",
       selectedAgentId,
+      sessionMetadata: withThinkingDetailLevel(undefined, thinkingDetailLevel),
+      runMetadata: withThinkingDetailLevel(undefined, thinkingDetailLevel),
+      taskMetadata: withThinkingDetailLevel(undefined, thinkingDetailLevel),
     };
   }
 
@@ -158,9 +179,9 @@ export function resolveDesktopConversationExecutionStrategy(input: {
       executionMode: existingExecutionMode ?? "background",
       runMode: existingRunMode ?? "hosted_autopilot",
       selectedAgentId,
-      sessionMetadata: managedMetadata,
-      runMetadata: managedMetadata,
-      taskMetadata: managedMetadata,
+      sessionMetadata: withThinkingDetailLevel(managedMetadata, thinkingDetailLevel),
+      runMetadata: withThinkingDetailLevel(managedMetadata, thinkingDetailLevel),
+      taskMetadata: withThinkingDetailLevel(managedMetadata, thinkingDetailLevel),
     };
   }
 
@@ -170,6 +191,9 @@ export function resolveDesktopConversationExecutionStrategy(input: {
       executionMode: "interactive",
       runMode: "normal",
       selectedAgentId,
+      sessionMetadata: withThinkingDetailLevel(undefined, thinkingDetailLevel),
+      runMetadata: withThinkingDetailLevel(undefined, thinkingDetailLevel),
+      taskMetadata: withThinkingDetailLevel(undefined, thinkingDetailLevel),
     };
   }
 
@@ -190,9 +214,9 @@ export function resolveDesktopConversationExecutionStrategy(input: {
       executionMode: "background",
       runMode: "hosted_autopilot",
       selectedAgentId: FULLY_MANAGED_AGENT_ID,
-      sessionMetadata: managedMetadata,
-      runMetadata: managedMetadata,
-      taskMetadata: managedMetadata,
+      sessionMetadata: withThinkingDetailLevel(managedMetadata, thinkingDetailLevel),
+      runMetadata: withThinkingDetailLevel(managedMetadata, thinkingDetailLevel),
+      taskMetadata: withThinkingDetailLevel(managedMetadata, thinkingDetailLevel),
     };
   }
 
@@ -202,6 +226,9 @@ export function resolveDesktopConversationExecutionStrategy(input: {
       executionMode: "interactive",
       runMode: "normal",
       selectedAgentId,
+      sessionMetadata: withThinkingDetailLevel(undefined, thinkingDetailLevel),
+      runMetadata: withThinkingDetailLevel(undefined, thinkingDetailLevel),
+      taskMetadata: withThinkingDetailLevel(undefined, thinkingDetailLevel),
     };
   }
 
@@ -221,8 +248,8 @@ export function resolveDesktopConversationExecutionStrategy(input: {
     executionMode: "background",
     runMode: "hosted_autopilot",
     selectedAgentId: FULLY_MANAGED_AGENT_ID,
-    sessionMetadata: managedMetadata,
-    runMetadata: managedMetadata,
-    taskMetadata: managedMetadata,
+    sessionMetadata: withThinkingDetailLevel(managedMetadata, thinkingDetailLevel),
+    runMetadata: withThinkingDetailLevel(managedMetadata, thinkingDetailLevel),
+    taskMetadata: withThinkingDetailLevel(managedMetadata, thinkingDetailLevel),
   };
 }

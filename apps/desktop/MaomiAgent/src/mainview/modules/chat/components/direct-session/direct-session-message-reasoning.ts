@@ -21,6 +21,37 @@ function normalizeReasoningLines(value: string) {
     .filter(Boolean);
 }
 
+export function resolveReasoningPresentation(input: {
+  thinkingDetailLevel: "full" | "compact" | "minimal";
+  body: string;
+  live: boolean;
+}) {
+  if (input.thinkingDetailLevel === "full") {
+    return {
+      renderBody: trimText(input.body).length > 0,
+      collapsible: !shouldInlineReasoningBody({ body: input.body, live: input.live }),
+      showLiveBadge: input.live,
+      hideDuringStreaming: false,
+    };
+  }
+
+  if (input.live) {
+    return {
+      renderBody: false,
+      collapsible: false,
+      showLiveBadge: false,
+      hideDuringStreaming: true,
+    };
+  }
+
+  return {
+    renderBody: false,
+    collapsible: true,
+    showLiveBadge: false,
+    hideDuringStreaming: false,
+  };
+}
+
 export function splitReasoningHeading(text: string, language: LanguageCode) {
   const trimmed = text.trimStart();
   const headingMatch = trimmed.match(/^(#{1,6})\s+(.+?)(?:\r?\n+|$)/);

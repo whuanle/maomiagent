@@ -256,6 +256,15 @@ function readExecutionProfileCompressionThresholdPercent(
   );
 }
 
+function readThinkingDetailLevelMetadata(
+  metadata: Record<string, unknown> | undefined,
+): "full" | "compact" | "minimal" | undefined {
+  const value = normalizeOptionalText(metadata?.thinkingDetailLevel);
+  return value === "full" || value === "compact" || value === "minimal"
+    ? value
+    : undefined;
+}
+
 function shouldSkipExecutionProfileBudgetPrecheck(executionProfile: AiExecutionProfileRef): boolean {
   const metadata = isRecord(executionProfile.metadata) ? executionProfile.metadata : undefined;
   return metadata?.compactionStatus === "completed"
@@ -1951,6 +1960,11 @@ function readExecutionProfile(run: RunRecord, session: SessionRecord): AiExecuti
       : (typeof sessionSettings?.thinkingEnabled === "boolean"
           ? sessionSettings.thinkingEnabled
           : undefined);
+  const thinkingDetailLevel = readThinkingDetailLevelMetadata(
+    isRecord(run.metadata) ? run.metadata : undefined,
+  ) ?? readThinkingDetailLevelMetadata(
+    isRecord(session.metadata) ? session.metadata : undefined,
+  );
   const compaction = isRecord(run.metadata?.compaction)
     ? run.metadata.compaction as Record<string, unknown>
     : undefined;
@@ -1960,6 +1974,9 @@ function readExecutionProfile(run: RunRecord, session: SessionRecord): AiExecuti
   }
   if (typeof thinkingEnabled === "boolean") {
     metadata.thinkingEnabled = thinkingEnabled;
+  }
+  if (thinkingDetailLevel) {
+    metadata.thinkingDetailLevel = thinkingDetailLevel;
   }
   if (typeof compaction?.status === "string" && compaction.status.trim()) {
     metadata.compactionStatus = compaction.status.trim();

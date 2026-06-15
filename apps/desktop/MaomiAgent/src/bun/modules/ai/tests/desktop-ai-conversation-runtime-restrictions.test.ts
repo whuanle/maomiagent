@@ -724,6 +724,24 @@ describe("mergeConversationExecutionProfile", () => {
       },
     });
   });
+
+  test("preserves requested thinking detail level when execution profiles merge", () => {
+    expect(mergeConversationExecutionProfile({
+      requestedExecutionProfile: {
+        id: "requested" as never,
+        modelId: "gpt-5" as never,
+        metadata: { thinkingDetailLevel: "full" },
+      },
+      materializedExecutionProfile: {
+        id: "materialized" as never,
+        modelId: "gpt-5" as never,
+        metadata: { supportsReasoning: true },
+      },
+    }).metadata).toMatchObject({
+      thinkingDetailLevel: "full",
+      supportsReasoning: true,
+    });
+  });
 });
 
 describe("resolveConversationTurnNoActivityTimeoutMs", () => {

@@ -383,6 +383,7 @@ export type DesktopConversationAttachmentInput = {
 };
 
 export type DesktopConversationComposerMode = "agent" | "plan";
+export type { DesktopConversationThinkingDetailLevel } from "./conversation/thinking-detail";
 
 export type DesktopConversationSendMessageInput = DesktopModelRuntimeSelectionQuery & {
   sessionId: string;

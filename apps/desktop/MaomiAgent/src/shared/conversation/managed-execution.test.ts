@@ -27,6 +27,15 @@ describe("managed execution strategy", () => {
         executionMode: "interactive",
         runMode: "normal",
         selectedAgentId: "auto",
+        sessionMetadata: {
+          thinkingDetailLevel: "minimal",
+        },
+        runMetadata: {
+          thinkingDetailLevel: "minimal",
+        },
+        taskMetadata: {
+          thinkingDetailLevel: "minimal",
+        },
       });
     }
   });
@@ -48,6 +57,7 @@ describe("managed execution strategy", () => {
       executionMode: "background",
       executionAgentId: FULLY_MANAGED_AGENT_ID,
       preferredExecutionAgentId: "auto",
+      thinkingDetailLevel: "compact",
     });
   });
 
@@ -70,6 +80,15 @@ describe("managed execution strategy", () => {
       executionMode: "interactive",
       runMode: "normal",
       selectedAgentId: CONCISE_AGENT_ID,
+      sessionMetadata: {
+        thinkingDetailLevel: "minimal",
+      },
+      runMetadata: {
+        thinkingDetailLevel: "minimal",
+      },
+      taskMetadata: {
+        thinkingDetailLevel: "minimal",
+      },
     });
   });
 
@@ -92,6 +111,15 @@ describe("managed execution strategy", () => {
       executionMode: "interactive",
       runMode: "normal",
       selectedAgentId: FEISHU_DOC_WRITER_AGENT_ID,
+      sessionMetadata: {
+        thinkingDetailLevel: "minimal",
+      },
+      runMetadata: {
+        thinkingDetailLevel: "minimal",
+      },
+      taskMetadata: {
+        thinkingDetailLevel: "minimal",
+      },
     });
   });
 
@@ -110,6 +138,15 @@ describe("managed execution strategy", () => {
       executionMode: "interactive",
       runMode: "normal",
       selectedAgentId: "auto",
+      sessionMetadata: {
+        thinkingDetailLevel: "full",
+      },
+      runMetadata: {
+        thinkingDetailLevel: "full",
+      },
+      taskMetadata: {
+        thinkingDetailLevel: "full",
+      },
     });
   });
 
@@ -128,6 +165,15 @@ describe("managed execution strategy", () => {
       executionMode: "background",
       runMode: "hosted_autopilot",
       selectedAgentId: FULLY_MANAGED_AGENT_ID,
+      sessionMetadata: {
+        thinkingDetailLevel: "minimal",
+      },
+      runMetadata: {
+        thinkingDetailLevel: "minimal",
+      },
+      taskMetadata: {
+        thinkingDetailLevel: "minimal",
+      },
     });
   });
 
@@ -142,5 +188,19 @@ describe("managed execution strategy", () => {
     expect(shouldAutoPromoteDesktopConversationToManagedExecution({
       text: "直接继续推进并自动收尾这个任务",
     })).toBe(true);
+  });
+
+  test("stamps compact thinking detail onto regular interactive execution", () => {
+    expect(resolveDesktopConversationExecutionStrategy({
+      text: "修复这个聊天页面的回归问题",
+      selectedAgentId: "auto",
+    })).toMatchObject({
+      selectedAgentId: "auto",
+      runMode: "normal",
+      executionMode: "interactive",
+      sessionMetadata: { thinkingDetailLevel: "compact" },
+      runMetadata: { thinkingDetailLevel: "compact" },
+      taskMetadata: { thinkingDetailLevel: "compact" },
+    });
   });
 });

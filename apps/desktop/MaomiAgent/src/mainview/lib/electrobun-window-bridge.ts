@@ -54,9 +54,10 @@ export function installElectrobunWindowBridge() {
 
     window.maomiDesktopWindow = {
       getWindowState: () => rpc.request.getWindowState(),
-      windowControl: (action: DesktopWindowAction, dragPointer) => rpc.request.windowControl({
+      windowControl: (action: DesktopWindowAction, dragPointer, resizePointer) => rpc.request.windowControl({
         action,
         ...(dragPointer ? { dragPointer } : {}),
+        ...(resizePointer ? { resizePointer } : {}),
       }),
       refreshMainView: () => rpc.request.refreshMainView(),
       chooseDirectory: (options) => rpc.request.chooseDirectory(options),

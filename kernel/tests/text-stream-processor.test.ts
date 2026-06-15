@@ -501,7 +501,7 @@ describe("TextStreamProcessor", () => {
     })
   })
 
-  it("publishes reasoning deltas incrementally while coalescing persisted reasoning text", async () => {
+  it("publishes reasoning deltas incrementally while persisting them for full-detail turns", async () => {
     const persistedBatches: string[] = []
     const publishedReasoningParts: MessagePart[] = []
     let nextId = 0
@@ -560,6 +560,9 @@ describe("TextStreamProcessor", () => {
         createdAt: 1,
         updatedAt: 1,
         status: "running",
+        metadata: {
+          thinkingDetailLevel: "full",
+        },
       },
       run: {
         id: asRunId("run_1"),
@@ -567,6 +570,9 @@ describe("TextStreamProcessor", () => {
         createdAt: 1,
         updatedAt: 1,
         status: "running",
+        metadata: {
+          thinkingDetailLevel: "full",
+        },
       },
       turn: {
         id: asTurnId("turn_1"),
@@ -608,6 +614,117 @@ describe("TextStreamProcessor", () => {
         id: "part_3" as never,
         type: "reasoning",
         text: "more",
+      },
+    ])
+  })
+
+  it("coalesces compact reasoning into a single appended part at reasoning end", async () => {
+    const persistedBatches: string[] = []
+    const publishedReasoningParts: MessagePart[] = []
+    let nextId = 0
+
+    const processor = new TextStreamProcessor({
+      messageStore: {
+        async append(_message: MessageRecord, parts: readonly MessagePart[]) {
+          persistedBatches.push(`append:${parts.map((part) => part.type === "reasoning" ? part.text : part.type).join("|")}`)
+        },
+        async appendParts(_messageId, parts) {
+          persistedBatches.push(`appendParts:${parts.map((part) => part.type === "reasoning" ? part.text : part.type).join("|")}`)
+        },
+        async listBySession(): Promise<readonly MessageRecordWithParts[]> {
+          return []
+        },
+      },
+      toolCallStore: {
+        async save() {
+          throw new Error("save should not be called in this test")
+        },
+        async patch() {
+          throw new Error("patch should not be called in this test")
+        },
+        async listByRun() {
+          return []
+        },
+        async listByTurn() {
+          return []
+        },
+      },
+      clock: {
+        now: () => 456,
+      },
+      idGenerator: {
+        next(prefix) {
+          nextId += 1
+          return `${prefix}_${nextId}`
+        },
+      },
+      eventSink: {
+        async publish(events) {
+          for (const event of events) {
+            if (event.type !== "message.parts.appended") {
+              continue
+            }
+
+            publishedReasoningParts.push(...event.payload.parts)
+          }
+        },
+      },
+    })
+
+    const handle = await processor.start({
+      session: {
+        id: asSessionId("session_1"),
+        createdAt: 1,
+        updatedAt: 1,
+        status: "running",
+        metadata: {
+          thinkingDetailLevel: "compact",
+        },
+      },
+      run: {
+        id: asRunId("run_1"),
+        sessionId: asSessionId("session_1"),
+        createdAt: 1,
+        updatedAt: 1,
+        status: "running",
+        metadata: {
+          thinkingDetailLevel: "compact",
+        },
+      },
+      turn: {
+        id: asTurnId("turn_1"),
+        runId: asRunId("run_1"),
+        sequence: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        status: "running",
+      },
+      assistantMessage: {
+        id: asMessageId("message_assistant"),
+        sessionId: asSessionId("session_1"),
+        runId: asRunId("run_1"),
+        turnId: asTurnId("turn_1"),
+        role: "assistant",
+        createdAt: 1,
+      },
+    })
+
+    await handle.accept({ type: "reasoning.start" })
+    await handle.accept({ type: "reasoning.delta", delta: "plan " })
+    await handle.accept({ type: "reasoning.delta", delta: "more" })
+    await handle.accept({ type: "reasoning.end" })
+
+    const result = await handle.complete()
+
+    expect(result.boundary.kind).toBe("completed")
+    expect(persistedBatches).toEqual([
+      "append:plan more",
+    ])
+    expect(publishedReasoningParts).toEqual([
+      {
+        id: "part_1" as never,
+        type: "reasoning",
+        text: "plan more",
       },
     ])
   })

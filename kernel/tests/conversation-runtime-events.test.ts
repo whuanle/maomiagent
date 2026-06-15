@@ -176,6 +176,118 @@ describe("conversation runtime events", () => {
     });
   });
 
+  it("emits one merged reasoning runtime delta for compact-detail turns", async () => {
+    const published: KernelEvent[] = [];
+    const messages = new Map<string, MessageRecordWithParts>();
+    const idCounters = new Map<string, number>();
+
+    const processor = new TextStreamProcessor({
+      messageStore: {
+        async append(message, parts) {
+          messages.set(message.id, { message, parts: [...parts] });
+        },
+        async appendParts(messageId, parts) {
+          const current = messages.get(messageId);
+          if (!current) {
+            throw new Error(`message not found: ${messageId}`);
+          }
+
+          messages.set(messageId, {
+            ...current,
+            parts: [...current.parts, ...parts],
+          });
+        },
+        async listBySession() {
+          return [];
+        },
+      },
+      toolCallStore: {
+        async save() {},
+        async patch() {},
+        async listByRun() {
+          return [];
+        },
+        async listByTurn() {
+          return [];
+        },
+      },
+      clock: {
+        now: () => Date.parse("2026-05-04T00:00:00.000Z"),
+      },
+      idGenerator: {
+        next(prefix) {
+          const nextValue = (idCounters.get(prefix) ?? 0) + 1;
+          idCounters.set(prefix, nextValue);
+          return `${prefix}_${nextValue}`;
+        },
+      },
+      eventSink: {
+        async publish(events) {
+          published.push(...events);
+        },
+      },
+    });
+
+    const assistantMessage = {
+      id: "message-compact-1" as never,
+      sessionId: "session-1" as never,
+      runId: "run-1" as never,
+      turnId: "turn-1" as never,
+      role: "assistant" as const,
+      createdAt: Date.parse("2026-05-04T00:00:00.000Z"),
+    };
+    messages.set(assistantMessage.id, {
+      message: assistantMessage,
+      parts: [],
+    });
+
+    const handle = await processor.start({
+      session: {
+        id: "session-1" as never,
+        title: "Streaming session",
+        status: "active",
+        createdAt: Date.parse("2026-05-04T00:00:00.000Z"),
+        updatedAt: Date.parse("2026-05-04T00:00:00.000Z"),
+        metadata: {
+          thinkingDetailLevel: "compact",
+        },
+      },
+      run: {
+        id: "run-1" as never,
+        sessionId: "session-1" as never,
+        status: "streaming",
+        startedAt: Date.parse("2026-05-04T00:00:00.000Z"),
+        updatedAt: Date.parse("2026-05-04T00:00:00.000Z"),
+        trigger: { kind: "user_message" },
+        metadata: {
+          thinkingDetailLevel: "compact",
+        },
+      },
+      turn: {
+        id: "turn-1" as never,
+        runId: "run-1" as never,
+        sequence: 1,
+        status: "running",
+        startedAt: Date.parse("2026-05-04T00:00:00.000Z"),
+      },
+      assistantMessage,
+    });
+
+    await handle.accept({ type: "reasoning.start" });
+    await handle.accept({ type: "reasoning.delta", delta: "plan " });
+    await handle.accept({ type: "reasoning.delta", delta: "more" });
+    await handle.accept({ type: "reasoning.end" });
+    await handle.complete();
+
+    const appendedEvents = published.filter((item) => item.type === "message.parts.appended") as KernelEvent<"message.parts.appended">[];
+    expect(appendedEvents).toHaveLength(1);
+    expect(appendedEvents[0]?.payload.parts).toEqual([{
+      id: "part_1" as never,
+      type: "reasoning",
+      text: "plan more",
+    } satisfies MessagePart]);
+  });
+
   it("does not persist an empty assistant shell before the first streamed part", async () => {
     const idCounters = new Map<string, number>();
     const db = new Database(":memory:");

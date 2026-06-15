@@ -26,12 +26,6 @@
   z-index: 0;
 }
 
-.window-titlebar-drag-layer {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-}
-
 .window-titlebar-right,
 .window-titlebar-right *,
 .titlebar-tool-group,
@@ -368,43 +362,6 @@
 .window-controls .window-control-btn.danger:active {
   color: #ffffff !important;
   background: #e81123 !important;
-}
-
-.window-maximize-glyph,
-.window-restore-glyph {
-  position: relative;
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-}
-
-.window-maximize-glyph::before,
-.window-restore-glyph::before,
-.window-restore-glyph::after {
-  content: "";
-  position: absolute;
-  box-sizing: border-box;
-  border: 1.5px solid currentColor;
-  border-radius: 1px;
-}
-
-.window-maximize-glyph::before {
-  inset: 1px;
-}
-
-.window-restore-glyph::before {
-  top: 1px;
-  right: 1px;
-  width: 10px;
-  height: 10px;
-  background: var(--app-surface);
-}
-
-.window-restore-glyph::after {
-  left: 1px;
-  bottom: 1px;
-  width: 10px;
-  height: 10px;
 }
 
 .titlebar-icon-btn,

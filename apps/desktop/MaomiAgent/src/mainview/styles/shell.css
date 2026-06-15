@@ -15,11 +15,84 @@
 }
 
 .app-shell {
+  position: relative;
   background: var(--app-shell-backdrop, var(--app-bg));
 }
 
 .app-content {
   background: var(--app-shell-backdrop, var(--app-bg));
+}
+
+.window-resize-handle {
+  position: absolute;
+  z-index: 60;
+  pointer-events: auto;
+}
+
+.window-resize-handle--n,
+.window-resize-handle--s {
+  left: 10px;
+  right: 10px;
+  height: 6px;
+}
+
+.window-resize-handle--e,
+.window-resize-handle--w {
+  top: 10px;
+  bottom: 10px;
+  width: 6px;
+}
+
+.window-resize-handle--n {
+  top: 0;
+  cursor: ns-resize;
+}
+
+.window-resize-handle--s {
+  bottom: 0;
+  cursor: ns-resize;
+}
+
+.window-resize-handle--e {
+  right: 0;
+  cursor: ew-resize;
+}
+
+.window-resize-handle--w {
+  left: 0;
+  cursor: ew-resize;
+}
+
+.window-resize-handle--ne,
+.window-resize-handle--nw,
+.window-resize-handle--se,
+.window-resize-handle--sw {
+  width: 12px;
+  height: 12px;
+}
+
+.window-resize-handle--ne {
+  top: 0;
+  right: 0;
+  cursor: nesw-resize;
+}
+
+.window-resize-handle--nw {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+}
+
+.window-resize-handle--se {
+  right: 0;
+  bottom: 0;
+  cursor: nwse-resize;
+}
+
+.window-resize-handle--sw {
+  left: 0;
+  bottom: 0;
+  cursor: nesw-resize;
 }
 
 .shell-route-page__hero.ant-card,

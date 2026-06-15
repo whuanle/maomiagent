@@ -1,9 +1,39 @@
-export type DesktopWindowAction = "minimize" | "toggleMaximize" | "restoreForDrag" | "exitFullScreen" | "close";
+export type DesktopWindowAction =
+  | "minimize"
+  | "toggleMaximize"
+  | "restoreForDrag"
+  | "resizeWindow"
+  | "exitFullScreen"
+  | "close";
 
 export type DesktopWindowDragPointer = {
   offsetX: number;
   offsetY: number;
   windowWidth: number;
+};
+
+export type DesktopWindowResizeEdge =
+  | "n"
+  | "s"
+  | "e"
+  | "w"
+  | "ne"
+  | "nw"
+  | "se"
+  | "sw";
+
+export type DesktopWindowResizePointer = {
+  edge: DesktopWindowResizeEdge;
+  startScreenX: number;
+  startScreenY: number;
+  screenX: number;
+  screenY: number;
+  startFrame: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
 };
 
 export type DesktopMainViewRefreshResult = {
@@ -387,6 +417,7 @@ export type DesktopRendererRPC = {
         params: {
           action: DesktopWindowAction;
           dragPointer?: DesktopWindowDragPointer;
+          resizePointer?: DesktopWindowResizePointer;
         };
         response: DesktopWindowState;
       };
