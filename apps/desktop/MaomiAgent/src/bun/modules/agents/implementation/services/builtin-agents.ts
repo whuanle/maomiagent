@@ -4,11 +4,11 @@ import {
   DEFAULT_DESKTOP_PRIMARY_AGENT_ID,
   FEISHU_DOC_WRITER_AGENT_ID,
   FULLY_MANAGED_AGENT_ID,
+  MAOMI_COORDINATOR_AGENT_ID,
   UI_DESIGNER_AGENT_ID,
   WECHAT_AGENT_ID,
 } from "../../../../../shared/conversation/managed-execution"
 
-export const MAOMI_COORDINATOR_AGENT_ID = "dev-coordinator"
 export const REPO_DOC_MASTER_AGENT_ID = "repo-doc-master"
 export { FEISHU_DOC_WRITER_AGENT_ID } from "../../../../../shared/conversation/managed-execution"
 
@@ -85,7 +85,8 @@ const CONCISE_PRIMARY_PROMPT = buildPrompt([
   "你是 MaomiAgent 的简洁主智能体，目标是优先直接完成用户当前请求，不把任务无谓做重。",
   "默认先给最贴近请求的结果，比如结论、代码示例、命令示例、修复建议或简明步骤，不要因为追求面面俱到就主动把任务扩大。",
   "可以根据任务需要灵活决定是否查看仓库、修改文件、运行命令、做验证、打开页面或调用其他能力，但应先判断这些动作是不是当前请求真正需要，而不是顺手多做。",
-  "当用户主要是在要示例、实现思路、接口写法、文档片段、排查建议或解释说明时，通常直接在回复里给结果就够了，不要默认再去本地落盘、启动程序、补一轮测试或额外委派。",
+  "当用户主要是在要示例、实现思路、接口写法、文档片段、排查建议或解释说明时，通常直接在回复里给结果就够了，不要为了显得很忙就额外扩任务。",
+  "当用户明确要求实现、修复、修改文件、运行命令、验证结果、落盘代码或直接推进时，应立即动手完成，不要只停留在计划、思路或建议层。",
   "当确实需要动手操作时，保持动作克制，优先选择能解决当前问题的最小路径；完成后不要无故继续追加周边工作。",
   "输出风格保持简洁自然，先给有用结果，再补必要说明；除非用户要求，不要把回复写成冗长计划、流程清单或验收报告。",
 ])
@@ -292,7 +293,7 @@ export const BUILTIN_MAOMI_AGENTS: AgentItem[] = [
   createBuiltinAgent({
     agentId: CONCISE_AGENT_ID,
     name: "简洁模式",
-    description: "按当前要求直接回答，不主动扩展成本地执行、验证或委派。",
+    description: "优先用最小必要动作直接完成当前请求，能答就答，需做就做，不无谓扩张。",
     mode: "primary",
     prompt: CONCISE_PRIMARY_PROMPT,
     metadata: {
@@ -603,7 +604,7 @@ export const BUILTIN_MAOMI_AGENTS: AgentItem[] = [
   }),
 ]
 
-const BUILTIN_AGENT_PRIORITY = [DEFAULT_DESKTOP_PRIMARY_AGENT_ID, MAOMI_COORDINATOR_AGENT_ID] as const
+const BUILTIN_AGENT_PRIORITY = [DEFAULT_DESKTOP_PRIMARY_AGENT_ID, CONCISE_AGENT_ID] as const
 
 export function resolveBuiltinDefaultAgentId(
   isVisiblePrimary: (agentId: string) => boolean,

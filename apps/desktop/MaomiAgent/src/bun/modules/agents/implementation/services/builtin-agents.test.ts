@@ -8,17 +8,26 @@ import {
 import {
   CONCISE_AGENT_ID,
   DEFAULT_DESKTOP_PRIMARY_AGENT_ID,
+  MAOMI_COORDINATOR_AGENT_ID,
   UI_DESIGNER_AGENT_ID,
   WECHAT_AGENT_ID,
 } from "../../../../../shared/conversation/managed-execution";
 
-test("builtin agent default resolves to concise mode when available", () => {
-  expect(DEFAULT_DESKTOP_PRIMARY_AGENT_ID).toBe(CONCISE_AGENT_ID);
-  expect(resolveBuiltinDefaultAgentId((agentId) => agentId === CONCISE_AGENT_ID)).toBe(CONCISE_AGENT_ID);
+test("builtin agent default resolves to coordinator mode when available", () => {
+  expect(DEFAULT_DESKTOP_PRIMARY_AGENT_ID).toBe(MAOMI_COORDINATOR_AGENT_ID);
+  expect(resolveBuiltinDefaultAgentId((agentId) => agentId === MAOMI_COORDINATOR_AGENT_ID)).toBe(MAOMI_COORDINATOR_AGENT_ID);
 });
 
 test("builtin concise agent uses the concise mode label", () => {
   expect(BUILTIN_MAOMI_AGENTS.find((item) => item.agentId === CONCISE_AGENT_ID)?.name).toBe("简洁模式");
+});
+
+test("builtin concise agent prompt and description allow minimal execution when explicitly requested", () => {
+  const item = BUILTIN_MAOMI_AGENTS.find((agent) => agent.agentId === CONCISE_AGENT_ID);
+
+  expect(item?.description).toContain("最小必要动作");
+  expect(item?.prompt).toContain("当用户明确要求实现、修复、修改文件、运行命令、验证结果、落盘代码或直接推进时，应立即动手完成");
+  expect(item?.prompt).not.toContain("不要默认再去本地落盘、启动程序、补一轮测试或额外委派");
 });
 
 test("builtin wechat agent is a visible primary agent with a lightweight executor prompt", () => {

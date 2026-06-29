@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   startManagedViteDevServer,
@@ -25,6 +25,8 @@ const defaultDevBuildFolder = useHmrDevServer ? "build-hmr" : "build-stable";
 const ELECTROBUN_PACKAGE_ROOT = resolveElectrobunPackageRoot();
 const ELECTROBUN_WINDOWS_DIST = join(ELECTROBUN_PACKAGE_ROOT, "dist-win-x64");
 const ELECTROBUN_SHARED_DIST = join(ELECTROBUN_PACKAGE_ROOT, "dist");
+const ELECTROBUN_PACKAGE_VERSION = resolveElectrobunPackageVersion();
+const ELECTROBUN_GITHUB_RELEASES = "https://github.com/blackboardsh/electrobun/releases/download";
 const ELECTROBUN_ZIG_ASAR_X64 = join(ELECTROBUN_WINDOWS_DIST, "zig-asar", "x64", "libasar.dll");
 const ELECTROBUN_ZIG_ASAR_ARM64 = join(ELECTROBUN_WINDOWS_DIST, "zig-asar", "arm64", "libasar.dll");
 const WINDOWS_DEV_ENVIRONMENT = "dev-win-x64";
@@ -140,6 +142,8 @@ async function prepareWindowsDevBundle(): Promise<{
 
   mkdirSync(bundleBinDir, { recursive: true });
   mkdirSync(bundleBunDir, { recursive: true });
+
+  await ensureElectrobunWindowsRuntimeAssets();
 
   copyRequiredFile(join(ELECTROBUN_WINDOWS_DIST, "launcher.exe"), join(bundleBinDir, "launcher.exe"));
   copyRequiredFile(join(ELECTROBUN_WINDOWS_DIST, "bun.exe"), join(bundleBinDir, "bun.exe"));
@@ -258,6 +262,109 @@ function resolveElectrobunPackageRoot(): string {
   }
 
   throw new Error("Could not resolve the installed electrobun package.");
+}
+
+function resolveElectrobunPackageVersion(): string {
+  const packageJson = JSON.parse(
+    readFileSync(join(ELECTROBUN_PACKAGE_ROOT, "package.json"), "utf8"),
+  ) as { version?: string };
+  const version = packageJson.version?.trim();
+  if (!version) {
+    throw new Error("Could not resolve the installed electrobun package version.");
+  }
+  return version;
+}
+
+async function ensureElectrobunWindowsRuntimeAssets(): Promise<void> {
+  const requiredAssets = [
+    join(ELECTROBUN_WINDOWS_DIST, "launcher.exe"),
+    join(ELECTROBUN_WINDOWS_DIST, "bun.exe"),
+    join(ELECTROBUN_WINDOWS_DIST, "bspatch.exe"),
+    join(ELECTROBUN_WINDOWS_DIST, "zig-zstd.exe"),
+    join(ELECTROBUN_WINDOWS_DIST, "libNativeWrapper.dll"),
+    join(ELECTROBUN_WINDOWS_DIST, "WebView2Loader.dll"),
+    ELECTROBUN_ZIG_ASAR_X64,
+    ELECTROBUN_ZIG_ASAR_ARM64,
+    join(ELECTROBUN_WINDOWS_DIST, "main.js"),
+  ];
+
+  const missingAssets = requiredAssets.filter((filePath) => !existsSync(filePath));
+  if (missingAssets.length === 0) {
+    return;
+  }
+
+  console.log("Electrobun Windows runtime assets are missing; downloading...");
+  const archiveUrl = `${ELECTROBUN_GITHUB_RELEASES}/v${ELECTROBUN_PACKAGE_VERSION}/electrobun-core-win-x64.tar.gz`;
+  const archivePath = join(ELECTROBUN_PACKAGE_ROOT, "electrobun-core-win-x64.tar.gz");
+
+  await downloadFile(archiveUrl, archivePath);
+
+  try {
+    rmSync(ELECTROBUN_WINDOWS_DIST, { recursive: true, force: true });
+    mkdirSync(ELECTROBUN_WINDOWS_DIST, { recursive: true });
+    await extractTarGzArchive(archivePath, ELECTROBUN_WINDOWS_DIST);
+  } finally {
+    rmSync(archivePath, { force: true });
+  }
+
+  const unresolvedAssets = requiredAssets.filter((filePath) => !existsSync(filePath));
+  if (unresolvedAssets.length > 0) {
+    throw new Error(
+      `Electrobun Windows runtime download incomplete: ${unresolvedAssets.join(", ")}`,
+    );
+  }
+
+  console.log("Electrobun Windows runtime assets downloaded successfully.");
+}
+
+async function downloadFile(url: string, destinationPath: string): Promise<void> {
+  mkdirSync(dirname(destinationPath), { recursive: true });
+
+  const curlExecutable = process.platform === "win32" ? "curl.exe" : "curl";
+  try {
+    await runCommand(
+      [
+        curlExecutable,
+        "-L",
+        "--fail",
+        "--retry",
+        "3",
+        "--retry-delay",
+        "2",
+        "--retry-all-errors",
+        "-o",
+        basename(destinationPath),
+        url,
+      ],
+      undefined,
+      dirname(destinationPath),
+    );
+    return;
+  } catch (error) {
+    console.warn(
+      `curl download failed, retrying with fetch: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 180_000);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) {
+      throw new Error(`Download failed with status ${response.status}: ${url}`);
+    }
+    writeFileSync(destinationPath, new Uint8Array(await response.arrayBuffer()));
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function extractTarGzArchive(archivePath: string, destinationPath: string): Promise<void> {
+  await runCommand(
+    ["tar", "-xzf", basename(archivePath), "-C", basename(destinationPath)],
+    undefined,
+    dirname(archivePath),
+  );
 }
 
 function buildDevEnvironment(

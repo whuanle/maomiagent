@@ -4,6 +4,8 @@ import {
   CONCISE_AGENT_ID,
   FEISHU_DOC_WRITER_AGENT_ID,
   FULLY_MANAGED_AGENT_ID,
+  MAOMI_COORDINATOR_AGENT_ID,
+  DEFAULT_DESKTOP_PRIMARY_AGENT_ID,
   resolveDesktopConversationExecutionStrategy,
   shouldAutoPromoteDesktopConversationToManagedExecution,
 } from "./managed-execution";
@@ -61,11 +63,11 @@ describe("managed execution strategy", () => {
     });
   });
 
-  test("keeps the concise agent in direct interactive mode", () => {
+  test("lets the concise agent promote into managed execution for explicit execution requests", () => {
     expect(shouldAutoPromoteDesktopConversationToManagedExecution({
       text: "帮我创建一个 Go 项目骨架，并把哈希算法跑起来",
       selectedAgentId: CONCISE_AGENT_ID,
-    })).toBe(false);
+    })).toBe(true);
 
     expect(resolveDesktopConversationExecutionStrategy({
       text: "帮我创建一个 Go 项目骨架，并把哈希算法跑起来",
@@ -76,17 +78,35 @@ describe("managed execution strategy", () => {
         },
       },
     })).toEqual({
-      autoPromoted: false,
-      executionMode: "interactive",
-      runMode: "normal",
-      selectedAgentId: CONCISE_AGENT_ID,
+      autoPromoted: true,
+      executionMode: "background",
+      runMode: "hosted_autopilot",
+      selectedAgentId: FULLY_MANAGED_AGENT_ID,
       sessionMetadata: {
+        managedExecution: true,
+        rootTask: true,
+        runMode: "hosted_autopilot",
+        executionMode: "background",
+        executionAgentId: FULLY_MANAGED_AGENT_ID,
+        preferredExecutionAgentId: CONCISE_AGENT_ID,
         thinkingDetailLevel: "minimal",
       },
       runMetadata: {
+        managedExecution: true,
+        rootTask: true,
+        runMode: "hosted_autopilot",
+        executionMode: "background",
+        executionAgentId: FULLY_MANAGED_AGENT_ID,
+        preferredExecutionAgentId: CONCISE_AGENT_ID,
         thinkingDetailLevel: "minimal",
       },
       taskMetadata: {
+        managedExecution: true,
+        rootTask: true,
+        runMode: "hosted_autopilot",
+        executionMode: "background",
+        executionAgentId: FULLY_MANAGED_AGENT_ID,
+        preferredExecutionAgentId: CONCISE_AGENT_ID,
         thinkingDetailLevel: "minimal",
       },
     });
@@ -204,3 +224,6 @@ describe("managed execution strategy", () => {
     });
   });
 });
+  test("defaults the primary desktop agent to coordinator", () => {
+    expect(DEFAULT_DESKTOP_PRIMARY_AGENT_ID).toBe(MAOMI_COORDINATOR_AGENT_ID);
+  });

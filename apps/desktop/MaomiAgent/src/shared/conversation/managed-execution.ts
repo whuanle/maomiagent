@@ -8,11 +8,12 @@ import { resolveDesktopConversationThinkingDetailLevel } from "./thinking-detail
 
 export const FULLY_MANAGED_AGENT_ID = "managed-autopilot";
 export const CONCISE_AGENT_ID = "concise";
+export const MAOMI_COORDINATOR_AGENT_ID = "dev-coordinator";
 export const WECHAT_AGENT_ID = "wechat.agent";
 export const UI_DESIGNER_AGENT_ID = "ui-designer";
 export const FEISHU_DOC_WRITER_AGENT_ID = "feishu-doc-writer";
 export const UI_DESIGNER_CONTEXT_METADATA_KEY = "uiDesignerContext";
-export const DEFAULT_DESKTOP_PRIMARY_AGENT_ID = CONCISE_AGENT_ID;
+export const DEFAULT_DESKTOP_PRIMARY_AGENT_ID = MAOMI_COORDINATOR_AGENT_ID;
 const CONVERSATION_SETTINGS_KEY = "conversationSettings";
 
 const EXECUTION_INTENT_RE = /(implement|fix|debug|repair|refactor|update|write|create|build|ship|deploy|review|test|verify|run|execute|automate|continue|finish|complete|deliver|patch|inspect|investigate|diagnose|retry|实现|修复|调试|排查|重构|修改|新增|创建|搭建|编写|构建|部署|评审|测试|验证|执行|自动|继续推进|完成|交付|重试)/iu;
@@ -86,7 +87,7 @@ export function shouldAutoPromoteDesktopConversationToManagedExecution(input: {
     return true;
   }
 
-  if (selectedAgentId === CONCISE_AGENT_ID || selectedAgentId === FEISHU_DOC_WRITER_AGENT_ID) {
+  if (selectedAgentId === FEISHU_DOC_WRITER_AGENT_ID) {
     return false;
   }
 
@@ -185,7 +186,7 @@ export function resolveDesktopConversationExecutionStrategy(input: {
     };
   }
 
-  if (selectedAgentId === CONCISE_AGENT_ID || selectedAgentId === FEISHU_DOC_WRITER_AGENT_ID) {
+  if (selectedAgentId === FEISHU_DOC_WRITER_AGENT_ID) {
     return {
       autoPromoted: false,
       executionMode: "interactive",

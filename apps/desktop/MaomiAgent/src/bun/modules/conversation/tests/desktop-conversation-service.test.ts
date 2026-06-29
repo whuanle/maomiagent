@@ -1170,7 +1170,7 @@ describe("DesktopConversationService", () => {
     }
   });
 
-  test("defaults new desktop conversation sessions to concise mode", async () => {
+  test("defaults new desktop conversation sessions to the primary desktop agent", async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "maomi-desktop-conversation-default-agent-"));
     const configuration = new DesktopConfigurationService(createRuntimeContext(tempRoot));
     const database = new DesktopDatabaseService(configuration);
@@ -1188,7 +1188,7 @@ describe("DesktopConversationService", () => {
     try {
       const created = await service.createSession({
         workspaceId: "workspace-1",
-        title: "Default concise session",
+        title: "Default primary agent session",
       });
 
       expect(created.item.metadata).toMatchObject({
