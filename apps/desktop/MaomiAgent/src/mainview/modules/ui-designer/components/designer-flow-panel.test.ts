@@ -21,8 +21,8 @@ describe("designer flow panel stage actions", () => {
   test("only shows actions for stages whose predecessors are complete", () => {
     const stageViewModels: UiDesignerStageViewModel[] = [
       createStage("projectScope", "empty"),
-      createStage("stack", "empty"),
-      createStage("theme", "partial"),
+      createStage("theme", "empty"),
+      createStage("patterns", "partial"),
     ];
 
     expect(isStageActionVisible(stageViewModels, 0)).toBe(true);
@@ -33,15 +33,15 @@ describe("designer flow panel stage actions", () => {
   test("keeps completed predecessors unlocked and resolves action copy", () => {
     const stageViewModels: UiDesignerStageViewModel[] = [
       createStage("projectScope", "complete"),
-      createStage("stack", "partial"),
-      createStage("theme", "empty"),
+      createStage("theme", "partial"),
+      createStage("patterns", "empty"),
     ];
 
     expect(isStageActionVisible(stageViewModels, 1)).toBe(true);
     expect(isStageActionVisible(stageViewModels, 2)).toBe(false);
     expect(resolveStageActionLabel("empty")).toBe("开始设计");
-    expect(resolveStageActionLabel("partial")).toBe("重新设计");
-    expect(resolveStageActionLabel("complete")).toBe("重新设计");
+    expect(resolveStageActionLabel("partial")).toBe("继续完善");
+    expect(resolveStageActionLabel("complete")).toBe("继续完善");
     expect(resolveStageActionLabel("partial", true)).toBe("继续填写");
   });
 });

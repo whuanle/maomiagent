@@ -25,5 +25,9 @@ test("ui designer restores and persists the active stage through the shared work
   expect(shellSource).toContain("updateWorkspaceExperienceState((current) => ({");
   expect(shellSource).toContain("uiDesigner: {");
   expect(shellSource).toContain("activeStageKey,");
-  expect(shellSource).toContain("setActiveStageKey(state.stageViewModels[0].stageKey);");
+  expect(shellSource).toContain("resolvePreferredActiveStageKey");
+  expect(shellSource).toContain("const STAGE_KEY_ALIASES = {");
+  expect(shellSource).toContain('stack: "theme"');
+  expect(shellSource).toContain('layouts: "pages"');
+  expect(shellSource).toContain("setActiveStageKey(preferredStageKey);");
 });

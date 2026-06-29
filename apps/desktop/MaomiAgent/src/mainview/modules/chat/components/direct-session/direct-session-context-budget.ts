@@ -35,10 +35,13 @@ export function resolveComposerTokenBudgetUsage(input: {
   }
 
   const latestTokenUsage = input.detail?.latestTokenUsage;
+  const shouldMatchSelectedModel = Boolean(input.selectedModel);
   const budgetMatchesSelection = !contextBudget
+    || !shouldMatchSelectedModel
     || (!contextBudget.modelId || contextBudget.modelId === input.selectedModel?.modelId)
     && (!contextBudget.channelId || contextBudget.channelId === input.selectedModel?.channelId);
   const usageMatchesSelection = !latestTokenUsage
+    || !shouldMatchSelectedModel
     || (!latestTokenUsage.modelId || latestTokenUsage.modelId === input.selectedModel?.modelId)
     && (!latestTokenUsage.channelId || latestTokenUsage.channelId === input.selectedModel?.channelId);
   const usedTokens = contextBudget && budgetMatchesSelection

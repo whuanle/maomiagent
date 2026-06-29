@@ -8,7 +8,7 @@ export function resolveStageActionLabel(
     return "继续填写";
   }
 
-  return status === "empty" ? "开始设计" : "重新设计";
+  return status === "empty" ? "开始设计" : "继续完善";
 }
 
 export function isStageActionVisible(stageViewModels: UiDesignerStageViewModel[], stageIndex: number) {

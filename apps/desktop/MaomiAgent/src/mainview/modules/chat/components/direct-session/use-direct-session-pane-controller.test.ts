@@ -82,6 +82,51 @@ describe("direct session pane controller helpers", () => {
     }));
   });
 
+  test("uses the current context budget even before the selected model is ready", () => {
+    const detail = createDetail({
+      currentContextBudget: {
+        runId: "run-1",
+        modelId: "moonshot-v1-8k",
+        channelId: "kimi",
+        estimatedPromptTokens: 40960,
+        contextWindowTokens: 128000,
+        compressionThresholdPercent: 30,
+        compressionThresholdTokens: 38400,
+        promptUsagePercent: 32,
+        thresholdUsagePercent: 107,
+        shouldAutoCompress: true,
+        breakdown: {
+          systemTokens: 100,
+          contextTokens: 200,
+          messageTokens: 40660,
+          toolTokens: 0,
+          outputSchemaTokens: 0,
+        },
+      },
+      latestTokenUsage: {
+        runId: "run-0",
+        totalTokens: 1200,
+        inputTokens: 1000,
+        outputTokens: 200,
+        turnCount: 1,
+      },
+    });
+
+    const usage = resolveComposerTokenBudgetUsage({
+      detail,
+      selectedModel: undefined,
+      language: "zh-CN",
+    });
+
+    expect(usage).toEqual(expect.objectContaining({
+      usedTokens: 40960,
+      limitTokens: 128000,
+      percent: 32,
+      thresholdUsagePercent: 107,
+      status: "critical",
+    }));
+  });
+
   test("reports context compression states across waiting, running, completed, and failed turns", () => {
     const awaiting = resolveContextCompressionStatus({
       detail: createDetail({

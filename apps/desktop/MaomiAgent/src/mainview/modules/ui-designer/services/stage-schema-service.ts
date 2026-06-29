@@ -65,7 +65,6 @@ type StageSchemaDraft = {
 };
 
 type StageArtifactDraft = {
-  key: string;
   format: "json" | "markdown";
   content: string;
 };
@@ -77,17 +76,18 @@ type StageResultDraft = {
     notes: string;
     highlights: string[];
   };
-  artifact: StageArtifactDraft;
+  artifact?: StageArtifactDraft;
+  artifacts?: Record<string, StageArtifactDraft>;
   nextSuggestedStage: string;
 };
 
 const STAGE_TITLE_MAP: Record<UiDesignerStageKey, string> = {
   projectScope: "项目范围确认",
   stack: "技术栈确认",
-  theme: "视觉与交互基线",
-  patterns: "组件模式确认",
+  theme: "设计系统基线",
+  patterns: "组件规范体系",
   layouts: "布局设计",
-  pages: "页面与模块确认",
+  pages: "页面骨架与验证壳",
   spec: "设计规格整理",
 };
 
@@ -95,9 +95,9 @@ const STAGE_GOAL_MAP: Record<UiDesignerStageKey, string> = {
   projectScope: "明确项目形态、业务类型、目标平台、当前目标与交付范围。",
   stack: "明确技术路线、运行平台、核心框架、UI 方案与工程约束。",
   theme: "明确风格方向、色彩倾向、界面密度、视觉关键词与交互原则。",
-  patterns: "明确表单、筛选区、表格、弹窗与反馈状态等组件模式。",
+  patterns: "明确按钮、输入框、选择器、表格、表单、弹窗、抽屉、标签页、标签、空状态与消息通知等组件规范体系。",
   layouts: "明确导航结构、页面骨架、内容布局、详情策略与响应策略。",
-  pages: "明确页面模板、核心模块、主任务流与页面关系。",
+  pages: "明确页面骨架、验证壳、核心模块、主任务流与页面关系。",
   spec: "整理设计规格书的章节覆盖、交付物与待补充内容。",
 };
 
@@ -119,6 +119,16 @@ const STAGE_ARTIFACT_FORMAT_MAP: Record<UiDesignerStageKey, "json" | "markdown">
   layouts: "json",
   pages: "json",
   spec: "markdown",
+};
+
+const STAGE_ALLOWED_ARTIFACT_KEYS: Record<UiDesignerStageKey, string[]> = {
+  projectScope: ["scope"],
+  stack: ["stack"],
+  theme: ["theme", "stack"],
+  patterns: ["patterns"],
+  layouts: ["layouts"],
+  pages: ["pages", "layouts"],
+  spec: ["spec"],
 };
 
 function readText(value: unknown) {
@@ -309,27 +319,36 @@ export function normalizeStageResultResponse(
 ) {
   const parsed = value && typeof value === "object" ? value as StageResultDraft : {} as StageResultDraft;
   ensureStageKey(parsed.stageKey, stageKey);
+  const allowedArtifactKeys = STAGE_ALLOWED_ARTIFACT_KEYS[stageKey];
+  const artifactSource = parsed.artifacts && Object.keys(parsed.artifacts).length > 0
+    ? parsed.artifacts
+    : parsed.artifact
+      ? { [STAGE_ARTIFACT_KEY_MAP[stageKey]]: parsed.artifact }
+      : {};
+  const artifacts = Object.entries(artifactSource).reduce<Record<string, unknown>>((current, [artifactKey, artifactDraft]) => {
+    if (!allowedArtifactKeys.includes(artifactKey)) {
+      throw new Error(`AI 返回了错误的阶段产物类型：${artifactKey}`);
+    }
 
-  const artifactKey = readText(parsed.artifact?.key) || STAGE_ARTIFACT_KEY_MAP[stageKey];
-  const artifactFormat = parsed.artifact?.format === "markdown" ? "markdown" : "json";
-  const artifactContent = readText(parsed.artifact?.content);
-  const expectedArtifactKey = STAGE_ARTIFACT_KEY_MAP[stageKey];
-  const expectedArtifactFormat = STAGE_ARTIFACT_FORMAT_MAP[stageKey];
-  if (artifactKey !== expectedArtifactKey) {
-    throw new Error(`AI 返回了错误的阶段产物类型：${artifactKey}`);
-  }
-  if (artifactFormat !== expectedArtifactFormat) {
-    throw new Error(`AI 返回了错误的阶段产物格式：${artifactFormat}`);
-  }
-  if (!artifactContent) {
+    const expectedFormat = artifactKey === "spec" ? "markdown" : "json";
+    const artifactFormat = artifactDraft?.format === "markdown" ? "markdown" : "json";
+    if (artifactFormat !== expectedFormat) {
+      throw new Error(`AI 返回了错误的阶段产物格式：${artifactFormat}`);
+    }
+
+    const artifactContent = readText(artifactDraft?.content);
+    if (!artifactContent) {
+      throw new Error(`AI 未返回阶段产物内容：${artifactKey}`);
+    }
+
+    current[artifactKey] = artifactFormat === "markdown"
+      ? artifactContent
+      : extractJsonObject(artifactContent);
+    return current;
+  }, {});
+  if (Object.keys(artifacts).length === 0) {
     throw new Error("AI 未返回阶段产物内容。");
   }
-
-  const artifacts: Record<string, unknown> = {
-    [artifactKey]: artifactFormat === "markdown"
-      ? artifactContent
-      : extractJsonObject(artifactContent),
-  };
 
   const nextSuggestedStage = readText(parsed.nextSuggestedStage);
   return {
@@ -392,6 +411,17 @@ function buildContextPrompt(context: UiDesignerStageAiContext) {
 }
 
 function buildStageSchemaPrompt(stageKey: UiDesignerStageKey, context: UiDesignerStageAiContext) {
+  const stageSpecificRequirements = stageKey === "patterns"
+    ? [
+        "7. 如果当前阶段是组件规范体系，优先追问缺失的核心组件规范，而不是先追页面。",
+        "8. 核心组件至少覆盖：按钮、输入框、选择器、表格、表单、弹窗、抽屉、标签页、标签、空状态、消息通知。",
+        "9. 如果已有组件规范，只继续补缺失字段，不要把用户已经确认的组件结论打散重来。",
+      ]
+    : stageKey === "theme"
+      ? [
+          "7. 当前阶段只聚焦界面风格、主题、密度、视觉关键词和交互原则，不要把问题带到技术栈、架构和实现细节。",
+        ]
+    : [];
   return [
     `阶段：${STAGE_TITLE_MAP[stageKey]} (${stageKey})`,
     `阶段目标：${STAGE_GOAL_MAP[stageKey]}`,
@@ -399,11 +429,11 @@ function buildStageSchemaPrompt(stageKey: UiDesignerStageKey, context: UiDesigne
     "请根据当前设计包，生成一个适合模态窗体填写的阶段表单。",
     "要求：",
     "1. 字段数量控制在 2 到 6 个之间，只问当前阶段真正缺失或不确定的信息。",
-    "2. 优先使用简短字段标签，避免把技术路线默认写死成前端方案。",
-    "3. 如果是桌面程序场景，允许出现 WPF、WinUI、Avalonia、Electron、Tauri、Qt 等选项。",
-    "4. 当信息已经足够明确时，不要重复追问。",
-    "5. singleSelect 或 multiSelect 必须提供 options。",
-    "6. cancelLabel 通常返回“取消”，submitLabel 需贴合当前阶段。",
+    "2. 优先使用简短字段标签，避免把问题引向架构和实现细节。",
+    "3. 当信息已经足够明确时，不要重复追问。",
+    "4. singleSelect 或 multiSelect 必须提供 options。",
+    "5. cancelLabel 通常返回“取消”，submitLabel 需贴合当前阶段。",
+    ...stageSpecificRequirements,
     "",
     buildContextPrompt(context),
   ].join("\n");
@@ -414,21 +444,31 @@ function buildStageResultPrompt(
   context: UiDesignerStageAiContext,
   values: Record<string, unknown>,
 ) {
-  const artifactKey = STAGE_ARTIFACT_KEY_MAP[stageKey];
-  const artifactFormat = STAGE_ARTIFACT_FORMAT_MAP[stageKey];
+  const artifactKeys = STAGE_ALLOWED_ARTIFACT_KEYS[stageKey];
+  const stageSpecificRequirements = stageKey === "patterns"
+    ? [
+        "5. patterns.content 必须优先写成设计系统结构，而不是泛泛的页面建议。",
+        "6. patterns.content 必须包含 componentSpecs 对象，至少覆盖 button、input、select、table、form、modal、drawer、tabs、tag、empty、messageNotification。",
+        "7. componentSpecs 下每个组件只保留最小必要字段：summary、states、sizeTokens、usageNotes。",
+        "8. 优先先把 summary 写清楚；只有确实需要时再补 states、sizeTokens、usageNotes，不要把结构写得很重。",
+      ]
+    : stageKey === "theme"
+      ? [
+          "5. theme.content 只聚焦界面风格、色彩、密度、视觉关键词和交互原则，不要把技术栈、架构或实现建议写进这个阶段。",
+        ]
+    : [];
   return [
     `阶段：${STAGE_TITLE_MAP[stageKey]} (${stageKey})`,
     `阶段目标：${STAGE_GOAL_MAP[stageKey]}`,
-    `当前阶段唯一允许更新的产物：${artifactKey} (${artifactFormat})`,
+    `当前阶段允许更新的产物：${artifactKeys.join("、")}`,
     "",
     "请根据当前设计包上下文和用户刚提交的表单值，生成当前阶段的最终结构化结论。",
     "要求：",
     "1. 只更新当前阶段产物，不要改动其他阶段。",
-    artifactFormat === "json"
-      ? "2. artifact.content 必须是可直接 JSON.parse 的对象 JSON 字符串。"
-      : "2. artifact.content 必须是最终可保存的 Markdown 文本。",
+    "2. artifacts 中每个条目都必须包含 format 和 content；json 条目必须返回可直接 JSON.parse 的对象 JSON 字符串，markdown 条目必须返回最终可保存的 Markdown 文本。",
     "3. summary 要简短，detail.notes 要解释本阶段结论，detail.highlights 用短句列重点。",
-    "4. 如果用户填写的是桌面原生技术路线，不要强行输出 React / Ant Design。",
+    "4. 当前阶段优先输出界面与 UI 设计结论，不要主动扩写架构和实现方案。",
+    ...stageSpecificRequirements,
     "",
     "本次表单提交：",
     escapeJsonForPrompt(values),
@@ -503,6 +543,20 @@ function buildStageSchemaOutputMode() {
 }
 
 function buildStageResultOutputMode(stageKey: UiDesignerStageKey) {
+  const artifactProperties = Object.fromEntries(
+    STAGE_ALLOWED_ARTIFACT_KEYS[stageKey].map((artifactKey) => [
+      artifactKey,
+      {
+        type: "object",
+        properties: {
+          format: { type: "string", enum: [artifactKey === "spec" ? "markdown" : "json"] },
+          content: { type: "string" },
+        },
+        required: ["format", "content"],
+        additionalProperties: false,
+      },
+    ]),
+  );
   return {
     kind: "json_schema" as const,
     schema: {
@@ -522,14 +576,9 @@ function buildStageResultOutputMode(stageKey: UiDesignerStageKey) {
           required: ["notes", "highlights"],
           additionalProperties: false,
         },
-        artifact: {
+        artifacts: {
           type: "object",
-          properties: {
-            key: { type: "string", enum: [STAGE_ARTIFACT_KEY_MAP[stageKey]] },
-            format: { type: "string", enum: [STAGE_ARTIFACT_FORMAT_MAP[stageKey]] },
-            content: { type: "string" },
-          },
-          required: ["key", "format", "content"],
+          properties: artifactProperties,
           additionalProperties: false,
         },
         nextSuggestedStage: {
@@ -537,7 +586,7 @@ function buildStageResultOutputMode(stageKey: UiDesignerStageKey) {
           enum: ["", "projectScope", "stack", "theme", "patterns", "layouts", "pages", "spec"],
         },
       },
-      required: ["stageKey", "summary", "detail", "artifact", "nextSuggestedStage"],
+      required: ["stageKey", "summary", "detail", "artifacts", "nextSuggestedStage"],
       additionalProperties: false,
     },
   };

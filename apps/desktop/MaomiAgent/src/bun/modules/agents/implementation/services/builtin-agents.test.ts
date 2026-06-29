@@ -86,10 +86,17 @@ test("builtin ui designer agent is visible as a primary design assistant", () =>
     enabled: true,
     source: "builtin-maomi",
   });
-  expect(item?.prompt).toContain("技术栈与 UI 框架");
-  expect(item?.prompt).toContain("主题设计");
-  expect(item?.prompt).toContain("组件模式");
+  expect(item?.prompt).toContain("设计系统");
+  expect(item?.prompt).toContain("组件规范体系");
+  expect(item?.prompt).toContain("按钮");
+  expect(item?.prompt).toContain("表单");
+  expect(item?.prompt).toContain("设计稿预览壳");
+  expect(item?.prompt).toContain("组件展示壳");
+  expect(item?.prompt).toContain("最小业务示例壳");
+  expect(item?.prompt).toContain("而不是把重点带到架构和实现细节上");
   expect(item?.prompt).toContain("附件");
   expect(item?.prompt).toContain("真实工具");
   expect(item?.prompt).toContain("不要输出 <tool_call>");
+  expect(item?.prompt).not.toContain("可运行模板项目规格");
+  expect(item?.prompt).not.toContain("项目骨架");
 });

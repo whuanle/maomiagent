@@ -532,7 +532,7 @@ describe("mergeDesktopConversationRuntimeEvents", () => {
       },
     }]);
 
-    expect(result.requiresReload).toBe(false);
+    expect(result.requiresReload).toBe(true);
     expect(result.detail.runs.at(-1)).toEqual(expect.objectContaining({
       status: "planning",
       boundary: undefined,

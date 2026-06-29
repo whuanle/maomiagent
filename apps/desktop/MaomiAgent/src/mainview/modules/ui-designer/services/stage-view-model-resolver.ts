@@ -170,7 +170,8 @@ function readMarkdownBulletValue(section: string, label: string) {
 }
 
 function readMarkdownLayoutFallback(designSpecMarkdown: string) {
-  const section = extractMarkdownSection(designSpecMarkdown, "布局");
+  const section = extractMarkdownSection(designSpecMarkdown, "布局")
+    || extractMarkdownSection(designSpecMarkdown, "页面骨架与验证壳");
   if (!section) {
     return {
       navigationStructure: "",
@@ -197,7 +198,8 @@ function readMarkdownLayoutFallback(designSpecMarkdown: string) {
 }
 
 function readMarkdownPagesFallback(designSpecMarkdown: string) {
-  const layoutSection = extractMarkdownSection(designSpecMarkdown, "布局");
+  const layoutSection = extractMarkdownSection(designSpecMarkdown, "布局")
+    || extractMarkdownSection(designSpecMarkdown, "页面骨架与验证壳");
   const componentSection = extractMarkdownSection(designSpecMarkdown, "组件复用");
 
   const mainEditor = readMarkdownBulletValue(layoutSection, "主编辑区");
@@ -251,21 +253,86 @@ function resolveStatus(confirmedCount: number, expectedCount: number): UiDesigne
   return "complete";
 }
 
+const REQUIRED_COMPONENT_SPECS = [
+  { key: "button", label: "按钮", aliases: ["按钮", "button"] },
+  { key: "input", label: "输入框", aliases: ["输入框", "input"] },
+  { key: "select", label: "选择器", aliases: ["选择器", "select", "selector"] },
+  { key: "table", label: "表格", aliases: ["表格", "table"] },
+  { key: "form", label: "表单", aliases: ["表单", "form"] },
+  { key: "modal", label: "弹窗", aliases: ["弹窗", "modal", "dialog"] },
+  { key: "drawer", label: "抽屉", aliases: ["抽屉", "drawer"] },
+  { key: "tabs", label: "标签页", aliases: ["标签页", "tabs", "tab"] },
+  { key: "tag", label: "标签", aliases: ["标签", "tag"] },
+  { key: "empty", label: "空状态", aliases: ["空状态", "empty"] },
+  { key: "messageNotification", label: "消息通知", aliases: ["消息通知", "消息", "通知", "message", "notification", "messageNotification"] },
+] as const;
+
+function readComponentSpecSummary(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return readDisplayText(value);
+  }
+
+  const record = value as Record<string, unknown>;
+  const summary = readText(record.summary);
+  if (summary) {
+    return summary;
+  }
+
+  const states = readList(record.states);
+  const sizeTokens = readList(record.sizeTokens);
+  const usageNotes = readText(record.usageNotes);
+
+  return [
+    states.length > 0 ? `状态：${states.join("、")}` : "",
+    sizeTokens.length > 0 ? `尺寸：${sizeTokens.join("、")}` : "",
+    usageNotes ? `说明：${usageNotes}` : "",
+  ].filter(Boolean).join(" / ");
+}
+
+function normalizePatternComponentNames(patterns: Record<string, unknown>) {
+  const componentSpecs = patterns.componentSpecs && typeof patterns.componentSpecs === "object" && !Array.isArray(patterns.componentSpecs)
+    ? patterns.componentSpecs as Record<string, unknown>
+    : {};
+  const names = new Set<string>();
+
+  for (const name of Object.keys(componentSpecs)) {
+    names.add(name.trim().toLowerCase());
+  }
+
+  for (const name of readList(patterns.components)) {
+    names.add(name.trim().toLowerCase());
+  }
+
+  for (const name of readNamedList(patterns.groups, ["components"])) {
+    names.add(name.trim().toLowerCase());
+  }
+
+  for (const name of readNamedList(patterns.patterns, ["id", "description"])) {
+    names.add(name.trim().toLowerCase());
+  }
+
+  return names;
+}
+
 function buildProjectScopeModel(scope: Record<string, unknown>): UiDesignerStageViewModel {
   const projectShape = readText(scope.projectType);
   const businessType = readText(scope.businessType);
   const targetPlatform = readText(scope.targetPlatform);
   const currentObjective = readText(scope.currentObjective || scope.target);
   const deliverySummary = readText(scope.deliverySummary);
-  const confirmedCount = [projectShape, businessType, targetPlatform, currentObjective, deliverySummary]
-    .filter(Boolean)
-    .length;
+  const coreConfirmedCount = [projectShape, businessType, targetPlatform].filter(Boolean).length;
+  const detailConfirmedCount = [currentObjective, deliverySummary].filter(Boolean).length;
+  const status = coreConfirmedCount === 0
+    ? "empty"
+    : coreConfirmedCount < 3 || detailConfirmedCount < 2
+      ? "partial"
+      : "complete";
 
   return {
     stageKey: "projectScope",
     title: "项目范围确认",
-    status: resolveStatus(confirmedCount, 2),
-    summary: confirmedCount > 0
+    status,
+    summary: coreConfirmedCount > 0
       ? [projectShape, businessType, targetPlatform].filter(Boolean).join(" / ")
       : "未确认项目范围",
     sections: [
@@ -284,67 +351,28 @@ function buildProjectScopeModel(scope: Record<string, unknown>): UiDesignerStage
   };
 }
 
-function buildStackModel(stack: Record<string, unknown>): UiDesignerStageViewModel {
-  const technicalRoute = readText(stack.technicalRoute || stack.framework);
-  const runtimePlatform = readText(stack.runtimePlatform || stack.buildTool);
-  const coreFramework = readText(stack.coreFramework || stack.framework);
-  const uiApproach = readText(stack.uiApproach || stack.uiLibrary);
-  const engineeringTools = readList(
-    stack.engineeringTools ?? (stack.packageManager ? [stack.packageManager] : []),
-  );
-  const constraints = readList(stack.constraints ?? [
-    typeof stack.responsive === "boolean" ? (stack.responsive ? "需要响应式适配" : "不需要响应式适配") : "",
-    readText(stack.target),
-  ].filter(Boolean));
-  const confirmedCount = [technicalRoute, runtimePlatform, coreFramework, uiApproach]
-    .filter(Boolean)
-    .length;
-
-  return {
-    stageKey: "stack",
-    title: "技术栈确认",
-    status: resolveStatus(confirmedCount, 3),
-    summary: confirmedCount > 0
-      ? [technicalRoute, coreFramework, uiApproach].filter(Boolean).join(" / ")
-      : "未确认技术路线",
-    sections: [
-      {
-        key: "route",
-        title: "技术路线",
-        items: [
-          { label: "技术路线", value: technicalRoute || "未确认", kind: "text" },
-          { label: "运行平台", value: runtimePlatform || "未确认", kind: "text" },
-          { label: "核心框架", value: coreFramework || "未确认", kind: "text", emphasis: true },
-          { label: "UI 方案", value: uiApproach || "未确认", kind: "text" },
-        ],
-      },
-      {
-        key: "constraints",
-        title: "工程约束",
-        items: [
-          { label: "工程工具", value: engineeringTools.length > 0 ? engineeringTools : ["未确认"], kind: "tagList" },
-          { label: "关键约束", value: constraints.length > 0 ? constraints : ["未确认"], kind: "tagList" },
-        ],
-      },
-    ],
-  };
-}
-
-function buildThemeModel(theme: Record<string, unknown>): UiDesignerStageViewModel {
+function buildThemeModel(
+  theme: Record<string, unknown>,
+  stack: Record<string, unknown>,
+): UiDesignerStageViewModel {
   const styleDirection = readText(theme.style);
   const colorTendency = readText(theme.colorTendency);
   const density = readText(theme.density);
   const visualKeywords = readList(theme.visualKeywords ?? theme.keywords);
   const interactionPrinciples = readList(theme.interactionPrinciples ?? theme.principles);
-  const confirmedCount = [styleDirection, colorTendency, density].filter(Boolean).length;
+  const confirmedCount = [
+    styleDirection,
+    colorTendency,
+    density,
+  ].filter(Boolean).length;
 
   return {
     stageKey: "theme",
-    title: "视觉与交互基线",
+    title: "设计系统基线",
     status: resolveStatus(confirmedCount, 1),
     summary: confirmedCount > 0
       ? [styleDirection, colorTendency, density].filter(Boolean).join(" / ")
-      : "未确认视觉方向",
+      : "未确认设计系统基线",
     sections: [
       {
         key: "baseline",
@@ -362,6 +390,9 @@ function buildThemeModel(theme: Record<string, unknown>): UiDesignerStageViewMod
 }
 
 function buildPatternModel(patterns: Record<string, unknown>): UiDesignerStageViewModel {
+  const componentSpecs = patterns.componentSpecs && typeof patterns.componentSpecs === "object" && !Array.isArray(patterns.componentSpecs)
+    ? patterns.componentSpecs as Record<string, unknown>
+    : {};
   const formPattern = readText(patterns.formPattern);
   const filterBarPattern = readText(patterns.filterBarPattern);
   const tablePattern = readText(patterns.tablePattern);
@@ -369,7 +400,26 @@ function buildPatternModel(patterns: Record<string, unknown>): UiDesignerStageVi
   const feedbackPattern = readText(patterns.feedbackPattern);
   const componentGroups = readNamedList(patterns.groups, ["components"]);
   const patternEntries = readNamedList(patterns.patterns, ["id", "description"]);
-  const confirmedCount = [
+  const componentNames = normalizePatternComponentNames(patterns);
+  const componentCoverageItems = REQUIRED_COMPONENT_SPECS.map((item) => ({
+    label: item.label,
+    value: item.aliases.some((alias) => componentNames.has(alias.toLowerCase()))
+      ? "已定义"
+      : "待补充",
+    kind: "text" as const,
+  }));
+  const componentSpecItems = REQUIRED_COMPONENT_SPECS.map((item) => {
+    const componentSpec = Object.entries(componentSpecs).find(([key]) =>
+      item.aliases.some((alias) => key.toLowerCase() === alias.toLowerCase()),
+    )?.[1];
+    return {
+      label: item.label,
+      value: readComponentSpecSummary(componentSpec) || "待补充",
+      kind: "paragraph" as const,
+    };
+  });
+  const componentCoverageCount = componentCoverageItems.filter((item) => item.value === "已定义").length;
+  const baseConfirmedCount = [
     formPattern,
     filterBarPattern,
     tablePattern,
@@ -380,25 +430,42 @@ function buildPatternModel(patterns: Record<string, unknown>): UiDesignerStageVi
   ]
     .filter(Boolean)
     .length;
+  const confirmedCount = baseConfirmedCount + componentCoverageCount;
   const summaryParts = [
+    `已覆盖 ${componentCoverageCount}/${REQUIRED_COMPONENT_SPECS.length} 类核心组件`,
     formPattern,
     tablePattern,
     modalPattern,
     ...componentGroups.slice(0, 2),
     ...patternEntries.slice(0, 2),
   ].filter(Boolean);
+  const status = confirmedCount <= 0
+    ? "empty"
+    : componentCoverageCount < REQUIRED_COMPONENT_SPECS.length
+      ? "partial"
+      : "complete";
 
   return {
     stageKey: "patterns",
-    title: "组件模式确认",
-    status: resolveStatus(confirmedCount, 1),
+    title: "组件规范体系",
+    status,
     summary: confirmedCount > 0
       ? summaryParts.join(" / ")
-      : "未确认组件模式",
+      : "未确认组件规范体系",
     sections: [
       {
+        key: "coverage",
+        title: "核心组件覆盖",
+        items: componentCoverageItems,
+      },
+      {
+        key: "component-specs",
+        title: "核心组件规范",
+        items: componentSpecItems,
+      },
+      {
         key: "patterns",
-        title: "组件模式",
+        title: "交互与组合模式",
         items: [
           { label: "表单模式", value: formPattern || "未确认", kind: "text" },
           { label: "筛选区模式", value: filterBarPattern || "未确认", kind: "text" },
@@ -419,103 +486,105 @@ function buildPatternModel(patterns: Record<string, unknown>): UiDesignerStageVi
   };
 }
 
-function buildLayoutModel(
+function buildPagesModel(
   layouts: Record<string, unknown>,
+  pages: Record<string, unknown>,
+  patternsStatus: UiDesignerStageViewModel["status"],
   designSpecMarkdown: string,
 ): UiDesignerStageViewModel {
-  const markdownFallback = readMarkdownLayoutFallback(designSpecMarkdown);
+  const layoutFallback = readMarkdownLayoutFallback(designSpecMarkdown);
+  const markdownFallback = readMarkdownPagesFallback(designSpecMarkdown);
   const explicitNavigationStructure = readText(layouts.navigationStructure);
   const explicitPageSkeleton = readText(layouts.pageSkeleton);
   const explicitContentLayout = readText(layouts.contentLayout);
   const explicitDetailStrategy = readText(layouts.detailStrategy);
-  const explicitResponsiveStrategy = readText(layouts.responsiveStrategy);
-  const navigationStructure = explicitNavigationStructure || markdownFallback.navigationStructure;
-  const pageSkeleton = explicitPageSkeleton || markdownFallback.pageSkeleton;
-  const contentLayout = explicitContentLayout || markdownFallback.contentLayout;
-  const detailStrategy = explicitDetailStrategy || markdownFallback.detailStrategy;
-  const responsiveStrategy = explicitResponsiveStrategy || markdownFallback.responsiveStrategy;
-  const confirmedCount = [navigationStructure, pageSkeleton, contentLayout, detailStrategy, responsiveStrategy]
-    .filter(Boolean)
-    .length;
-  const hasExplicitLayoutData = [
-    explicitNavigationStructure,
-    explicitPageSkeleton,
-    explicitContentLayout,
-    explicitDetailStrategy,
-    explicitResponsiveStrategy,
-  ].some(Boolean);
-  const status = !hasExplicitLayoutData && confirmedCount > 0
-    ? "partial"
-    : resolveStatus(confirmedCount, 1);
-
-  return {
-    stageKey: "layouts",
-    title: "布局设计",
-    status,
-    summary: confirmedCount > 0
-      ? [navigationStructure, pageSkeleton].filter(Boolean).join(" / ")
-      : "未确认布局方案",
-    sections: [
-      {
-        key: "layouts",
-        title: "布局策略",
-        items: [
-          { label: "导航结构", value: navigationStructure || "未确认", kind: "text" },
-          { label: "页面骨架", value: pageSkeleton || "未确认", kind: "text" },
-          { label: "内容布局", value: contentLayout || "未确认", kind: "text" },
-          { label: "详情策略", value: detailStrategy || "未确认", kind: "text" },
-          { label: "响应策略", value: responsiveStrategy || "未确认", kind: "text" },
-        ],
-      },
-    ],
-  };
-}
-
-function buildPagesModel(
-  pages: Record<string, unknown>,
-  designSpecMarkdown: string,
-): UiDesignerStageViewModel {
-  const markdownFallback = readMarkdownPagesFallback(designSpecMarkdown);
+  const navigationStructure = explicitNavigationStructure || layoutFallback.navigationStructure;
+  const pageSkeleton = explicitPageSkeleton || layoutFallback.pageSkeleton;
+  const contentLayout = explicitContentLayout || layoutFallback.contentLayout;
+  const detailStrategy = explicitDetailStrategy || layoutFallback.detailStrategy;
   const explicitPageTemplates = readList(pages.templates);
   const explicitCoreModules = readList(pages.modules);
-  const explicitTaskFlows = readList(pages.taskFlows);
+  const explicitTaskFlows = readList(pages.exampleFlows ?? pages.taskFlows);
   const explicitRelationships = readList(pages.relationships);
+  const explicitPreviewShells = readList(pages.previewShells);
+  const explicitComponentShowcaseShells = readList(pages.componentShowcaseShells);
   const pageTemplates = explicitPageTemplates.length > 0 ? explicitPageTemplates : markdownFallback.pageTemplates;
   const coreModules = explicitCoreModules.length > 0 ? explicitCoreModules : markdownFallback.coreModules;
   const taskFlows = explicitTaskFlows.length > 0 ? explicitTaskFlows : markdownFallback.taskFlows;
   const relationships = explicitRelationships.length > 0 ? explicitRelationships : markdownFallback.relationships;
-  const confirmedCount = [pageTemplates.length, coreModules.length, taskFlows.length, relationships.length]
-    .filter((count) => count > 0)
-    .length;
+  const previewShells = explicitPreviewShells.length > 0 ? explicitPreviewShells : pageTemplates.slice(0, 1);
+  const componentShowcaseShells = explicitComponentShowcaseShells.length > 0
+    ? explicitComponentShowcaseShells
+    : coreModules.length > 0 ? ["组件展示壳"] : [];
+  const confirmedCount = [
+    navigationStructure,
+    pageSkeleton,
+    contentLayout,
+    detailStrategy,
+    previewShells.length > 0 ? "previewShells" : "",
+    componentShowcaseShells.length > 0 ? "componentShowcaseShells" : "",
+    taskFlows.length > 0 ? "taskFlows" : "",
+    relationships.length > 0 ? "relationships" : "",
+  ].filter(Boolean).length;
   const hasExplicitPageData = [
     explicitPageTemplates.length,
     explicitCoreModules.length,
     explicitTaskFlows.length,
     explicitRelationships.length,
+    explicitPreviewShells.length,
+    explicitComponentShowcaseShells.length,
   ].some((count) => count > 0);
-  const status = !hasExplicitPageData && confirmedCount > 0
+  const hasExplicitLayoutData = [
+    explicitNavigationStructure,
+    explicitPageSkeleton,
+    explicitContentLayout,
+    explicitDetailStrategy,
+  ].some(Boolean);
+  const resolvedStatus = !hasExplicitPageData && !hasExplicitLayoutData && confirmedCount > 0
     ? "partial"
     : resolveStatus(confirmedCount, 1);
+  const status = patternsStatus !== "complete" && resolvedStatus !== "empty"
+    ? "partial"
+    : resolvedStatus;
 
   return {
     stageKey: "pages",
-    title: "页面与模块确认",
+    title: "页面骨架与验证壳",
     status,
     summary: confirmedCount > 0
       ? [
-          pageTemplates.length > 0 ? pageTemplates.join("、") : "",
-          coreModules.length > 0 ? coreModules.join("、") : "",
+          pageSkeleton,
+          navigationStructure,
         ].filter(Boolean).join(" / ")
-      : "未确认页面与模块",
+      : "未确认页面骨架与验证壳",
     sections: [
       {
-        key: "pages",
-        title: "页面结构",
+        key: "structure",
+        title: "页面骨架",
+        items: [
+          { label: "前置条件", value: patternsStatus === "complete" ? "组件规范体系已确认" : "待先完善组件规范体系", kind: "text", emphasis: patternsStatus !== "complete" },
+          { label: "导航结构", value: navigationStructure || "未确认", kind: "text" },
+          { label: "页面骨架", value: pageSkeleton || "未确认", kind: "text" },
+          { label: "内容布局", value: contentLayout || "未确认", kind: "text" },
+          { label: "详情策略", value: detailStrategy || "未确认", kind: "text" },
+        ],
+      },
+      {
+        key: "shells",
+        title: "验证壳",
+        items: [
+          { label: "设计稿预览壳", value: previewShells.length > 0 ? previewShells : ["未确认"], kind: "tagList" },
+          { label: "组件展示壳", value: componentShowcaseShells.length > 0 ? componentShowcaseShells : ["未确认"], kind: "tagList" },
+          { label: "最小业务示例壳", value: taskFlows.length > 0 ? taskFlows : ["未确认"], kind: "tagList" },
+          { label: "页面关系", value: relationships.length > 0 ? relationships : ["未确认"], kind: "tagList" },
+        ],
+      },
+      {
+        key: "modules",
+        title: "支撑模块",
         items: [
           { label: "页面模板", value: pageTemplates.length > 0 ? pageTemplates : ["未确认"], kind: "tagList" },
           { label: "核心模块", value: coreModules.length > 0 ? coreModules : ["未确认"], kind: "tagList" },
-          { label: "主任务流", value: taskFlows.length > 0 ? taskFlows : ["未确认"], kind: "tagList" },
-          { label: "页面关系", value: relationships.length > 0 ? relationships : ["未确认"], kind: "tagList" },
         ],
       },
     ],
@@ -525,17 +594,28 @@ function buildPagesModel(
 function buildSpecModel(designSpecMarkdown: string, sourcesMarkdown: string): UiDesignerStageViewModel {
   const coveredSections = [
     designSpecMarkdown.includes("## 项目范围") ? "项目范围" : "",
-    designSpecMarkdown.includes("## 技术栈") ? "技术栈" : "",
-    designSpecMarkdown.includes("## 视觉与交互基线") ? "视觉与交互基线" : "",
-    designSpecMarkdown.includes("## 页面与模块") ? "页面与模块" : "",
+    designSpecMarkdown.includes("## 设计系统基线")
+      || designSpecMarkdown.includes("## 技术栈")
+      || designSpecMarkdown.includes("## 视觉与交互基线")
+      ? "设计系统基线"
+      : "",
+    designSpecMarkdown.includes("## 组件规范体系")
+      || designSpecMarkdown.includes("## 组件与交互模式")
+      || designSpecMarkdown.includes("## 组件模式确认")
+      ? "组件规范体系"
+      : "",
+    designSpecMarkdown.includes("## 页面骨架与验证壳")
+      || designSpecMarkdown.includes("## 页面与模块")
+      ? "页面骨架与验证壳"
+      : "",
     designSpecMarkdown.includes("## 交付范围") ? "交付范围" : "",
     sourcesMarkdown.includes("http") ? "参考资料" : "",
   ].filter(Boolean);
   const missingSections = [
     coveredSections.includes("项目范围") ? "" : "项目范围",
-    coveredSections.includes("技术栈") ? "" : "技术栈",
-    coveredSections.includes("视觉与交互基线") ? "" : "视觉与交互基线",
-    coveredSections.includes("页面与模块") ? "" : "页面与模块",
+    coveredSections.includes("设计系统基线") ? "" : "设计系统基线",
+    coveredSections.includes("组件规范体系") ? "" : "组件规范体系",
+    coveredSections.includes("页面骨架与验证壳") ? "" : "页面骨架与验证壳",
     coveredSections.includes("交付范围") ? "" : "交付范围",
     coveredSections.includes("参考资料") ? "" : "参考资料",
   ].filter(Boolean);
@@ -568,13 +648,17 @@ function buildSpecModel(designSpecMarkdown: string, sourcesMarkdown: string): Ui
 }
 
 export function resolveStageViewModels(input: ResolveStageViewModelsInput): UiDesignerStageViewModel[] {
+  const projectScopeModel = buildProjectScopeModel(input.scope);
+  const themeModel = buildThemeModel(input.theme, input.stack);
+  const patternModel = buildPatternModel(input.patterns);
+  const pagesModel = buildPagesModel(input.layouts, input.pages, patternModel.status, input.designSpecMarkdown);
+  const specModel = buildSpecModel(input.designSpecMarkdown, input.sourcesMarkdown);
+
   return [
-    buildProjectScopeModel(input.scope),
-    buildStackModel(input.stack),
-    buildThemeModel(input.theme),
-    buildPatternModel(input.patterns),
-    buildLayoutModel(input.layouts, input.designSpecMarkdown),
-    buildPagesModel(input.pages, input.designSpecMarkdown),
-    buildSpecModel(input.designSpecMarkdown, input.sourcesMarkdown),
+    projectScopeModel,
+    themeModel,
+    patternModel,
+    pagesModel,
+    specModel,
   ];
 }

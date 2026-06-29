@@ -7,33 +7,33 @@ import {
 
 test("normalizeStageSchemaResponse maps AI schema fields into renderer fields", () => {
   const schema = normalizeStageSchemaResponse({
-    stageKey: "stack",
-    title: "技术栈确认",
-    description: "请确认关键技术路线。",
-    submitLabel: "确认技术栈",
+    stageKey: "theme",
+    title: "设计系统基线",
+    description: "请确认主题与落地约束。",
+    submitLabel: "确认基线",
     cancelLabel: "取消",
     allowSkip: false,
     fields: [
       {
-        key: "technicalRoute",
-        label: "技术路线",
+        key: "style",
+        label: "风格方向",
         kind: "singleSelect",
         required: true,
         placeholder: "",
-        defaultText: "桌面原生",
+        defaultText: "现代轻量",
         defaultBoolean: false,
         defaultValues: [],
         options: [
-          { label: "桌面原生", value: "桌面原生" },
-          { label: "桌面壳 + Web", value: "桌面壳 + Web" },
+          { label: "现代轻量", value: "现代轻量" },
+          { label: "理性克制", value: "理性克制" },
         ],
       },
       {
-        key: "coreFramework",
-        label: "核心框架",
+        key: "uiApproach",
+        label: "UI 方案",
         kind: "text",
         required: true,
-        placeholder: "例如：WPF、WinUI、React",
+        placeholder: "例如：Ant Design、Fluent UI",
         defaultText: "",
         defaultBoolean: false,
         defaultValues: [],
@@ -41,56 +41,171 @@ test("normalizeStageSchemaResponse maps AI schema fields into renderer fields", 
       },
       {
         key: "constraints",
-        label: "工程约束",
+        label: "关键约束",
         kind: "multiSelect",
         required: false,
         placeholder: "",
         defaultText: "",
         defaultBoolean: false,
-        defaultValues: ["需响应式适配"],
+        defaultValues: ["桌面浏览器优先"],
         options: [
-          { label: "需响应式适配", value: "需响应式适配" },
-          { label: "优先桌面体验", value: "优先桌面体验" },
+          { label: "桌面浏览器优先", value: "桌面浏览器优先" },
+          { label: "优先主任务路径", value: "优先主任务路径" },
         ],
       },
     ],
-  }, "stack");
+  }, "theme");
 
-  expect(schema.stageKey).toBe("stack");
+  expect(schema.stageKey).toBe("theme");
   expect(schema.fields).toHaveLength(3);
   expect(schema.fields[0]).toEqual({
-    key: "technicalRoute",
-    label: "技术路线",
+    key: "style",
+    label: "风格方向",
     kind: "singleSelect",
     required: true,
-    defaultValue: "桌面原生",
+    defaultValue: "现代轻量",
     options: [
-      { label: "桌面原生", value: "桌面原生" },
-      { label: "桌面壳 + Web", value: "桌面壳 + Web" },
+      { label: "现代轻量", value: "现代轻量" },
+      { label: "理性克制", value: "理性克制" },
     ],
   });
   expect(schema.fields[1]).toEqual({
-    key: "coreFramework",
-    label: "核心框架",
+    key: "uiApproach",
+    label: "UI 方案",
     kind: "text",
     required: true,
-    placeholder: "例如：WPF、WinUI、React",
+    placeholder: "例如：Ant Design、Fluent UI",
     defaultValue: undefined,
   });
   expect(schema.fields[2]).toEqual({
     key: "constraints",
-    label: "工程约束",
+    label: "关键约束",
     kind: "multiSelect",
     required: false,
-    defaultValue: ["需响应式适配"],
+    defaultValue: ["桌面浏览器优先"],
     options: [
-      { label: "需响应式适配", value: "需响应式适配" },
-      { label: "优先桌面体验", value: "优先桌面体验" },
+      { label: "桌面浏览器优先", value: "桌面浏览器优先" },
+      { label: "优先主任务路径", value: "优先主任务路径" },
     ],
   });
 });
 
-test("normalizeStageResultResponse parses stage artifact payload", () => {
+test("normalizeStageResultResponse accepts theme stage results that update theme and stack together", () => {
+  const result = normalizeStageResultResponse({
+    stageKey: "theme",
+    summary: "现代轻量 / React / Ant Design",
+    detail: {
+      notes: "主题基线已确认，并补齐设计落地约束。",
+      highlights: ["暖中性色板", "桌面浏览器优先"],
+    },
+    artifacts: {
+      theme: {
+        format: "json",
+        content: JSON.stringify({
+          style: "现代轻量",
+          colorTendency: "暖中性",
+          density: "舒展",
+        }),
+      },
+      stack: {
+        format: "json",
+        content: JSON.stringify({
+          technicalRoute: "Web",
+          coreFramework: "React",
+          uiApproach: "Ant Design",
+        }),
+      },
+    },
+    nextSuggestedStage: "patterns",
+  }, "theme");
+
+  expect(result.summary).toBe("现代轻量 / React / Ant Design");
+  expect(result.detail).toEqual({
+    notes: "主题基线已确认，并补齐设计落地约束。",
+    highlights: ["暖中性色板", "桌面浏览器优先"],
+  });
+  expect(result.artifacts).toEqual({
+    theme: {
+      style: "现代轻量",
+      colorTendency: "暖中性",
+      density: "舒展",
+    },
+    stack: {
+      technicalRoute: "Web",
+      coreFramework: "React",
+      uiApproach: "Ant Design",
+    },
+  });
+  expect(result.nextSuggestedStage).toBe("patterns");
+});
+
+test("normalizeStageResultResponse keeps patterns componentSpecs structure intact", () => {
+  const result = normalizeStageResultResponse({
+    stageKey: "patterns",
+    summary: "已完成组件规范体系",
+    detail: {
+      notes: "核心组件规范已统一。",
+      highlights: ["按钮与表单统一高度", "表格与弹窗约束已明确"],
+    },
+    artifacts: {
+      patterns: {
+        format: "json",
+        content: JSON.stringify({
+          componentSpecs: {
+            button: {
+              summary: "主按钮、次按钮、危险按钮统一尺寸",
+              states: ["default", "hover", "disabled"],
+              sizeTokens: ["32", "36"],
+              usageNotes: "主按钮用于主操作",
+            },
+            form: { summary: "标签在上，错误信息就近展示" },
+          },
+          feedbackPattern: "message + notification",
+        }),
+      },
+    },
+    nextSuggestedStage: "pages",
+  }, "patterns");
+
+  expect(result.artifacts).toEqual({
+    patterns: {
+      componentSpecs: {
+        button: {
+          summary: "主按钮、次按钮、危险按钮统一尺寸",
+          states: ["default", "hover", "disabled"],
+          sizeTokens: ["32", "36"],
+          usageNotes: "主按钮用于主操作",
+        },
+        form: { summary: "标签在上，错误信息就近展示" },
+      },
+      feedbackPattern: "message + notification",
+    },
+  });
+});
+
+test("normalizeStageResultResponse rejects unexpected extra artifact keys", () => {
+  expect(() => normalizeStageResultResponse({
+    stageKey: "pages",
+    summary: "页面骨架已确认",
+    detail: {
+      notes: "",
+      highlights: [],
+    },
+    artifacts: {
+      pages: {
+        format: "json",
+        content: JSON.stringify({ templates: ["设计稿预览壳"] }),
+      },
+      theme: {
+        format: "json",
+        content: JSON.stringify({ style: "不允许" }),
+      },
+    },
+    nextSuggestedStage: "spec",
+  }, "pages")).toThrow("错误的阶段产物类型");
+});
+
+test("normalizeStageResultResponse still supports legacy single-artifact payloads", () => {
   const result = normalizeStageResultResponse({
     stageKey: "stack",
     summary: "桌面原生 / WPF / Fluent UI",
@@ -99,7 +214,6 @@ test("normalizeStageResultResponse parses stage artifact payload", () => {
       highlights: ["优先原生体验", "减少 Web 壳复杂度"],
     },
     artifact: {
-      key: "stack",
       format: "json",
       content: JSON.stringify({
         technicalRoute: "桌面原生",
@@ -111,11 +225,6 @@ test("normalizeStageResultResponse parses stage artifact payload", () => {
     nextSuggestedStage: "theme",
   }, "stack");
 
-  expect(result.summary).toBe("桌面原生 / WPF / Fluent UI");
-  expect(result.detail).toEqual({
-    notes: "当前更适合 Windows 原生桌面应用路线。",
-    highlights: ["优先原生体验", "减少 Web 壳复杂度"],
-  });
   expect(result.artifacts).toEqual({
     stack: {
       technicalRoute: "桌面原生",
@@ -124,24 +233,6 @@ test("normalizeStageResultResponse parses stage artifact payload", () => {
       uiApproach: "Fluent UI",
     },
   });
-  expect(result.nextSuggestedStage).toBe("theme");
-});
-
-test("normalizeStageResultResponse rejects mismatched artifact key", () => {
-  expect(() => normalizeStageResultResponse({
-    stageKey: "theme",
-    summary: "现代轻量",
-    detail: {
-      notes: "",
-      highlights: [],
-    },
-    artifact: {
-      key: "stack",
-      format: "json",
-      content: "{}",
-    },
-    nextSuggestedStage: "",
-  }, "theme")).toThrow("错误的阶段产物类型");
 });
 
 test("normalizeStageSchemaResponse surfaces quota errors instead of generic empty form errors", () => {

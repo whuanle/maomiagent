@@ -16,12 +16,42 @@ import { StageDetailPanel } from "./stage-detail-panel";
 
 type UiDesignerWorkspaceShellProps = UiDesignerPageProps;
 
+const STAGE_KEY_ALIASES = {
+  stack: "theme",
+  layouts: "pages",
+} as const;
+
+function normalizePrimaryStageKey(value: string | undefined): UiDesignerStageKey | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  return (STAGE_KEY_ALIASES[value as keyof typeof STAGE_KEY_ALIASES] ?? value) as UiDesignerStageKey;
+}
+
+function resolvePreferredActiveStageKey(
+  stageViewModels: Array<{ stageKey: UiDesignerStageKey; status: "empty" | "partial" | "complete" }>,
+  currentStageKey: string | undefined,
+): UiDesignerStageKey {
+  const normalizedCurrentStageKey = normalizePrimaryStageKey(currentStageKey);
+  if (normalizedCurrentStageKey && stageViewModels.some((item) => item.stageKey === normalizedCurrentStageKey)) {
+    return normalizedCurrentStageKey;
+  }
+
+  return stageViewModels.find((item) => item.status !== "complete")?.stageKey
+    ?? stageViewModels[0]?.stageKey
+    ?? "projectScope";
+}
+
 export function UiDesignerWorkspaceShell(props: UiDesignerWorkspaceShellProps) {
   const state = useUiDesignerShellState({
     active: props.active,
   });
   const [activeStageKey, setActiveStageKey] = useState<UiDesignerStageKey>(
-    () => readWorkspaceExperienceState().uiDesigner.activeStageKey ?? "projectScope",
+    () => resolvePreferredActiveStageKey(
+      state.stageViewModels,
+      readWorkspaceExperienceState().uiDesigner.activeStageKey,
+    ),
   );
   const lastErrorMessageRef = useRef<string | null>(null);
   const activeStage = useMemo(
@@ -49,12 +79,11 @@ export function UiDesignerWorkspaceShell(props: UiDesignerWorkspaceShellProps) {
   }, [state.errorMessage]);
 
   useEffect(() => {
-    if (state.stageViewModels.length === 0 || knownStageKeys.has(activeStageKey)) {
-      return;
+    const preferredStageKey = resolvePreferredActiveStageKey(state.stageViewModels, activeStageKey);
+    if (preferredStageKey !== activeStageKey) {
+      setActiveStageKey(preferredStageKey);
     }
-
-    setActiveStageKey(state.stageViewModels[0].stageKey);
-  }, [activeStageKey, knownStageKeys, state.stageViewModels]);
+  }, [activeStageKey, state.stageViewModels]);
 
   useEffect(() => {
     updateWorkspaceExperienceState((current) => ({
@@ -67,13 +96,13 @@ export function UiDesignerWorkspaceShell(props: UiDesignerWorkspaceShellProps) {
   }, [activeStageKey]);
 
   useEffect(() => {
-    const nextStageKey = state.suggestedStageKey;
+    const nextStageKey = normalizePrimaryStageKey(state.suggestedStageKey);
     if (!nextStageKey) {
       return;
     }
 
-    if (knownStageKeys.has(nextStageKey as UiDesignerStageKey)) {
-      setActiveStageKey(nextStageKey as UiDesignerStageKey);
+    if (knownStageKeys.has(nextStageKey)) {
+      setActiveStageKey(nextStageKey);
     }
     state.clearSuggestedStageKey();
   }, [knownStageKeys, state.clearSuggestedStageKey, state.suggestedStageKey]);

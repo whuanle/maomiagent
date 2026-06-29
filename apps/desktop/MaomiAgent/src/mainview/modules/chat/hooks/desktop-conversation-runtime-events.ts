@@ -614,6 +614,9 @@ export function mergeDesktopConversationRuntimeEvents(
           updatedAt: toIso(event.run.updatedAt),
           ...(currentContextBudget ? { currentContextBudget } : {}),
         };
+        if (event.type === "compaction.completed") {
+          requiresReload = true;
+        }
         break;
       }
       default: {
