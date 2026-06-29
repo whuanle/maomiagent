@@ -170,6 +170,47 @@ describe("DesktopFeishuStore", () => {
     }
   });
 
+  test("auto-recovers garbled feishu doc markdown and title from stored docs", async () => {
+    const fixture = await createStoreFixture();
+
+    try {
+      const markdown = "# 飞书文档\n\n这里是正常中文。";
+      const title = "飞书文档";
+      const mojibakeMarkdown = Buffer.from(markdown, "utf8").toString("latin1");
+      const mojibakeTitle = Buffer.from(title, "utf8").toString("latin1");
+
+      await writeFile(fixture.storeFilePath, JSON.stringify({
+        docs: {
+          doc_1: {
+            docId: "doc_1",
+            title: mojibakeTitle,
+            markdown: mojibakeMarkdown,
+            length: mojibakeMarkdown.length,
+            totalLength: mojibakeMarkdown.length,
+            offset: 0,
+            analysis: {
+              riskyBlocks: [],
+              riskySync: false,
+              syncMode: null,
+              riskyBlockMode: "safe",
+            },
+          },
+        },
+      }), "utf8");
+
+      const snapshot = await fixture.store.read();
+
+      expect(snapshot.docs.doc_1?.title).toBe(title);
+      expect(snapshot.docs.doc_1?.markdown).toBe(markdown);
+
+      const persisted = JSON.parse(await readFile(fixture.storeFilePath, "utf8")) as DesktopFeishuStoreSnapshot;
+      expect(persisted.docs.doc_1?.title).toBe(title);
+      expect(persisted.docs.doc_1?.markdown).toBe(markdown);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
   test("persists bot form fields so they can be restored after restart", async () => {
     const fixture = await createStoreFixture();
 

@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
 
+import { recoverFeishuDocMarkdownFromGarbledText } from "./feishu-doc-markdown-garbled-recovery";
+
 const FEISHU_DOC_CACHE_DIR = ".maomi/feishu-docs";
 const FEISHU_DOC_BASELINE_DIR = ".maomi/feishu-docs/baselines";
 
@@ -69,6 +71,11 @@ export class FeishuDocMarkdownWorkspaceCache {
         return null;
       }
       throw error;
+    }
+
+    const recovered = recoverFeishuDocMarkdownFromGarbledText(markdown);
+    if (recovered && recovered !== markdown) {
+      return this.writeMarkdown(relativePath, recovered);
     }
 
     return {

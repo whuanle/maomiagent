@@ -49,6 +49,13 @@ export function buildAnthropicMessagesEndpoint(baseUrl = "https://api.anthropic.
     return url.toString();
   }
 
+  // BigModel's Claude-compatible base URL is documented as `/api/anthropic`,
+  // while the actual messages endpoint lives under `/api/anthropic/v1/messages`.
+  if (/\/api\/anthropic$/i.test(normalizedPath)) {
+    url.pathname = `${normalizedPath}/v1/messages`;
+    return url.toString();
+  }
+
   if (!normalizedPath) {
     url.pathname = "/v1/messages";
     return url.toString();

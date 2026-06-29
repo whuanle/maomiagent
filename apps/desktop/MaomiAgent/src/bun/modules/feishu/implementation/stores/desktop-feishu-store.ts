@@ -17,6 +17,7 @@ import type {
   FeishuDocContentView,
   FeishuStateView,
 } from "../../../../../shared/desktop-feishu";
+import { recoverFeishuDocMarkdownFromGarbledText } from "../services/feishu-doc-markdown-garbled-recovery";
 
 function createInitialStateView(): FeishuStateView {
   return {
@@ -169,6 +170,53 @@ function shouldFallbackToCopyOnRenameFailure(error: unknown): boolean {
   return code === "EPERM" || code === "EACCES";
 }
 
+function normalizeFeishuDocContentView(item: FeishuDocContentView): {
+  item: FeishuDocContentView;
+  changed: boolean;
+} {
+  const recoveredMarkdown = recoverFeishuDocMarkdownFromGarbledText(item.markdown);
+  const recoveredTitle = recoverFeishuDocMarkdownFromGarbledText(item.title);
+  const nextMarkdown = recoveredMarkdown ?? item.markdown;
+  const nextTitle = recoveredTitle ?? item.title;
+
+  if (nextMarkdown === item.markdown && nextTitle === item.title) {
+    return {
+      item,
+      changed: false,
+    };
+  }
+
+  return {
+    item: {
+      ...item,
+      title: nextTitle,
+      markdown: nextMarkdown,
+      length: nextMarkdown.length,
+      totalLength: nextMarkdown.length,
+    },
+    changed: true,
+  };
+}
+
+function normalizeFeishuDocsMap(docs: Record<string, FeishuDocContentView>): {
+  docs: Record<string, FeishuDocContentView>;
+  changed: boolean;
+} {
+  let changed = false;
+  const nextDocs = Object.fromEntries(
+    Object.entries(docs).map(([docId, item]) => {
+      const normalized = normalizeFeishuDocContentView(item);
+      changed ||= normalized.changed;
+      return [docId, normalized.item];
+    }),
+  );
+
+  return {
+    docs: changed ? nextDocs : docs,
+    changed,
+  };
+}
+
 export class DesktopFeishuStore implements DesktopFeishuStorePort {
   private readonly storeFilePath: string;
   private mutationQueue: Promise<unknown> = Promise.resolve();
@@ -183,7 +231,18 @@ export class DesktopFeishuStore implements DesktopFeishuStorePort {
   }
 
   async read(): Promise<DesktopFeishuStoreSnapshot> {
-    return this.readSnapshotFromDisk();
+    const snapshot = await this.readSnapshotFromDisk();
+    const normalizedDocs = normalizeFeishuDocsMap(snapshot.docs);
+    if (!normalizedDocs.changed) {
+      return snapshot;
+    }
+
+    const nextSnapshot = {
+      ...snapshot,
+      docs: normalizedDocs.docs,
+    };
+    await this.persistSnapshot(nextSnapshot);
+    return nextSnapshot;
   }
 
   async write(snapshot: DesktopFeishuStoreSnapshot): Promise<void> {
@@ -193,6 +252,10 @@ export class DesktopFeishuStore implements DesktopFeishuStorePort {
   async mutate<T>(mutator: (snapshot: DesktopFeishuStoreSnapshot) => Promise<T> | T): Promise<T> {
     const next = this.mutationQueue.then(async () => {
       const snapshot = await this.readSnapshotFromDisk();
+      const normalizedDocs = normalizeFeishuDocsMap(snapshot.docs);
+      if (normalizedDocs.changed) {
+        snapshot.docs = normalizedDocs.docs;
+      }
       const result = await mutator(snapshot);
       await this.persistSnapshot(snapshot);
       return result;
