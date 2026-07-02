@@ -4677,11 +4677,26 @@ export class DesktopAiConversationRuntime {
         turnInput,
         nextSequence,
       });
+      const normalizedRequest = normalizeProviderFacingTurnRequest({
+        executionProfile: plan.executionProfile,
+        request: {
+          executionProfile: plan.executionProfile,
+          prompt: plan.envelope,
+          settings: {
+            toolChoice: plan.tools.length > 0 ? "auto" : "none",
+          },
+          trace: {
+            sessionId: input.session.id,
+            runId: input.run.id,
+            turnId: plan.turn.id,
+          },
+        },
+      });
       const materialized = await this.resolveExecutionMaterialization(plan.executionProfile);
 
       return buildContextBudgetSummary({
         runId: input.run.id,
-        prompt: plan.envelope,
+        prompt: normalizedRequest.prompt,
         modelId: plan.executionProfile.modelId ?? materialized?.target.modelId,
         channelId: isRecord(plan.executionProfile.metadata)
           ? normalizeOptionalText(plan.executionProfile.metadata.channelId)

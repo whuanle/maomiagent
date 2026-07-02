@@ -13,6 +13,7 @@ export type WorkspaceRestoreState = {
 
 const RESTORE_STATE_STORAGE_PREFIX = "maomi.workspace.restore";
 const CHAT_WORKSPACE_TABS_STORAGE_KEY = "maomiagent.chat.workspace-tabs.v1";
+const WORKSPACE_EXPERIENCE_STATE_STORAGE_KEY = "maomiagent.workspace-experience-state.v1";
 
 function normalizeText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
@@ -21,6 +22,23 @@ function normalizeText(value: unknown): string {
 function readStoredActiveWorkspaceId(): string {
   if (typeof window === "undefined") {
     return "";
+  }
+
+  const experienceRaw = window.localStorage.getItem(WORKSPACE_EXPERIENCE_STATE_STORAGE_KEY);
+  if (experienceRaw) {
+    try {
+      const parsed = JSON.parse(experienceRaw) as {
+        chat?: {
+          activeWorkspaceId?: unknown;
+        };
+      } | null;
+      const activeWorkspaceId = normalizeText(parsed?.chat?.activeWorkspaceId);
+      if (activeWorkspaceId) {
+        return activeWorkspaceId;
+      }
+    } catch {
+      // Fall back to legacy key parsing.
+    }
   }
 
   const raw = window.localStorage.getItem(CHAT_WORKSPACE_TABS_STORAGE_KEY);

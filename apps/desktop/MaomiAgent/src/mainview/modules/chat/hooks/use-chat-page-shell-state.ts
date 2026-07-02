@@ -16,8 +16,9 @@ import {
 import {
   DESKTOP_WORKSPACE_BRIDGE_READY_EVENT,
   hasDesktopWorkspaceBridge,
+  listDesktopWorkspaces,
 } from "../../../lib/desktop-workspace";
-import { getNormalWorkspaces } from "../../../services/workspace-query-service";
+import { filterSelectableDesktopWorkspaces } from "../../../lib/desktop-workspace-filter";
 import type { ChatActionErrorType } from "../types";
 
 type UseChatPageShellStateInput = {
@@ -78,6 +79,29 @@ export function useChatPageShellState(input: UseChatPageShellStateInput) {
   );
   const selectedWorkspace = sortedWorkspaces.find((item) => item.workspaceId === workspaceId);
 
+  const loadAllNormalWorkspaces = useCallback(async () => {
+    const pageSize = 200;
+    let offset = 0;
+    const collected: DesktopWorkspaceItem[] = [];
+
+    while (true) {
+      const response = await listDesktopWorkspaces({
+        limit: pageSize,
+        offset,
+      });
+      const selectable = filterSelectableDesktopWorkspaces(response.items);
+      collected.push(...selectable);
+
+      if (!response.meta.hasMore) {
+        break;
+      }
+
+      offset += response.meta.limit;
+    }
+
+    return collected.sort(compareWorkspaces);
+  }, []);
+
   const reloadWorkspaces = useCallback(async () => {
     if (!bridgeAvailable) {
       return;
@@ -85,7 +109,7 @@ export function useChatPageShellState(input: UseChatPageShellStateInput) {
 
     setLoadingWorkspaces(true);
     try {
-      const nextItems = (await getNormalWorkspaces({ limit: 100, offset: 0 })).sort(compareWorkspaces);
+      const nextItems = await loadAllNormalWorkspaces();
       setWorkspaces(nextItems);
       setWorkspaceId((currentWorkspaceId) => resolveNextWorkspaceId(nextItems, currentWorkspaceId));
       setWorkspaceListHydrated(true);
@@ -94,7 +118,7 @@ export function useChatPageShellState(input: UseChatPageShellStateInput) {
     } finally {
       setLoadingWorkspaces(false);
     }
-  }, [bridgeAvailable, onError]);
+  }, [bridgeAvailable, loadAllNormalWorkspaces, onError]);
 
   useEffect(() => {
     const handleBridgeAvailability = () => {

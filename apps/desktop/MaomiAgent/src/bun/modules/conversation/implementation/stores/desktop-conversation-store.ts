@@ -76,7 +76,7 @@ export class DesktopConversationStore {
   listSessions(): DesktopConversationSessionItem[] {
     return this.connection
       .all<ConversationSessionRow>(
-        "SELECT * FROM desktop_conversation_sessions ORDER BY updated_at DESC, created_at DESC, session_id ASC",
+        "SELECT * FROM desktop_conversation_sessions ORDER BY created_at DESC, session_id ASC",
       )
       .map(mapConversationSessionRow);
   }

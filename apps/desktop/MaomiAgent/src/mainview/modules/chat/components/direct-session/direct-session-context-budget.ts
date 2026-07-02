@@ -31,38 +31,6 @@ function formatPercent(value: number | undefined) {
     : undefined;
 }
 
-function estimateTextTokens(value: string): number {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  if (!normalized) {
-    return 0;
-  }
-
-  return Math.ceil(normalized.length / 4);
-}
-
-function estimateCoreVisibleMessageTokens(detail: ChatSelectedSessionView["detail"] | undefined): number | undefined {
-  if (!detail || detail.messages.length === 0) {
-    return undefined;
-  }
-
-  const messages = detail.messages.filter((message) => message.role === "user");
-  if (messages.length === 0) {
-    return undefined;
-  }
-
-  const contentTokens = messages.reduce((sum, message) =>
-    sum + message.parts.reduce((partSum, part) => {
-      if (part.type !== "text") {
-        return partSum;
-      }
-
-      return partSum + estimateTextTokens(part.text);
-    }, 0), 0);
-  const roleOverheadTokens = messages.length * 4;
-
-  return contentTokens + roleOverheadTokens;
-}
-
 export function resolveComposerTokenBudgetUsage(input: {
   detail: ChatSelectedSessionView["detail"] | undefined;
   selectedModel: DirectConversationSessionPaneProps["composerModelOptions"][number] | undefined;
@@ -75,12 +43,8 @@ export function resolveComposerTokenBudgetUsage(input: {
   }
 
   const latestTokenUsage = input.detail?.latestTokenUsage;
-  const coreVisibleMessageTokens = estimateCoreVisibleMessageTokens(input.detail);
-  const selectiveUsedTokens = contextBudget?.reasoningExcluded === true
-    ? (coreVisibleMessageTokens ?? contextBudget.breakdown.messageTokens)
-    : undefined;
   const usedTokens = contextBudget
-    ? (selectiveUsedTokens ?? contextBudget.estimatedPromptTokens)
+    ? contextBudget.estimatedPromptTokens
     : latestTokenUsage?.totalTokens ?? 0;
   const percent = Math.max(0, Math.min(100, Math.round((usedTokens / limitTokens) * 100)));
   const usageText = `${formatTokenCount(usedTokens)} / ${formatTokenCount(limitTokens)}`;
@@ -105,7 +69,7 @@ export function resolveComposerTokenBudgetUsage(input: {
       ? (isEn ? "Based on local prompt estimation" : "基于本地 prompt 估算")
       : undefined;
   const scopeLabel = contextBudget
-    ? (isEn ? "Scope: current turn core payload only" : "统计范围：仅当前轮核心发送内容")
+    ? (isEn ? "Scope: current turn provider-facing prompt" : "统计范围：当前轮 provider 请求内容")
     : undefined;
   const reasoningExcludedLabel = contextBudget?.reasoningExcluded === true
     ? (isEn ? "Reasoning/system/tool traces excluded" : "统计已排除思维/系统注入/工具轨迹")

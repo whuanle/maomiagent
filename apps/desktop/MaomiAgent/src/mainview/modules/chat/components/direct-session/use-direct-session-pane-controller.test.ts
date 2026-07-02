@@ -79,7 +79,7 @@ describe("direct session pane controller helpers", () => {
       status: "critical",
       thresholdPercent: 30,
       thresholdLabel: "达到 30% 自动压缩",
-      detailLabel: "上下文使用：40,960 / 128,000 tokens（32%）\n达到 30% 自动压缩\n阈值使用：100%\n基于模型实际输入 token 统计\n统计范围：仅当前轮核心发送内容",
+      detailLabel: "上下文使用：40,960 / 128,000 tokens（32%）\n达到 30% 自动压缩\n阈值使用：100%\n基于模型实际输入 token 统计\n统计范围：当前轮 provider 请求内容",
     }));
   });
 
@@ -181,7 +181,7 @@ describe("direct session pane controller helpers", () => {
       limitTokens: 200000,
       percent: 20,
       status: "critical",
-      detailLabel: "上下文使用：40,960 / 200,000 tokens（20%）\n达到 30% 自动压缩\n阈值使用：100%\n基于模型实际输入 token 统计\n统计范围：仅当前轮核心发送内容",
+      detailLabel: "上下文使用：40,960 / 200,000 tokens（20%）\n达到 30% 自动压缩\n阈值使用：100%\n基于模型实际输入 token 统计\n统计范围：当前轮 provider 请求内容",
     }));
   });
 
@@ -227,7 +227,7 @@ describe("direct session pane controller helpers", () => {
       percent: 100,
       thresholdUsagePercent: 100,
       status: "critical",
-      detailLabel: "上下文使用：4,590,681 / 200,000 tokens（100%）\n达到 80% 自动压缩\n阈值使用：100%\n已超出 4,390,681 tokens（窗口 22.95x）\n基于模型实际输入 token 统计\n统计范围：仅当前轮核心发送内容",
+      detailLabel: "上下文使用：4,590,681 / 200,000 tokens（100%）\n达到 80% 自动压缩\n阈值使用：100%\n已超出 4,390,681 tokens（窗口 22.95x）\n基于模型实际输入 token 统计\n统计范围：当前轮 provider 请求内容",
     }));
   });
 
@@ -265,7 +265,7 @@ describe("direct session pane controller helpers", () => {
     expect(usage?.detailLabel).toContain("统计已排除思维/系统注入/工具轨迹");
   });
 
-  test("prefers visible user text token estimate for selective usage display", () => {
+  test("uses context budget estimate for usage display instead of selective user-only estimate", () => {
     const usage = resolveComposerTokenBudgetUsage({
       detail: createDetail({
         messages: [
@@ -313,11 +313,11 @@ describe("direct session pane controller helpers", () => {
     });
 
     expect(usage).toEqual(expect.objectContaining({
-      usedTokens: 7,
+      usedTokens: 5000,
       limitTokens: 100,
-      percent: 7,
-      status: "normal",
-      detailLabel: "上下文使用：7 / 100 tokens（7%）\n基于本地 prompt 估算\n统计范围：仅当前轮核心发送内容\n统计已排除思维/系统注入/工具轨迹",
+      percent: 100,
+      status: "critical",
+      detailLabel: "上下文使用：5,000 / 100 tokens（100%）\n已超出 4,900 tokens（窗口 50.00x）\n基于本地 prompt 估算\n统计范围：当前轮 provider 请求内容\n统计已排除思维/系统注入/工具轨迹",
     }));
   });
 

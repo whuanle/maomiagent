@@ -98,8 +98,7 @@ type UseChatWorkspacePaneStateInput = {
 };
 
 function compareSessions(left: DesktopConversationSessionItem, right: DesktopConversationSessionItem) {
-  return right.updatedAt.localeCompare(left.updatedAt)
-    || right.createdAt.localeCompare(left.createdAt)
+  return right.createdAt.localeCompare(left.createdAt)
     || left.sessionId.localeCompare(right.sessionId, "en", { sensitivity: "base" });
 }
 
@@ -783,14 +782,16 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
         : undefined;
       const storedSelectedChannelId = normalizeOptionalText(workspaceSettings.selectedChannelId);
       const storedSelectedModelId = normalizeOptionalText(workspaceSettings.selectedModelId);
-      const selectedChannelId = resolvedDetailChannelId
+      const selectedChannelId = (storedSelectedChannelId && storedSelectedModelId ? storedSelectedChannelId : undefined)
+        ?? resolvedDetailChannelId
         ?? selectedSessionDetailChannelId
         ?? selectedSessionSummaryChannelId
-        ?? (storedSelectedChannelId && storedSelectedModelId ? storedSelectedChannelId : undefined);
-      const selectedModelId = resolvedDetailModelId
+        ;
+      const selectedModelId = (storedSelectedChannelId && storedSelectedModelId ? storedSelectedModelId : undefined)
+        ?? resolvedDetailModelId
         ?? selectedSessionDetailModelId
         ?? selectedSessionSummaryModelId
-        ?? (storedSelectedChannelId && storedSelectedModelId ? storedSelectedModelId : undefined);
+        ;
       let response;
       try {
         response = await getDesktopModelRuntimeSelectionSnapshot({

@@ -1077,8 +1077,7 @@ export class DesktopConversationService implements DesktopConversationPort {
     });
 
     const sorted = filtered.sort((left, right) =>
-      right.updatedAt.localeCompare(left.updatedAt)
-      || right.createdAt.localeCompare(left.createdAt)
+      right.createdAt.localeCompare(left.createdAt)
       || left.sessionId.localeCompare(right.sessionId, "en", { sensitivity: "base" }),
     );
     const { items, ...meta } = paginate(sorted, input.limit, input.offset);
