@@ -31,6 +31,38 @@ function formatPercent(value: number | undefined) {
     : undefined;
 }
 
+function estimateTextTokens(value: string): number {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return 0;
+  }
+
+  return Math.ceil(normalized.length / 4);
+}
+
+function estimateCoreVisibleMessageTokens(detail: ChatSelectedSessionView["detail"] | undefined): number | undefined {
+  if (!detail || detail.messages.length === 0) {
+    return undefined;
+  }
+
+  const messages = detail.messages.filter((message) => message.role === "user");
+  if (messages.length === 0) {
+    return undefined;
+  }
+
+  const contentTokens = messages.reduce((sum, message) =>
+    sum + message.parts.reduce((partSum, part) => {
+      if (part.type !== "text") {
+        return partSum;
+      }
+
+      return partSum + estimateTextTokens(part.text);
+    }, 0), 0);
+  const roleOverheadTokens = messages.length * 4;
+
+  return contentTokens + roleOverheadTokens;
+}
+
 export function resolveComposerTokenBudgetUsage(input: {
   detail: ChatSelectedSessionView["detail"] | undefined;
   selectedModel: DirectConversationSessionPaneProps["composerModelOptions"][number] | undefined;
@@ -43,20 +75,41 @@ export function resolveComposerTokenBudgetUsage(input: {
   }
 
   const latestTokenUsage = input.detail?.latestTokenUsage;
-  const usedTokens = contextBudget
-    ? contextBudget.estimatedPromptTokens
-    : latestTokenUsage?.totalTokens ?? 0;
-  const promptUsagePercent = contextBudget
-    ? contextBudget.promptUsagePercent
+  const coreVisibleMessageTokens = estimateCoreVisibleMessageTokens(input.detail);
+  const selectiveUsedTokens = contextBudget?.reasoningExcluded === true
+    ? (coreVisibleMessageTokens ?? contextBudget.breakdown.messageTokens)
     : undefined;
-  const percent = Math.max(
-    0,
-    Math.min(100, promptUsagePercent ?? Math.round((usedTokens / limitTokens) * 100)),
-  );
+  const usedTokens = contextBudget
+    ? (selectiveUsedTokens ?? contextBudget.estimatedPromptTokens)
+    : latestTokenUsage?.totalTokens ?? 0;
+  const percent = Math.max(0, Math.min(100, Math.round((usedTokens / limitTokens) * 100)));
   const usageText = `${formatTokenCount(usedTokens)} / ${formatTokenCount(limitTokens)}`;
   const isEn = input.language === "en-US";
   const thresholdPercent = contextBudget?.compressionThresholdPercent;
-  const thresholdUsagePercent = contextBudget?.thresholdUsagePercent;
+  const thresholdTokens = contextBudget?.compressionThresholdTokens;
+  const thresholdUsagePercent = thresholdTokens && thresholdTokens > 0
+    ? Math.max(0, Math.min(100, Math.round((usedTokens / thresholdTokens) * 100)))
+    : (typeof contextBudget?.thresholdUsagePercent === "number"
+      ? Math.max(0, Math.min(100, Math.round(contextBudget.thresholdUsagePercent)))
+      : undefined);
+  const overflowTokens = usedTokens - limitTokens;
+  const overflowRatio = limitTokens > 0 ? usedTokens / limitTokens : 0;
+  const overflowLabel = overflowTokens > 0
+    ? (isEn
+        ? `Over by ${formatExactTokenCount(overflowTokens)} tokens (${overflowRatio.toFixed(2)}x window)`
+        : `已超出 ${formatExactTokenCount(overflowTokens)} tokens（窗口 ${overflowRatio.toFixed(2)}x）`)
+    : undefined;
+  const tokenSourceLabel = contextBudget?.tokenSource === "actual_usage"
+    ? (isEn ? "Based on model-reported input tokens" : "基于模型实际输入 token 统计")
+    : contextBudget?.tokenSource === "estimated_envelope"
+      ? (isEn ? "Based on local prompt estimation" : "基于本地 prompt 估算")
+      : undefined;
+  const scopeLabel = contextBudget
+    ? (isEn ? "Scope: current turn core payload only" : "统计范围：仅当前轮核心发送内容")
+    : undefined;
+  const reasoningExcludedLabel = contextBudget?.reasoningExcluded === true
+    ? (isEn ? "Reasoning/system/tool traces excluded" : "统计已排除思维/系统注入/工具轨迹")
+    : undefined;
   const thresholdLabel = thresholdPercent
     ? (isEn
         ? `Auto compact at ${thresholdPercent}%`
@@ -73,6 +126,10 @@ export function resolveComposerTokenBudgetUsage(input: {
     thresholdUsageLabel
       ? (isEn ? `Threshold usage: ${thresholdUsageLabel}` : `阈值使用：${thresholdUsageLabel}`)
       : undefined,
+    overflowLabel,
+    tokenSourceLabel,
+    scopeLabel,
+    reasoningExcludedLabel,
   ].filter((item): item is string => Boolean(item)).join("\n");
 
   return {

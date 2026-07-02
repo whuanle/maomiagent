@@ -242,6 +242,7 @@ export function ShellPage(props: Props) {
   const [cwd, setCwd] = useState("");
   const [title, setTitle] = useState("");
   const detailRequestRef = useRef(0);
+  const pendingCreatedSessionIdRef = useRef<string | null>(null);
   const hasWorkspaceBinding = Boolean((boundWorkspaceId || selectedWorkspaceId)?.trim());
   const { settings: workspaceSettings } = useConversationWorkspaceSettings(boundWorkspaceId || selectedWorkspaceId);
   const shellMenuItems = useMemo<NonNullable<MenuProps["items"]>>(
@@ -288,9 +289,21 @@ export function ShellPage(props: Props) {
         ? response.items.filter((item) => item.workspaceId === boundWorkspaceId)
         : response.items;
       setSessions(nextItems);
-      setActiveSessionId((current) => current && nextItems.some((item) => item.sessionId === current)
-        ? current
-        : nextItems[0]?.sessionId);
+      setActiveSessionId((current) => {
+        if (pendingCreatedSessionIdRef.current) {
+          return pendingCreatedSessionIdRef.current;
+        }
+
+        if (current && nextItems.some((item) => item.sessionId === current)) {
+          return current;
+        }
+
+        return nextItems[0]?.sessionId;
+      });
+
+      if (pendingCreatedSessionIdRef.current && nextItems.some((item) => item.sessionId === pendingCreatedSessionIdRef.current)) {
+        pendingCreatedSessionIdRef.current = null;
+      }
     } catch (error) {
       message.error(`${copy.loadFailed}: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -388,6 +401,7 @@ export function ShellPage(props: Props) {
         ...(cwd.trim() ? { cwd: cwd.trim() } : {}),
         ...(title.trim() ? { title: title.trim() } : {}),
       });
+      pendingCreatedSessionIdRef.current = session.sessionId;
       setActiveSessionId(session.sessionId);
       setViewportError(null);
       await loadSessions();
@@ -419,6 +433,14 @@ export function ShellPage(props: Props) {
 
   const handleClose = useCallback(async (sessionId: string) => {
     try {
+      if (pendingCreatedSessionIdRef.current === sessionId) {
+        pendingCreatedSessionIdRef.current = null;
+      }
+
+      if (activeSessionId === sessionId) {
+        setActiveSessionId(undefined);
+      }
+
       await closeDesktopTerminalSession(sessionId);
       await loadSessions();
       if (activeSessionId !== sessionId) {
@@ -441,6 +463,7 @@ export function ShellPage(props: Props) {
   const activeSessionDetail = activeSession && detail?.session?.sessionId === activeSession.sessionId
     ? detail
     : null;
+  const activeSessionTerminalOutput = activeSessionDetail?.rawOutput ?? activeSessionDetail?.output ?? "";
   const terminalSurfaceError = detailError ?? viewportError;
   const embeddedTabItems = useMemo<TabsProps["items"]>(
     () => sessions.map((session, index) => {
@@ -512,7 +535,7 @@ export function ShellPage(props: Props) {
                   <TerminalViewport
                     className="chat-terminal-viewport"
                     sessionKey={activeSession.sessionId}
-                    output={activeSessionDetail?.output ?? ""}
+                    output={activeSessionTerminalOutput}
                     status={activeSession.status}
                     onInput={handleTerminalInput}
                     onResize={(cols, rows) => handleTerminalResize(activeSession.sessionId, cols, rows)}
@@ -647,7 +670,7 @@ export function ShellPage(props: Props) {
                   <TerminalViewport
                     className="shell-page-terminal-viewport"
                     sessionKey={activeSession.sessionId}
-                    output={activeSessionDetail?.output ?? ""}
+                    output={activeSessionTerminalOutput}
                     status={activeSession.status}
                     onInput={handleTerminalInput}
                     onResize={(cols, rows) => handleTerminalResize(activeSession.sessionId, cols, rows)}

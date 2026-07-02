@@ -24,6 +24,9 @@ type DesignerFlowPanelProps = {
 
 export function DesignerFlowPanel(props: DesignerFlowPanelProps) {
   const taskStage = props.stageViewModels.find((item) => item.stageKey === props.taskStageKey);
+  const completedCount = props.stageViewModels.filter((item) => item.status === "complete").length;
+  const pendingCount = props.stageViewModels.filter((item) => item.status === "partial").length;
+  const todoCount = props.stageViewModels.filter((item) => item.status === "empty").length;
 
   function handleStageItemKeyDown(
     event: KeyboardEvent<HTMLElement>,
@@ -75,15 +78,25 @@ export function DesignerFlowPanel(props: DesignerFlowPanelProps) {
             <div className="ui-designer-live-task-summary">
               {taskStage?.summary || "当前没有可执行阶段"}
             </div>
+            <div className="ui-designer-stage-overview-row" aria-label="阶段状态概览">
+              <Tag color="success">已完成 {completedCount}</Tag>
+              <Tag color="processing">待补充 {pendingCount}</Tag>
+              <Tag>未开始 {todoCount}</Tag>
+            </div>
           </div>
         </div>
 
         <div className="ui-designer-section">
+          <div className="ui-designer-section-header ui-designer-stage-list-header">
+            <span className="ui-designer-status-bar-label">阶段清单</span>
+          </div>
           <div className="ui-designer-stage-list">
             {props.stageViewModels.map((item, index) => {
               const actionVisible = isStageActionVisible(props.stageViewModels, index);
               const pending = props.pendingStageKey === item.stageKey;
               const linkedTask = props.taskStageKey === item.stageKey;
+              const statusTagColor = item.status === "complete" ? "success" : item.status === "partial" ? "processing" : "default";
+              const statusLabel = item.status === "complete" ? "已完成" : item.status === "partial" ? "待补充" : "未开始";
 
               return (
                 <div
@@ -99,6 +112,7 @@ export function DesignerFlowPanel(props: DesignerFlowPanelProps) {
                   <div className="ui-designer-stage-item-content">
                     <div className="ui-designer-stage-item-main">
                       <span className="ui-designer-stage-item-title">{item.title}</span>
+                      <Tag color={statusTagColor}>{statusLabel}</Tag>
                       {linkedTask ? <Tag color="blue">当前任务</Tag> : null}
                       {pending ? <Tag color="processing">待填写</Tag> : null}
                       {actionVisible

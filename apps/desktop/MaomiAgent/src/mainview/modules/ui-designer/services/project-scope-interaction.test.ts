@@ -6,7 +6,7 @@ describe("project-scope-interaction", () => {
   test("builds a shared chat form request with recommended options and initial values", () => {
     const request = buildProjectScopeInteractionRequest({
       projectType: "桌面程序",
-      businessType: "工具产品",
+      businessType: "工具型工作台",
       targetPlatform: "跨平台桌面端",
       currentObjective: "先确定编辑器核心界面",
       deliverySummary: "输出第一版信息架构",
@@ -22,7 +22,7 @@ describe("project-scope-interaction", () => {
       value: "桌面程序",
     });
     expect(request.fields[0]?.recommendedOptions?.some((option) => option.value === "Web")).toBe(true);
-    expect(request.fields[1]?.recommendedOptions?.some((option) => option.value === "工具产品")).toBe(true);
+    expect(request.fields[1]?.recommendedOptions?.some((option) => option.value === "工具型工作台")).toBe(true);
     expect(request.fields[2]?.recommendedOptions?.some((option) => option.value === "跨平台桌面端")).toBe(true);
     expect(request.fields[3]).toMatchObject({
       key: "currentObjective",

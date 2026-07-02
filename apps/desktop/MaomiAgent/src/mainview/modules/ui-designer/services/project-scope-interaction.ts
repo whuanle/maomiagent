@@ -11,11 +11,11 @@ const PROJECT_TYPE_OPTIONS: readonly InteractionOption[] = [
 ];
 
 const BUSINESS_TYPE_OPTIONS: readonly InteractionOption[] = [
-  { value: "后台管理系统", label: "后台管理系统" },
-  { value: "工具产品", label: "工具产品" },
-  { value: "内容站", label: "内容站" },
-  { value: "企业官网", label: "企业官网" },
-  { value: "电商业务", label: "电商业务" },
+  { value: "数据管理界面", label: "数据管理界面" },
+  { value: "工具型工作台", label: "工具型工作台" },
+  { value: "内容浏览界面", label: "内容浏览界面" },
+  { value: "品牌展示界面", label: "品牌展示界面" },
+  { value: "流程操作界面", label: "流程操作界面" },
 ];
 
 const TARGET_PLATFORM_OPTIONS: readonly InteractionOption[] = [
@@ -32,7 +32,7 @@ export function buildProjectScopeInteractionRequest(
   return {
     kind: "form",
     title: "项目范围确认",
-    description: "先确认项目范围，提交后我会基于这些信息提出第一个最关键的问题。",
+    description: "先确认界面设计范围与约束，提交后我会基于这些信息提出第一个最关键的问题。",
     submitLabel: "确认范围并继续",
     rejectLabel: "暂不继续",
     fields: [
@@ -47,10 +47,10 @@ export function buildProjectScopeInteractionRequest(
       },
       {
         key: "businessType",
-        label: "业务类型",
+        label: "界面场景",
         kind: "text",
         required: true,
-        placeholder: "先点一个推荐项，也可以手动输入业务类型",
+        placeholder: "先点一个推荐项，也可以手动输入界面场景",
         recommendedOptions: BUSINESS_TYPE_OPTIONS,
         value: values.businessType,
       },
@@ -65,16 +65,16 @@ export function buildProjectScopeInteractionRequest(
       },
       {
         key: "currentObjective",
-        label: "当前目标",
+        label: "当前设计目标",
         kind: "textarea",
-        placeholder: "这一轮想先确认什么",
+        placeholder: "这一轮优先确认哪些 UI 结论",
         value: values.currentObjective,
       },
       {
         key: "deliverySummary",
-        label: "交付范围",
+        label: "交付范围与设计依据",
         kind: "textarea",
-        placeholder: "希望这一步最后产出什么",
+        placeholder: "例如：组件规范、页面骨架、设计约束、UI 约束、设计依据",
         value: values.deliverySummary,
       },
     ],

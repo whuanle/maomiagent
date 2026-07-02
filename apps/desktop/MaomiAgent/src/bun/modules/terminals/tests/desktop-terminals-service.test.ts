@@ -239,6 +239,8 @@ describe("DesktopTerminalsService", () => {
     expect(detail?.output).toBe(
       "Get-ChildItem src -Directory | Select-Object Name\n\nName\n----\nmain\nshared",
     );
+    expect(detail?.rawOutput).toContain("PS E:\\workspace\\hearing>");
+    expect(detail?.rawOutput).toContain("\u001b");
     expect(detail?.output).not.toContain("\u001b");
     expect(detail?.output).not.toContain("PS E:\\workspace\\hearing>");
   });

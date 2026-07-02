@@ -219,6 +219,20 @@ function roundPercent(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 
+function buildBudgetEstimationPrompt(prompt: AiTurnRequest["prompt"]): AiTurnRequest["prompt"] {
+  const sanitizedMessages = prompt.messages
+    .map((message) => ({
+      ...message,
+      parts: message.parts.filter((part) => part.type !== "reasoning"),
+    }))
+    .filter((message) => message.parts.length > 0);
+
+  return {
+    ...prompt,
+    messages: sanitizedMessages,
+  };
+}
+
 function readExecutionProfileNumericMetadata(
   executionProfile: AiExecutionProfileRef,
   key: string,
@@ -499,26 +513,31 @@ function buildContextBudgetSummary(input: {
   compressionThresholdPercent?: number;
   compaction?: DesktopConversationCompactionStatusSummary;
 }): DesktopConversationContextBudgetSummary {
+  const budgetPrompt = buildBudgetEstimationPrompt(input.prompt);
   const estimate = CONTEXT_TOKEN_ESTIMATOR.estimate({
-    envelope: input.prompt,
+    envelope: budgetPrompt,
   });
+  const promptTokens = estimate.promptTokens;
+  const tokenSource = "estimated_envelope" as const;
   const contextWindowTokens = normalizeOptionalPositiveFiniteNumber(input.contextWindowTokens);
   const thresholdPercent = normalizeOptionalPercentNumber(input.compressionThresholdPercent);
   const compressionThresholdTokens = contextWindowTokens && thresholdPercent
     ? Math.max(1, Math.floor((contextWindowTokens * thresholdPercent) / 100))
     : undefined;
   const promptUsagePercent = contextWindowTokens
-    ? roundPercent((estimate.promptTokens / contextWindowTokens) * 100)
+    ? roundPercent((promptTokens / contextWindowTokens) * 100)
     : undefined;
   const thresholdUsagePercent = compressionThresholdTokens
-    ? roundPercent((estimate.promptTokens / compressionThresholdTokens) * 100)
+    ? roundPercent((promptTokens / compressionThresholdTokens) * 100)
     : undefined;
 
   return {
     runId: input.runId,
     ...(input.modelId ? { modelId: input.modelId } : {}),
     ...(input.channelId ? { channelId: input.channelId } : {}),
-    estimatedPromptTokens: estimate.promptTokens,
+    estimatedPromptTokens: promptTokens,
+    tokenSource,
+    reasoningExcluded: true,
     ...(contextWindowTokens ? { contextWindowTokens } : {}),
     ...(normalizeOptionalPositiveFiniteNumber(input.maxOutputTokens)
       ? { maxOutputTokens: normalizeOptionalPositiveFiniteNumber(input.maxOutputTokens)! }
@@ -528,7 +547,7 @@ function buildContextBudgetSummary(input: {
     ...(promptUsagePercent !== undefined ? { promptUsagePercent } : {}),
     ...(thresholdUsagePercent !== undefined ? { thresholdUsagePercent } : {}),
     shouldAutoCompress: compressionThresholdTokens !== undefined
-      ? estimate.promptTokens >= compressionThresholdTokens
+      ? promptTokens >= compressionThresholdTokens
       : false,
     breakdown: {
       ...estimate.breakdown,

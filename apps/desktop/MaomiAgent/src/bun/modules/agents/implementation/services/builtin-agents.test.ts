@@ -92,7 +92,7 @@ test("builtin ui designer agent is visible as a primary design assistant", () =>
   expect(item?.prompt).toContain("表单");
   expect(item?.prompt).toContain("设计稿预览壳");
   expect(item?.prompt).toContain("组件展示壳");
-  expect(item?.prompt).toContain("最小业务示例壳");
+  expect(item?.prompt).toContain("最小页面演示壳");
   expect(item?.prompt).toContain("preview-app");
   expect(item?.prompt).toContain("多文件结构");
   expect(item?.prompt).toContain("assets/*.css");

@@ -33,6 +33,7 @@ describe("direct session pane controller helpers", () => {
         modelId: "moonshot-v1-8k",
         channelId: "kimi",
         estimatedPromptTokens: 40960,
+        tokenSource: "actual_usage",
         contextWindowTokens: 128000,
         compressionThresholdPercent: 30,
         compressionThresholdTokens: 38400,
@@ -74,11 +75,11 @@ describe("direct session pane controller helpers", () => {
       usedTokens: 40960,
       limitTokens: 128000,
       percent: 32,
-      thresholdUsagePercent: 107,
+      thresholdUsagePercent: 100,
       status: "critical",
       thresholdPercent: 30,
       thresholdLabel: "达到 30% 自动压缩",
-      detailLabel: "上下文使用：40,960 / 128,000 tokens（32%）\n达到 30% 自动压缩\n阈值使用：107%",
+      detailLabel: "上下文使用：40,960 / 128,000 tokens（32%）\n达到 30% 自动压缩\n阈值使用：100%\n基于模型实际输入 token 统计\n统计范围：仅当前轮核心发送内容",
     }));
   });
 
@@ -89,6 +90,7 @@ describe("direct session pane controller helpers", () => {
         modelId: "moonshot-v1-8k",
         channelId: "kimi",
         estimatedPromptTokens: 40960,
+        tokenSource: "actual_usage",
         contextWindowTokens: 128000,
         compressionThresholdPercent: 30,
         compressionThresholdTokens: 38400,
@@ -122,7 +124,7 @@ describe("direct session pane controller helpers", () => {
       usedTokens: 40960,
       limitTokens: 128000,
       percent: 32,
-      thresholdUsagePercent: 107,
+      thresholdUsagePercent: 100,
       status: "critical",
     }));
   });
@@ -134,6 +136,7 @@ describe("direct session pane controller helpers", () => {
         modelId: "moonshot-v1-8k",
         channelId: "kimi",
         estimatedPromptTokens: 40960,
+        tokenSource: "actual_usage",
         contextWindowTokens: 128000,
         compressionThresholdPercent: 30,
         compressionThresholdTokens: 38400,
@@ -176,9 +179,145 @@ describe("direct session pane controller helpers", () => {
     expect(usage).toEqual(expect.objectContaining({
       usedTokens: 40960,
       limitTokens: 200000,
-      percent: 32,
+      percent: 20,
       status: "critical",
-      detailLabel: "上下文使用：40,960 / 200,000 tokens（32%）\n达到 30% 自动压缩\n阈值使用：107%",
+      detailLabel: "上下文使用：40,960 / 200,000 tokens（20%）\n达到 30% 自动压缩\n阈值使用：100%\n基于模型实际输入 token 统计\n统计范围：仅当前轮核心发送内容",
+    }));
+  });
+
+  test("caps usage and threshold percentages at 100 when token counts overflow", () => {
+    const usage = resolveComposerTokenBudgetUsage({
+      detail: createDetail({
+        currentContextBudget: {
+          runId: "run-over-budget",
+          modelId: "gpt-5-mini",
+          channelId: "openai",
+          estimatedPromptTokens: 4_590_681,
+          tokenSource: "actual_usage",
+          contextWindowTokens: 200_000,
+          compressionThresholdPercent: 80,
+          compressionThresholdTokens: 160_000,
+          promptUsagePercent: 100,
+          thresholdUsagePercent: 100,
+          shouldAutoCompress: true,
+          breakdown: {
+            systemTokens: 200,
+            contextTokens: 3_000,
+            messageTokens: 4_587_481,
+            toolTokens: 0,
+            outputSchemaTokens: 0,
+          },
+        },
+      }),
+      selectedModel: {
+        value: "openai/gpt-5-mini",
+        label: "GPT-5 mini",
+        channelId: "openai",
+        modelId: "gpt-5-mini",
+        providerType: "openai",
+        contextWindow: 200000,
+        searchText: "GPT-5 mini gpt-5-mini",
+      },
+      language: "zh-CN",
+    });
+
+    expect(usage).toEqual(expect.objectContaining({
+      usedTokens: 4_590_681,
+      limitTokens: 200_000,
+      percent: 100,
+      thresholdUsagePercent: 100,
+      status: "critical",
+      detailLabel: "上下文使用：4,590,681 / 200,000 tokens（100%）\n达到 80% 自动压缩\n阈值使用：100%\n已超出 4,390,681 tokens（窗口 22.95x）\n基于模型实际输入 token 统计\n统计范围：仅当前轮核心发送内容",
+    }));
+  });
+
+  test("adds reasoning-excluded note when budget metadata opts in", () => {
+    const usage = resolveComposerTokenBudgetUsage({
+      detail: createDetail({
+        currentContextBudget: {
+          runId: "run-reasoning-excluded",
+          estimatedPromptTokens: 1500,
+          tokenSource: "estimated_envelope",
+          reasoningExcluded: true,
+          contextWindowTokens: 8000,
+          shouldAutoCompress: false,
+          breakdown: {
+            systemTokens: 100,
+            contextTokens: 200,
+            messageTokens: 1200,
+            toolTokens: 0,
+            outputSchemaTokens: 0,
+          },
+        },
+      }),
+      selectedModel: {
+        value: "openai/gpt-5-mini",
+        label: "GPT-5 mini",
+        channelId: "openai",
+        modelId: "gpt-5-mini",
+        providerType: "openai",
+        contextWindow: 8000,
+        searchText: "GPT-5 mini gpt-5-mini",
+      },
+      language: "zh-CN",
+    });
+
+    expect(usage?.detailLabel).toContain("统计已排除思维/系统注入/工具轨迹");
+  });
+
+  test("prefers visible user text token estimate for selective usage display", () => {
+    const usage = resolveComposerTokenBudgetUsage({
+      detail: createDetail({
+        messages: [
+          {
+            messageId: "msg-user",
+            sessionId: "session-1",
+            role: "user",
+            createdAt: 1,
+            parts: [{ type: "text", partId: "part-user", text: "hello world" }],
+          } as never,
+          {
+            messageId: "msg-assistant",
+            sessionId: "session-1",
+            role: "assistant",
+            createdAt: 2,
+            parts: [{ type: "text", partId: "part-assistant", text: "ok" }],
+          } as never,
+        ],
+        currentContextBudget: {
+          runId: "run-core-text",
+          estimatedPromptTokens: 5000,
+          tokenSource: "estimated_envelope",
+          reasoningExcluded: true,
+          contextWindowTokens: 100,
+          shouldAutoCompress: false,
+          breakdown: {
+            systemTokens: 800,
+            contextTokens: 1200,
+            messageTokens: 2500,
+            toolTokens: 500,
+            outputSchemaTokens: 0,
+          },
+        },
+      }),
+      selectedModel: {
+        value: "openai/gpt-5-mini",
+        label: "GPT-5 mini",
+        channelId: "openai",
+        modelId: "gpt-5-mini",
+        providerType: "openai",
+        contextWindow: 100,
+        searchText: "GPT-5 mini gpt-5-mini",
+      },
+      language: "zh-CN",
+    });
+
+    expect(usage).toEqual(expect.objectContaining({
+      usedTokens: 7,
+      limitTokens: 100,
+      percent: 7,
+      status: "normal",
+      detailLabel: "上下文使用：7 / 100 tokens（7%）\n基于本地 prompt 估算\n统计范围：仅当前轮核心发送内容\n统计已排除思维/系统注入/工具轨迹",
     }));
   });
 

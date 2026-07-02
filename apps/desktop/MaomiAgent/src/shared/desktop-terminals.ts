@@ -61,6 +61,7 @@ export type DesktopTerminalDetailQuery = {
 export type DesktopTerminalSessionDetail = {
   session: DesktopTerminalSessionRecord;
   output: string;
+  rawOutput?: string;
   revision: number;
   truncated: boolean;
 };

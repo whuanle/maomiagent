@@ -92,12 +92,12 @@ const STAGE_TITLE_MAP: Record<UiDesignerStageKey, string> = {
 };
 
 const STAGE_GOAL_MAP: Record<UiDesignerStageKey, string> = {
-  projectScope: "明确项目形态、业务类型、目标平台、当前目标与交付范围。",
+  projectScope: "明确项目形态、界面场景、目标平台、当前设计目标、交付范围与设计约束。",
   stack: "明确技术路线、运行平台、核心框架、UI 方案与工程约束。",
   theme: "明确风格方向、色彩倾向、界面密度、视觉关键词与交互原则。",
   patterns: "明确按钮、输入框、选择器、表格、表单、弹窗、抽屉、标签页、标签、空状态与消息通知等组件规范体系。",
   layouts: "明确导航结构、页面骨架、内容布局、详情策略与响应策略。",
-  pages: "明确页面骨架、验证壳、核心模块、主任务流与页面关系。",
+  pages: "明确页面骨架、验证壳、核心模块、页面切换示意与页面关系。",
   spec: "整理设计规格书的章节覆盖、交付物与待补充内容。",
 };
 
@@ -417,10 +417,19 @@ function buildStageSchemaPrompt(stageKey: UiDesignerStageKey, context: UiDesigne
         "8. 核心组件至少覆盖：按钮、输入框、选择器、表格、表单、弹窗、抽屉、标签页、标签、空状态、消息通知。",
         "9. 如果已有组件规范，只继续补缺失字段，不要把用户已经确认的组件结论打散重来。",
       ]
-    : stageKey === "theme"
+      : stageKey === "projectScope"
+        ? [
+            "7. 当前阶段优先确认界面场景、设计约束、UI 约束和设计依据，不要追问业务规则或功能流程细节。",
+          ]
+      : stageKey === "theme"
       ? [
           "7. 当前阶段只聚焦界面风格、主题、密度、视觉关键词和交互原则，不要把问题带到技术栈、架构和实现细节。",
         ]
+      : stageKey === "pages"
+        ? [
+            "7. 当前阶段只聚焦页面结构、布局分区、组件摆放、页面切换示意和验证壳，不要追问业务规则或功能闭环。",
+            "8. 如需描述流程，只允许写页面层级或页面切换，不要写角色权限、接口契约、状态机或功能实现逻辑。",
+          ]
     : [];
   return [
     `阶段：${STAGE_TITLE_MAP[stageKey]} (${stageKey})`,
@@ -452,10 +461,19 @@ function buildStageResultPrompt(
         "7. componentSpecs 下每个组件只保留最小必要字段：summary、states、sizeTokens、usageNotes。",
         "8. 优先先把 summary 写清楚；只有确实需要时再补 states、sizeTokens、usageNotes，不要把结构写得很重。",
       ]
-    : stageKey === "theme"
+      : stageKey === "projectScope"
+        ? [
+            "5. scope.content 只输出项目形态、界面场景、平台边界、设计目标、交付范围与设计依据，不要扩写业务逻辑。",
+          ]
+      : stageKey === "theme"
       ? [
           "5. theme.content 只聚焦界面风格、色彩、密度、视觉关键词和交互原则，不要把技术栈、架构或实现建议写进这个阶段。",
         ]
+      : stageKey === "pages"
+        ? [
+            "5. pages.content 只输出页面骨架、布局结构、组件模块分布、页面切换示意和验证壳，不要扩写业务规则或功能实现。",
+            "6. 如果出现 taskFlows 或 exampleFlows，请按页面演示序列理解，仅描述界面跳转与展示，不描述业务处理逻辑。",
+          ]
     : [];
   return [
     `阶段：${STAGE_TITLE_MAP[stageKey]} (${stageKey})`,

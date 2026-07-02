@@ -363,6 +363,7 @@ export class DesktopTerminalsService implements DesktopTerminalsPort {
     return {
       session: { ...session.record },
       output: truncated ? sanitizedOutput.slice(-limit) : sanitizedOutput,
+      rawOutput: truncated ? session.output.slice(-limit) : session.output,
       revision: session.revision,
       truncated,
     };

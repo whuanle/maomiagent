@@ -470,10 +470,10 @@ function buildProjectScopeModel(scope: Record<string, unknown>): UiDesignerStage
         title: "项目范围",
         items: [
           { label: "项目形态", value: projectShape || "未确认", kind: "text", emphasis: true },
-          { label: "业务类型", value: businessType || "未确认", kind: "text" },
+          { label: "界面场景", value: businessType || "未确认", kind: "text" },
           { label: "目标平台", value: targetPlatform || "未确认", kind: "text" },
-          { label: "当前目标", value: currentObjective || "未确认", kind: "text" },
-          { label: "交付范围", value: deliverySummary || "未确认", kind: "paragraph" },
+          { label: "当前设计目标", value: currentObjective || "未确认", kind: "text" },
+          { label: "交付范围与设计依据", value: deliverySummary || "未确认", kind: "paragraph" },
         ],
       },
     ],
@@ -594,7 +594,7 @@ function buildPatternModel(patterns: Record<string, unknown>): UiDesignerStageVi
       },
       {
         key: "patterns",
-        title: "交互与组合模式",
+        title: "组件与布局模式",
         items: [
           { label: "表单模式", value: formPattern || "未确认", kind: "text" },
           { label: "筛选区模式", value: filterBarPattern || "未确认", kind: "text" },
@@ -704,7 +704,7 @@ function buildPagesModel(
         items: [
           { label: "设计稿预览壳", value: previewShells.length > 0 ? previewShells : ["未确认"], kind: "tagList" },
           { label: "组件展示壳", value: componentShowcaseShells.length > 0 ? componentShowcaseShells : ["未确认"], kind: "tagList" },
-          { label: "最小业务示例壳", value: taskFlows.length > 0 ? taskFlows : ["未确认"], kind: "tagList" },
+          { label: "最小页面演示壳", value: taskFlows.length > 0 ? taskFlows : ["未确认"], kind: "tagList" },
           { label: "页面关系", value: relationships.length > 0 ? relationships : ["未确认"], kind: "tagList" },
         ],
       },

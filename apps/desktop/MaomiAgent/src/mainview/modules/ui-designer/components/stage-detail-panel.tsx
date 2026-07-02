@@ -65,18 +65,22 @@ export function StageDetailPanel(props: StageDetailPanelProps) {
       </div>
 
       <div className="ui-designer-stage-detail-header">
-        <strong className="ui-designer-thread-title">{props.activeStage.title}</strong>
-        <Tag>{resolveStageStatusLabel(props.activeStage.status)}</Tag>
+        <div className="ui-designer-stage-detail-title-wrap">
+          <strong className="ui-designer-thread-title">{props.activeStage.title}</strong>
+          <div className="ui-designer-stage-detail-summary">{props.activeStage.summary}</div>
+        </div>
+        <Tag color={props.activeStage.status === "complete" ? "success" : props.activeStage.status === "partial" ? "processing" : "default"}>
+          {resolveStageStatusLabel(props.activeStage.status)}
+        </Tag>
       </div>
       <div className="ui-designer-stage-task-status-row">
         <Tag color={props.liveTaskState === "running" ? "processing" : props.liveTaskState === "waiting" ? "gold" : "default"}>
-          任务状态：{props.liveTaskLabel}
+          任务：{props.liveTaskLabel}
         </Tag>
         <Tag color={props.taskStageKey === props.activeStage.stageKey ? "blue" : "default"}>
           {props.taskStageKey === props.activeStage.stageKey ? "已对齐当前任务" : "查看历史阶段"}
         </Tag>
       </div>
-      <div className="ui-designer-stage-detail-summary">{props.activeStage.summary}</div>
 
       <div className="ui-designer-panel-scroll">
         {props.activeStage.sections.map((section) => (

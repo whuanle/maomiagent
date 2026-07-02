@@ -8,6 +8,7 @@ import {
   loadTerminalViewportGhostty,
 } from "./terminal-viewport-ghostty";
 import { terminalWriter } from "./terminal-writer";
+import "./terminal-viewport.css";
 
 type Props = {
   className?: string;

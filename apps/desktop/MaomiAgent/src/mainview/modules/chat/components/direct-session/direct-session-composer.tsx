@@ -76,6 +76,9 @@ export function DirectSessionComposer(props: Props) {
   const showAgentSelect = props.showAgentSelect !== false;
   const showContextDivider = showAttachmentButton
     && (showModeSwitch || showModelSelect || showAgentSelect || Boolean(props.tokenBudgetUsage) || Boolean(props.contextCompressionStatus));
+  const tokenRingPercent = props.tokenBudgetUsage
+    ? Math.max(0, Math.min(100, props.tokenBudgetUsage.percent))
+    : 0;
   const slashMatch = useMemo(
     () => resolveDirectSessionComposerSlashMatch({
       draft: props.draft,
@@ -556,7 +559,7 @@ export function DirectSessionComposer(props: Props) {
                       r="15"
                       pathLength={TOKEN_RING_PATH_LENGTH}
                       strokeDasharray={TOKEN_RING_PATH_LENGTH}
-                      strokeDashoffset={TOKEN_RING_PATH_LENGTH - props.tokenBudgetUsage.percent}
+                      strokeDashoffset={TOKEN_RING_PATH_LENGTH - tokenRingPercent}
                     />
                   </svg>
                   <span className="chat-direct-composer-token-usage-inner">

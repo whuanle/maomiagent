@@ -95,7 +95,7 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 0;
+  gap: 12px;
   overflow: auto;
 }
 
@@ -285,15 +285,23 @@
 .ui-designer-stage-list {
   display: flex;
   flex-direction: column;
+  border: 1px solid color-mix(in srgb, var(--app-border-soft) 82%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--app-control-bg-hover) 54%, transparent);
+  overflow: hidden;
+}
+
+.ui-designer-stage-list-header {
+  padding-bottom: 8px;
 }
 
 .ui-designer-live-task-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: 10px;
+  padding: 12px;
   border: 1px solid color-mix(in srgb, var(--app-border-soft) 82%, transparent);
-  border-radius: 10px;
+  border-radius: 12px;
   background: color-mix(in srgb, var(--app-control-bg-hover) 70%, transparent);
 }
 
@@ -327,10 +335,16 @@
 
 .ui-designer-live-task-summary {
   font-size: 13px;
-  line-height: 1.6;
+  line-height: 1.5;
   color: var(--app-text-secondary);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.ui-designer-stage-overview-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .ui-designer-stage-item {
@@ -338,9 +352,9 @@
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  min-height: 42px;
-  padding-block: 8px;
-  padding-inline: 0;
+  min-height: 48px;
+  padding-block: 10px;
+  padding-inline: 10px;
   border: none;
   border-bottom: 1px solid color-mix(in srgb, var(--app-border-soft) 74%, transparent);
   background: transparent;
@@ -359,11 +373,11 @@
 }
 
 .ui-designer-stage-item.is-active {
-  background: color-mix(in srgb, var(--app-accent, #1677ff) 8%, transparent);
+  background: color-mix(in srgb, var(--app-accent, #1677ff) 10%, transparent);
 }
 
 .ui-designer-stage-item.is-pending {
-  background: color-mix(in srgb, var(--app-warning, #f59e0b) 8%, transparent);
+  background: color-mix(in srgb, var(--app-warning, #f59e0b) 10%, transparent);
 }
 
 .ui-designer-stage-item-title {
@@ -379,8 +393,9 @@
 .ui-designer-stage-item-main {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-height: 24px;
+  flex-wrap: wrap;
 }
 
 .ui-designer-stage-check {
@@ -398,7 +413,9 @@
 
 .ui-designer-stage-summary {
   padding-top: 4px;
-  color: var(--app-text-primary);
+  color: var(--app-text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -441,42 +458,55 @@
 }
 
 .ui-designer-stage-detail-header {
-  padding: 12px 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--app-border-soft) 82%, transparent);
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--app-border-soft) 82%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--app-control-bg-hover) 62%, transparent);
+}
+
+.ui-designer-stage-detail-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
 }
 
 .ui-designer-stage-detail-summary {
-  padding: 12px 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--app-border-soft) 82%, transparent);
-  color: var(--app-text-primary);
-  font-size: 14px;
-  line-height: 1.7;
+  color: var(--app-text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .ui-designer-stage-task-status-row {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding-top: 8px;
+  padding-top: 10px;
+  padding-bottom: 2px;
 }
 
 .ui-designer-stage-detail-section {
-  padding: 12px 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--app-border-soft) 82%, transparent);
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--app-border-soft) 82%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--app-control-bg-hover) 56%, transparent);
 }
 
 .ui-designer-stage-detail-list {
   display: flex;
   flex-direction: column;
   gap: 0;
-  padding-top: 12px;
+  padding-top: 10px;
 }
 
 .ui-designer-stage-detail-item {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 14px 0;
+  gap: 6px;
+  padding: 10px 0;
   border-bottom: 1px solid color-mix(in srgb, var(--app-border-soft) 74%, transparent);
 }
 
@@ -490,15 +520,15 @@
 }
 
 .ui-designer-stage-detail-item-label {
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.4;
   font-weight: 700;
   color: var(--app-text-secondary);
 }
 
 .ui-designer-stage-detail-value {
-  font-size: 15px;
-  line-height: 1.7;
+  font-size: 13px;
+  line-height: 1.6;
   word-break: break-word;
   color: var(--app-text-primary);
 }

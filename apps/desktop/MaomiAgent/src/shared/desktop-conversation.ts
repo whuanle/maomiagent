@@ -297,6 +297,8 @@ export type DesktopConversationContextBudgetSummary = {
   modelId?: string;
   channelId?: string;
   estimatedPromptTokens: number;
+  tokenSource?: "actual_usage" | "estimated_envelope";
+  reasoningExcluded?: boolean;
   contextWindowTokens?: number;
   maxOutputTokens?: number;
   compressionThresholdPercent?: number;
