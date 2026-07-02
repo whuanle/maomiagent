@@ -973,7 +973,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
           selectedChannelId: undefined,
           selectedModelId: undefined,
         }, {
-          syncExistingSessions: false,
+          syncExistingSessions: true,
         }).catch((error) => {
           restorePersistedWorkspaceSelection();
           onError("saveWorkspaceSettings", error);
@@ -993,7 +993,7 @@ export function useChatWorkspacePaneState(input: UseChatWorkspacePaneStateInput)
       selectedChannelId: selectedModel.channelId,
       selectedModelId: selectedModel.modelId,
     }, {
-      syncExistingSessions: false,
+      syncExistingSessions: true,
     }).catch((error) => {
       restorePersistedWorkspaceSelection();
       onError("saveWorkspaceSettings", error);

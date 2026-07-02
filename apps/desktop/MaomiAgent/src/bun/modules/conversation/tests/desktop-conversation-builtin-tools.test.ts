@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { asMessageId, asMessagePartId, asRunId, asSessionId, asToolCallId, asTurnId } from "#maomiagent/kernel/core";
-import type { ToolHandlerContext } from "#maomiagent/kernel/src/adapters";
+import { validateToolInputSchema, type ToolHandlerContext } from "#maomiagent/kernel/src/adapters";
 
 import { createDesktopConversationBuiltinToolBundle } from "../implementation/services/desktop-conversation-builtin-tools";
 
@@ -332,10 +332,41 @@ describe("desktop conversation builtin tools", () => {
       "git_list_changes",
       "git_review_file",
       "terminal_execute",
-      "maomi_managed_task",
     ]);
     expect(catalog.tools.find((tool) => tool.name === "terminal_execute")?.description.length)
       .toBeGreaterThan(20);
+
+    const managedCatalog = await bundle.toolSources[0]!.listTools({
+      session: {
+        id: asSessionId("session_builtin_tools"),
+        title: "Builtin tools",
+        status: "active",
+        createdAt: 1,
+        updatedAt: 1,
+        metadata: {
+          workspaceId: "workspace-1",
+          linkedRootTaskId: "managed-root-session_builtin_tools",
+        },
+      },
+      run: {
+        id: asRunId("run_builtin_tools"),
+        sessionId: asSessionId("session_builtin_tools"),
+        status: "streaming",
+        startedAt: 2,
+        updatedAt: 2,
+        trigger: {
+          kind: "user_message",
+          refId: asMessageId("message_user_1"),
+        },
+      },
+      visibleMessages: [],
+    });
+
+    if (!Array.isArray(managedCatalog) && "source" in managedCatalog) {
+      expect(managedCatalog.tools.map((tool) => tool.name)).toContain("maomi_managed_task");
+    } else {
+      throw new Error("Expected managed builtin tool source snapshot");
+    }
 
     const workspaceListDirectoryHandler = bundle.toolHandlers.find((handler) =>
       handler.descriptor.name === "workspace_list_directory");
@@ -514,6 +545,40 @@ describe("desktop conversation builtin tools", () => {
     expect(workspaceWriteFileResult).toEqual(expect.objectContaining({
       path: ".gitea/workflows/build.yml",
       content: "name: build\n",
+    }));
+
+    const aliasWriteInput = {
+      filePath: "docs/alias.md",
+      text: "alias body\n",
+    };
+    expect(validateToolInputSchema({
+      toolName: "workspace_write_file",
+      schema: workspaceWriteFileHandler!.descriptor.inputSchema,
+      value: aliasWriteInput,
+    })).toEqual({ ok: true });
+
+    const workspaceWriteFileAliasResult = await workspaceWriteFileHandler!.execute({
+      call: {
+        id: asToolCallId("tool_call_workspace_write_file_alias"),
+        sessionId: asSessionId("session_builtin_tools"),
+        runId: asRunId("run_builtin_tools"),
+        turnId: asTurnId("turn_builtin_tools"),
+        messageId: asMessageId("message_assistant_1"),
+        toolName: "workspace_write_file",
+        input: aliasWriteInput,
+        status: "executing",
+        startedAt: 4,
+        updatedAt: 4,
+      },
+      context: {
+        ...context,
+        descriptor: workspaceWriteFileHandler!.descriptor,
+      },
+    });
+
+    expect(workspaceWriteFileAliasResult).toEqual(expect.objectContaining({
+      path: "docs/alias.md",
+      content: "alias body\n",
     }));
 
     const feishuDraftWriteResult = await workspaceWriteFileHandler!.execute({

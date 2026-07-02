@@ -287,6 +287,52 @@
   flex-direction: column;
 }
 
+.ui-designer-live-task-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--app-border-soft) 82%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--app-control-bg-hover) 70%, transparent);
+}
+
+.ui-designer-live-task-card.is-running {
+  border-color: color-mix(in srgb, var(--app-accent, #1677ff) 55%, transparent);
+}
+
+.ui-designer-live-task-card.is-waiting {
+  border-color: color-mix(in srgb, var(--app-warning, #f59e0b) 55%, transparent);
+}
+
+.ui-designer-live-task-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ui-designer-live-task-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ui-designer-live-task-title {
+  font-size: 14px;
+  line-height: 1.5;
+  font-weight: 700;
+  color: var(--app-text-primary);
+}
+
+.ui-designer-live-task-summary {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--app-text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .ui-designer-stage-item {
   width: 100%;
   display: flex;
@@ -405,6 +451,13 @@
   color: var(--app-text-primary);
   font-size: 14px;
   line-height: 1.7;
+}
+
+.ui-designer-stage-task-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 8px;
 }
 
 .ui-designer-stage-detail-section {

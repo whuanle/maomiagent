@@ -48,6 +48,8 @@ type ConversationRailProps = Pick<
   | "answerInteraction"
   | "rejectInteraction"
   | "stopMessage"
+  | "loadFullSessionDetail"
+  | "collapseFullSessionDetail"
   | "setSelectedComposerModelValue"
   | "setDraftMessage"
 > & {
@@ -254,6 +256,8 @@ export function ConversationRail(props: ConversationRailProps) {
                       onRejectInteraction={(interactionId) => void props.rejectInteraction(interactionId)}
                       onOpenCodePreview={NOOP}
                       onOpenWorkspaceFilePreview={NOOP}
+                      onLoadFullSessionDetail={props.loadFullSessionDetail}
+                      onCollapseFullSessionDetail={props.collapseFullSessionDetail}
                       renderStageShell={false}
                       allowRenameSession={false}
                       composerPresentation={{

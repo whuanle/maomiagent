@@ -17,6 +17,14 @@ function formatTokenCount(value: number) {
   return value.toLocaleString("en-US");
 }
 
+function formatExactTokenCount(value: number) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "0";
+  }
+
+  return Math.round(value).toLocaleString("en-US");
+}
+
 function formatPercent(value: number | undefined) {
   return typeof value === "number" && Number.isFinite(value)
     ? `${Math.max(0, Math.round(value))}%`
@@ -35,19 +43,10 @@ export function resolveComposerTokenBudgetUsage(input: {
   }
 
   const latestTokenUsage = input.detail?.latestTokenUsage;
-  const shouldMatchSelectedModel = Boolean(input.selectedModel);
-  const budgetMatchesSelection = !contextBudget
-    || !shouldMatchSelectedModel
-    || (!contextBudget.modelId || contextBudget.modelId === input.selectedModel?.modelId)
-    && (!contextBudget.channelId || contextBudget.channelId === input.selectedModel?.channelId);
-  const usageMatchesSelection = !latestTokenUsage
-    || !shouldMatchSelectedModel
-    || (!latestTokenUsage.modelId || latestTokenUsage.modelId === input.selectedModel?.modelId)
-    && (!latestTokenUsage.channelId || latestTokenUsage.channelId === input.selectedModel?.channelId);
-  const usedTokens = contextBudget && budgetMatchesSelection
+  const usedTokens = contextBudget
     ? contextBudget.estimatedPromptTokens
-    : (usageMatchesSelection ? latestTokenUsage?.totalTokens ?? 0 : 0);
-  const promptUsagePercent = contextBudget && budgetMatchesSelection
+    : latestTokenUsage?.totalTokens ?? 0;
+  const promptUsagePercent = contextBudget
     ? contextBudget.promptUsagePercent
     : undefined;
   const percent = Math.max(
@@ -65,8 +64,11 @@ export function resolveComposerTokenBudgetUsage(input: {
     : undefined;
   const isAutoCompressionThresholdReached = contextBudget?.shouldAutoCompress === true;
   const thresholdUsageLabel = formatPercent(thresholdUsagePercent);
+  const exactUsageText = `${formatExactTokenCount(usedTokens)} / ${formatExactTokenCount(limitTokens)}`;
   const detailLabel = [
-    isEn ? `Context window: ${percent}%` : `模型窗口占比：${percent}%`,
+    isEn
+      ? `Context usage: ${exactUsageText} tokens (${percent}%)`
+      : `上下文使用：${exactUsageText} tokens（${percent}%）`,
     thresholdLabel,
     thresholdUsageLabel
       ? (isEn ? `Threshold usage: ${thresholdUsageLabel}` : `阈值使用：${thresholdUsageLabel}`)

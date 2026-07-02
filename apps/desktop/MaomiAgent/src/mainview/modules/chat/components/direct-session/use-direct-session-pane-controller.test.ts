@@ -78,7 +78,7 @@ describe("direct session pane controller helpers", () => {
       status: "critical",
       thresholdPercent: 30,
       thresholdLabel: "达到 30% 自动压缩",
-      detailLabel: "模型窗口占比：32%\n达到 30% 自动压缩\n阈值使用：107%",
+      detailLabel: "上下文使用：40,960 / 128,000 tokens（32%）\n达到 30% 自动压缩\n阈值使用：107%",
     }));
   });
 
@@ -124,6 +124,61 @@ describe("direct session pane controller helpers", () => {
       percent: 32,
       thresholdUsagePercent: 107,
       status: "critical",
+    }));
+  });
+
+  test("keeps token usage after switching to a different selected model", () => {
+    const detail = createDetail({
+      currentContextBudget: {
+        runId: "run-1",
+        modelId: "moonshot-v1-8k",
+        channelId: "kimi",
+        estimatedPromptTokens: 40960,
+        contextWindowTokens: 128000,
+        compressionThresholdPercent: 30,
+        compressionThresholdTokens: 38400,
+        promptUsagePercent: 32,
+        thresholdUsagePercent: 107,
+        shouldAutoCompress: true,
+        breakdown: {
+          systemTokens: 100,
+          contextTokens: 200,
+          messageTokens: 40660,
+          toolTokens: 0,
+          outputSchemaTokens: 0,
+        },
+      },
+      latestTokenUsage: {
+        runId: "run-0",
+        modelId: "moonshot-v1-8k",
+        channelId: "kimi",
+        totalTokens: 1200,
+        inputTokens: 1000,
+        outputTokens: 200,
+        turnCount: 1,
+      },
+    });
+
+    const usage = resolveComposerTokenBudgetUsage({
+      detail,
+      selectedModel: {
+        value: "openai/gpt-5-mini",
+        label: "GPT-5 mini",
+        channelId: "openai",
+        modelId: "gpt-5-mini",
+        providerType: "openai",
+        contextWindow: 200000,
+        searchText: "GPT-5 mini gpt-5-mini",
+      },
+      language: "zh-CN",
+    });
+
+    expect(usage).toEqual(expect.objectContaining({
+      usedTokens: 40960,
+      limitTokens: 200000,
+      percent: 32,
+      status: "critical",
+      detailLabel: "上下文使用：40,960 / 200,000 tokens（32%）\n达到 30% 自动压缩\n阈值使用：107%",
     }));
   });
 

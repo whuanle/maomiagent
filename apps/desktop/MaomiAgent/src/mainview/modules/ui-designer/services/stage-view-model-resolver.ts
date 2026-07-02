@@ -37,6 +37,34 @@ type ResolveStageViewModelsInput = {
   sourcesMarkdown: string;
 };
 
+type StageStatus = UiDesignerStageViewModel["status"];
+
+const STATUS_RANK: Record<StageStatus, number> = {
+  empty: 0,
+  partial: 1,
+  complete: 2,
+};
+
+const MARKDOWN_STAGE_STATUS_ALIASES: Record<UiDesignerStageKey, string[]> = {
+  projectScope: ["projectscope", "project scope", "scope", "项目范围", "范围"],
+  stack: ["stack", "技术栈"],
+  theme: ["theme", "主题", "设计系统基线", "视觉基线"],
+  patterns: ["patterns", "组件规范", "组件规范体系"],
+  layouts: ["layouts", "布局", "页面布局"],
+  pages: ["pages", "页面骨架", "页面骨架与验证壳", "验证壳", "preview-app", "preview app"],
+  spec: ["spec", "design-spec", "design spec", "设计规格", "设计规格整理"],
+};
+
+const STAGE_HINT_TARGETS: Array<{ hintKey: UiDesignerStageKey; targetKey: UiDesignerStageKey }> = [
+  { hintKey: "projectScope", targetKey: "projectScope" },
+  { hintKey: "stack", targetKey: "theme" },
+  { hintKey: "theme", targetKey: "theme" },
+  { hintKey: "patterns", targetKey: "patterns" },
+  { hintKey: "layouts", targetKey: "pages" },
+  { hintKey: "pages", targetKey: "pages" },
+  { hintKey: "spec", targetKey: "spec" },
+];
+
 function readText(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : "";
 }
@@ -251,6 +279,107 @@ function resolveStatus(confirmedCount: number, expectedCount: number): UiDesigne
   }
 
   return "complete";
+}
+
+function normalizeComparableText(value: string) {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function readStageStatusHintFromLine(line: string): StageStatus | undefined {
+  if (!line.trim()) {
+    return undefined;
+  }
+
+  const normalized = normalizeComparableText(line);
+  if (/(✅|☑️|✔️|\byes\b|\bdone\b|\bcomplete\b|\bcompleted\b|已完成|完成|通过|已确认)/i.test(normalized)) {
+    return "complete";
+  }
+
+  if (/(⏳|🟡|⚠️|\bpartial\b|\bin progress\b|进行中|部分|待完善|继续完善)/i.test(normalized)) {
+    return "partial";
+  }
+
+  if (/(❌|⬜|◻|\btodo\b|\bpending\b|\bnot\s+started\b|未确认|未完成|未开始|待补充)/i.test(normalized)) {
+    return "empty";
+  }
+
+  return undefined;
+}
+
+function readMarkdownStageStatusHints(designSpecMarkdown: string): Partial<Record<UiDesignerStageKey, StageStatus>> {
+  const hints: Partial<Record<UiDesignerStageKey, StageStatus>> = {};
+  const lines = designSpecMarkdown.replace(/\r\n?/g, "\n").split("\n");
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+
+    const statusHint = readStageStatusHintFromLine(line);
+    if (!statusHint) {
+      continue;
+    }
+
+    const normalizedLine = normalizeComparableText(line);
+    for (const [stageKey, aliases] of Object.entries(MARKDOWN_STAGE_STATUS_ALIASES) as Array<[UiDesignerStageKey, string[]]>) {
+      const matchesAlias = aliases.some((alias) => {
+        const normalizedAlias = normalizeComparableText(alias);
+        return normalizedLine.includes(normalizedAlias);
+      });
+      if (!matchesAlias) {
+        continue;
+      }
+
+      const current = hints[stageKey];
+      if (!current || STATUS_RANK[statusHint] > STATUS_RANK[current]) {
+        hints[stageKey] = statusHint;
+      }
+    }
+  }
+
+  return hints;
+}
+
+function applyStageStatusHints(
+  models: UiDesignerStageViewModel[],
+  hints: Partial<Record<UiDesignerStageKey, StageStatus>>,
+): UiDesignerStageViewModel[] {
+  if (Object.keys(hints).length === 0) {
+    return models;
+  }
+
+  const mergedHints: Partial<Record<UiDesignerStageKey, StageStatus>> = {};
+  for (const { hintKey, targetKey } of STAGE_HINT_TARGETS) {
+    const hint = hints[hintKey];
+    if (!hint) {
+      continue;
+    }
+
+    const current = mergedHints[targetKey];
+    if (!current || STATUS_RANK[hint] > STATUS_RANK[current]) {
+      mergedHints[targetKey] = hint;
+    }
+  }
+
+  return models.map((model) => {
+    const hint = mergedHints[model.stageKey];
+    if (!hint || STATUS_RANK[hint] <= STATUS_RANK[model.status]) {
+      return model;
+    }
+
+    const summary = model.summary.startsWith("未确认") || model.summary.startsWith("未整理")
+      ? (hint === "complete"
+          ? `${model.title}已确认`
+          : "部分已确认")
+      : model.summary;
+
+    return {
+      ...model,
+      status: hint,
+      summary,
+    };
+  });
 }
 
 const REQUIRED_COMPONENT_SPECS = [
@@ -654,11 +783,13 @@ export function resolveStageViewModels(input: ResolveStageViewModelsInput): UiDe
   const pagesModel = buildPagesModel(input.layouts, input.pages, patternModel.status, input.designSpecMarkdown);
   const specModel = buildSpecModel(input.designSpecMarkdown, input.sourcesMarkdown);
 
-  return [
+  const models = [
     projectScopeModel,
     themeModel,
     patternModel,
     pagesModel,
     specModel,
   ];
+
+  return applyStageStatusHints(models, readMarkdownStageStatusHints(input.designSpecMarkdown));
 }

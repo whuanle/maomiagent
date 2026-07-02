@@ -137,9 +137,10 @@ const WORKSPACE_WRITE_FILE_DESCRIPTOR: ToolDescriptor = {
     properties: {
       workspaceId: { type: "string" },
       path: { type: "string" },
+      filePath: { type: "string" },
       content: { type: "string" },
+      text: { type: "string" },
     },
-    required: ["path", "content"],
     additionalProperties: false,
   },
   metadata: {
@@ -820,6 +821,10 @@ function readRootTaskId(metadata: unknown): string | undefined {
     : undefined;
 }
 
+function isManagedTaskToolAvailable(metadata: unknown): boolean {
+  return Boolean(readRootTaskId(metadata));
+}
+
 function buildCompletionContract(input: Record<string, unknown>): Record<string, unknown> | undefined {
   const objective = normalizeOptionalText(input.objective);
   const expectedOutcome = normalizeOptionalText(input.expectedOutcome);
@@ -864,7 +869,8 @@ function createStaticToolSource(descriptors: ToolDescriptor[]): ToolSource {
           .filter((descriptor) =>
             descriptor.name !== "terminal_create_session"
             && descriptor.name !== "terminal_read_output"
-            && descriptor.name !== "terminal_close_session")
+            && descriptor.name !== "terminal_close_session"
+            && (descriptor.name !== "maomi_managed_task" || isManagedTaskToolAvailable(input.session.metadata)))
           .map((descriptor) => {
             if (descriptor.name === "terminal_execute") {
               return {
@@ -1274,8 +1280,12 @@ function createWorkspaceWriteFileHandler(
     async execute({ call, context }) {
       const input = isRecord(call.input) ? call.input : {};
       const workspaceId = await resolveWorkspaceId(workspaceQuery, input, context.session.metadata);
-      const path = normalizeOptionalText(input.path);
-      const content = typeof input.content === "string" ? input.content : undefined;
+      const path = normalizeOptionalText(input.path) ?? normalizeOptionalText(input.filePath);
+      const content = typeof input.content === "string"
+        ? input.content
+        : typeof input.text === "string"
+          ? input.text
+          : undefined;
 
       if (!workspaceId) {
         return asToolFailure("workspace_id_required", "workspaceId is required for workspace_write_file.");

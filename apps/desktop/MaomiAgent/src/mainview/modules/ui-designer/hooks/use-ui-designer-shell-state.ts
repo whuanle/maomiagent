@@ -62,6 +62,10 @@ import {
 import {
   mergeDesktopConversationRuntimeEvents,
 } from "../../chat/hooks/desktop-conversation-runtime-events";
+import {
+  projectConversationSessionDetail,
+  resolveSessionDetailProjectionMode,
+} from "../../chat/components/direct-session/direct-session-session-detail-projection";
 import type {
   ChatComposerAttachment,
   ChatComposerModelOption,
@@ -560,6 +564,7 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     () => initialSceneRef.current.selectedSessionId,
   );
   const [selectedSessionDetail, setSelectedSessionDetail] = useState<DesktopConversationSessionDetail | null>(null);
+  const [expandedSessionDetailSessionId, setExpandedSessionDetailSessionId] = useState<string | undefined>(undefined);
   const [designFiles, setDesignFiles] = useState<UiDesignerDesignFiles>(DEFAULT_DESIGN_FILES);
   const [draftMessage, setDraftMessage] = useState("");
   const [composerFocusBlock, setComposerFocusBlock] = useState<UiDesignerStageKey | undefined>(undefined);
@@ -569,6 +574,7 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
   const executionOverlaysRef = useRef<SessionExecutionOverlayState>({});
   const selectedSessionIdRef = useRef<string | undefined>(undefined);
   const selectedSessionDetailRef = useRef<DesktopConversationSessionDetail | null>(null);
+  const expandedSessionDetailSessionIdRef = useRef<string | undefined>(undefined);
   const [composerModelOptions, setComposerModelOptions] = useState<ChatComposerModelOption[]>([]);
   const [composerModelSelectOptions, setComposerModelSelectOptions] = useState<ChatComposerSelectOptionGroup[]>([]);
   const [selectedComposerModelValue, setSelectedComposerModelValueState] = useState<string>();
@@ -726,8 +732,36 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
   }, [selectedSessionId]);
 
   useEffect(() => {
+    expandedSessionDetailSessionIdRef.current = expandedSessionDetailSessionId;
+  }, [expandedSessionDetailSessionId]);
+
+  useEffect(() => {
     selectedSessionDetailRef.current = selectedSessionDetail;
   }, [selectedSessionDetail]);
+
+  useEffect(() => {
+    if (
+      expandedSessionDetailSessionIdRef.current
+      && expandedSessionDetailSessionIdRef.current !== selectedSessionId
+    ) {
+      expandedSessionDetailSessionIdRef.current = undefined;
+      setExpandedSessionDetailSessionId(undefined);
+    }
+
+    setSelectedSessionDetail((current) => {
+      if (!current) {
+        return current;
+      }
+
+      const projectionMode = resolveSessionDetailProjectionMode({
+        detailSessionId: current.sessionId,
+        selectedSessionId,
+        expandedSessionDetailSessionId: expandedSessionDetailSessionIdRef.current,
+      });
+      const projectedDetail = projectConversationSessionDetail(current, projectionMode);
+      return projectedDetail === current ? current : projectedDetail;
+    });
+  }, [selectedSessionId]);
 
   useEffect(() => () => {
     composerAttachmentsRef.current.forEach((attachment) => revokeComposerAttachmentPreviewUrl(attachment));
@@ -778,12 +812,19 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
   }, []);
 
   const applySessionDetail = useCallback((detail: DesktopConversationSessionDetail) => {
+    const projectionMode = resolveSessionDetailProjectionMode({
+      detailSessionId: detail.sessionId,
+      selectedSessionId: selectedSessionIdRef.current,
+      expandedSessionDetailSessionId: expandedSessionDetailSessionIdRef.current,
+    });
+    const projectedDetail = projectConversationSessionDetail(detail, projectionMode);
+
     setSelectedSessionDetail((current) => current?.sessionId === detail.sessionId || detail.sessionId === selectedSessionIdRef.current
-      ? detail
+      ? projectedDetail
       : current);
     setSessions((current) => {
       const existing = current.find((item) => item.sessionId === detail.sessionId);
-      const nextSummary = buildSessionSummaryFromDetail(detail, existing);
+      const nextSummary = buildSessionSummaryFromDetail(projectedDetail, existing);
       const nextItems = current.some((item) => item.sessionId === detail.sessionId)
         ? current.map((item) => item.sessionId === detail.sessionId ? nextSummary : item)
         : [nextSummary, ...current];
@@ -896,14 +937,66 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     setLoadingSessionDetail(true);
     setErrorMessage(null);
     try {
-      setSelectedSessionDetail(await conversationClient.getSessionDetail(nextSessionId));
+      const detail = await conversationClient.getSessionDetail(nextSessionId);
+      const projectionMode = resolveSessionDetailProjectionMode({
+        detailSessionId: detail.sessionId,
+        selectedSessionId: selectedSessionIdRef.current,
+        expandedSessionDetailSessionId: expandedSessionDetailSessionIdRef.current,
+      });
+      setSelectedSessionDetail(projectConversationSessionDetail(detail, projectionMode));
     } catch (error) {
       setSelectedSessionDetail(null);
       setErrorMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setLoadingSessionDetail(false);
     }
-  }, [active, bridgeAvailable]);
+  }, [active, bridgeAvailable, conversationClient]);
+
+  const loadFullSessionDetail = useCallback(async (sessionId = selectedSessionId) => {
+    const normalizedSessionId = sessionId?.trim();
+    if (!normalizedSessionId) {
+      return;
+    }
+
+    if (
+      expandedSessionDetailSessionIdRef.current === normalizedSessionId
+      && !loadingSessionDetail
+    ) {
+      return;
+    }
+
+    expandedSessionDetailSessionIdRef.current = normalizedSessionId;
+    setExpandedSessionDetailSessionId(normalizedSessionId);
+    await reloadSelectedSessionDetail(normalizedSessionId);
+  }, [loadingSessionDetail, reloadSelectedSessionDetail, selectedSessionId]);
+
+  const collapseFullSessionDetail = useCallback((sessionId = selectedSessionId) => {
+    const normalizedSessionId = sessionId?.trim();
+    if (!normalizedSessionId) {
+      return;
+    }
+
+    if (expandedSessionDetailSessionIdRef.current !== normalizedSessionId) {
+      return;
+    }
+
+    expandedSessionDetailSessionIdRef.current = undefined;
+    setExpandedSessionDetailSessionId(undefined);
+
+    setSelectedSessionDetail((current) => {
+      if (!current || current.sessionId !== normalizedSessionId) {
+        return current;
+      }
+
+      const projectedDetail = projectConversationSessionDetail(current, resolveSessionDetailProjectionMode({
+        detailSessionId: normalizedSessionId,
+        selectedSessionId: selectedSessionIdRef.current,
+        expandedSessionDetailSessionId: undefined,
+      }));
+
+      return projectedDetail === current ? current : projectedDetail;
+    });
+  }, [selectedSessionId]);
 
   const startSessionDetailFallbackPolling = useCallback((
     sessionId: string,
@@ -1837,7 +1930,7 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
           selectedChannelId: undefined,
           selectedModelId: undefined,
         }, {
-          syncExistingSessions: false,
+          syncExistingSessions: true,
         }).catch((error) => {
           restorePersistedWorkspaceSelection();
           setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -1857,7 +1950,7 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
       selectedChannelId: selectedModel.channelId,
       selectedModelId: selectedModel.modelId,
     }, {
-      syncExistingSessions: false,
+      syncExistingSessions: true,
     }).catch((error) => {
       restorePersistedWorkspaceSelection();
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -1995,6 +2088,8 @@ export function useUiDesignerShellState(input: UseUiDesignerShellStateInput) {
     rejectInteraction,
     sendMessage,
     stopMessage,
+    loadFullSessionDetail,
+    collapseFullSessionDetail,
     setDraftMessage,
     setSelectedComposerModelValue,
   };

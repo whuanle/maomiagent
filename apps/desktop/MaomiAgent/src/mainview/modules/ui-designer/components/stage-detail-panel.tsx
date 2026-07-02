@@ -5,6 +5,9 @@ import type { UiDesignerStageViewModel } from "../services/stage-view-model-reso
 
 type StageDetailPanelProps = {
   activeStage?: UiDesignerStageViewModel;
+  taskStageKey?: UiDesignerStageViewModel["stageKey"];
+  liveTaskState: "idle" | "waiting" | "running";
+  liveTaskLabel: string;
 };
 
 function resolveStageStatusLabel(status: UiDesignerStageViewModel["status"]) {
@@ -64,6 +67,14 @@ export function StageDetailPanel(props: StageDetailPanelProps) {
       <div className="ui-designer-stage-detail-header">
         <strong className="ui-designer-thread-title">{props.activeStage.title}</strong>
         <Tag>{resolveStageStatusLabel(props.activeStage.status)}</Tag>
+      </div>
+      <div className="ui-designer-stage-task-status-row">
+        <Tag color={props.liveTaskState === "running" ? "processing" : props.liveTaskState === "waiting" ? "gold" : "default"}>
+          任务状态：{props.liveTaskLabel}
+        </Tag>
+        <Tag color={props.taskStageKey === props.activeStage.stageKey ? "blue" : "default"}>
+          {props.taskStageKey === props.activeStage.stageKey ? "已对齐当前任务" : "查看历史阶段"}
+        </Tag>
       </div>
       <div className="ui-designer-stage-detail-summary">{props.activeStage.summary}</div>
 

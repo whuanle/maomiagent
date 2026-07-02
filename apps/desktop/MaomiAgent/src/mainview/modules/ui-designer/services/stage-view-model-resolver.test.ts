@@ -266,4 +266,35 @@ describe("resolveStageViewModels", () => {
       "mdxRenderEditComponent",
     ]);
   });
+
+  test("applies stage status hints from markdown checklist rows", () => {
+    const models = resolveStageViewModels({
+      scope: {},
+      stack: {},
+      theme: {},
+      patterns: {},
+      layouts: {},
+      pages: {},
+      designSpecMarkdown: `# UI Design Spec
+
+## 当前设计状态
+
+| 阶段 | 状态 |
+| --- | --- |
+| scope · 范围 | ✅ |
+| stack · 技术栈 | ✅ |
+| theme · 主题 | ✅ |
+| patterns · 组件规范 | ✅ |
+| layouts · 布局 | ✅ |
+| pages · 页面骨架 | ✅ |
+| preview-app · 验证壳 | ✅ |
+`,
+      sourcesMarkdown: "",
+    });
+
+    expect(models.find((item) => item.stageKey === "projectScope")?.status).toBe("complete");
+    expect(models.find((item) => item.stageKey === "theme")?.status).toBe("complete");
+    expect(models.find((item) => item.stageKey === "patterns")?.status).toBe("complete");
+    expect(models.find((item) => item.stageKey === "pages")?.status).toBe("complete");
+  });
 });
