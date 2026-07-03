@@ -1,4 +1,4 @@
-export type GitTabKey = "changes" | "branches" | "commit-review" | "code-review";
+export type GitTabKey = "changes" | "branches" | "worktrees" | "settings" | "commit-review" | "code-review";
 
 export type GitCommitReviewUiState = {
   targetType?: "current" | "commit" | "pr";
@@ -35,6 +35,8 @@ function normalizeOptionalString(value: unknown): string | undefined {
 function isGitTabKey(value: unknown): value is GitTabKey {
   return value === "changes"
     || value === "branches"
+    || value === "worktrees"
+    || value === "settings"
     || value === "commit-review"
     || value === "code-review";
 }

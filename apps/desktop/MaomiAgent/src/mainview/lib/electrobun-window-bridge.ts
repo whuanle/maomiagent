@@ -202,6 +202,7 @@ export function installElectrobunWindowBridge() {
     };
     window.maomiDesktopGit = {
       getDesktopGitIgnore: (workspaceId) => rpc.request.getDesktopGitIgnore({ workspaceId }),
+      getDesktopGitSettings: (workspaceId) => rpc.request.getDesktopGitSettings({ workspaceId }),
       getDesktopGitChanges: (workspaceId) => rpc.request.getDesktopGitChanges({ workspaceId }),
       getDesktopGitReview: (workspaceId) => rpc.request.getDesktopGitReview({ workspaceId }),
       getDesktopGitReviewDetail: (workspaceId, query) =>
@@ -210,6 +211,7 @@ export function installElectrobunWindowBridge() {
         rpc.request.compareDesktopGitRefs({ workspaceId, query }),
       getDesktopGitBranches: (workspaceId) => rpc.request.getDesktopGitBranches({ workspaceId }),
       getDesktopGitStashes: (workspaceId) => rpc.request.getDesktopGitStashes({ workspaceId }),
+      getDesktopGitWorktrees: (workspaceId) => rpc.request.getDesktopGitWorktrees({ workspaceId }),
       getDesktopGitHistory: (workspaceId, query) =>
         rpc.request.getDesktopGitHistory({ workspaceId, query }),
       getDesktopGitHistoryDetail: (workspaceId, hash) =>
@@ -220,6 +222,8 @@ export function installElectrobunWindowBridge() {
         rpc.request.getDesktopGitHunks({ workspaceId, query }),
       saveDesktopGitIgnore: (workspaceId, input) =>
         rpc.request.saveDesktopGitIgnore({ workspaceId, input }),
+      saveDesktopGitSettings: (workspaceId, input) =>
+        rpc.request.saveDesktopGitSettings({ workspaceId, input }),
       initDesktopGitRepository: (workspaceId) =>
         rpc.request.initDesktopGitRepository({ workspaceId }),
       stageDesktopGitChanges: (workspaceId, input) =>
@@ -244,6 +248,12 @@ export function installElectrobunWindowBridge() {
         rpc.request.createDesktopGitBranch({ workspaceId, input }),
       createDesktopGitTag: (workspaceId, input) =>
         rpc.request.createDesktopGitTag({ workspaceId, input }),
+      createDesktopGitWorktree: (workspaceId, input) =>
+        rpc.request.createDesktopGitWorktree({ workspaceId, input }),
+      removeDesktopGitWorktree: (workspaceId, input) =>
+        rpc.request.removeDesktopGitWorktree({ workspaceId, input }),
+      pruneDesktopGitWorktrees: (workspaceId) =>
+        rpc.request.pruneDesktopGitWorktrees({ workspaceId }),
       checkoutDesktopGitBranch: (workspaceId, input) =>
         rpc.request.checkoutDesktopGitBranch({ workspaceId, input }),
       mergeDesktopGitBranchIntoCurrent: (workspaceId, input) =>

@@ -40,6 +40,34 @@ export type DesktopGitIgnoreResult = {
   content: string;
 };
 
+export type DesktopGitGlobalSettings = {
+  userName?: string;
+  userEmail?: string;
+  defaultBranch?: string;
+  autocrlf?: string;
+  pullRebase?: string;
+  pushDefault?: string;
+  fetchPrune?: string;
+};
+
+export type DesktopGitRemoteSetting = {
+  name: string;
+  url: string;
+};
+
+export type DesktopGitRepositorySettings = DesktopGitGlobalSettings & {
+  remotes?: DesktopGitRemoteSetting[];
+  originUrl?: string;
+};
+
+export type DesktopGitSettingsResult = {
+  workspaceId: string;
+  rootPath: string;
+  isGitRepo: boolean;
+  global: DesktopGitGlobalSettings;
+  repository: DesktopGitRepositorySettings;
+};
+
 export type DesktopGitChangeItem = {
   path: string;
   previousPath?: string;
@@ -146,6 +174,26 @@ export type DesktopGitStashesResult = {
   rootPath: string;
   isGitRepo: boolean;
   items: DesktopGitStashItem[];
+};
+
+export type DesktopGitWorktreeItem = {
+  path: string;
+  branch?: string;
+  head?: string;
+  bare: boolean;
+  detached: boolean;
+  locked: boolean;
+  lockedReason?: string;
+  prunable: boolean;
+  prunableReason?: string;
+  current: boolean;
+};
+
+export type DesktopGitWorktreesResult = {
+  workspaceId: string;
+  rootPath: string;
+  isGitRepo: boolean;
+  items: DesktopGitWorktreeItem[];
 };
 
 export type DesktopGitHistoryItem = {
@@ -274,6 +322,7 @@ export type DesktopGitModuleSnapshotResult = {
   changes: DesktopGitChangesResult;
   branches: DesktopGitBranchesResult;
   stashes: DesktopGitStashesResult;
+  worktrees: DesktopGitWorktreesResult;
   history: DesktopGitHistoryResult;
 };
 
@@ -319,6 +368,11 @@ export type DesktopGitSaveIgnoreInput = {
   content: string;
 };
 
+export type DesktopGitSaveSettingsInput = {
+  global?: DesktopGitGlobalSettings;
+  repository?: DesktopGitRepositorySettings;
+};
+
 export type DesktopGitCreateStashInput = {
   message?: string;
   includeUntracked?: boolean;
@@ -357,6 +411,19 @@ export type DesktopGitRenameBranchInput = {
 
 export type DesktopGitDeleteBranchInput = {
   name: string;
+  force?: boolean;
+};
+
+export type DesktopGitCreateWorktreeInput = {
+  path: string;
+  branchName?: string;
+  startPoint?: string;
+  detach?: boolean;
+  force?: boolean;
+};
+
+export type DesktopGitRemoveWorktreeInput = {
+  path: string;
   force?: boolean;
 };
 

@@ -35,6 +35,8 @@ import { createGitBranchCopy } from "./branch-copy";
 import { GitBranchWorkbench } from "./components/branch-workbench";
 import { GitChangesWorkbench } from "./components/changes-workbench";
 import { GitCommitReviewWorkbench } from "./components/git-commit-review-workbench";
+import { GitSettingsWorkbench } from "./components/settings-workbench";
+import { GitWorktreeWorkbench } from "./components/worktree-workbench";
 import { hasGitReviewWorkbenchCachedResults } from "./components/git-ai-review-workbench-next";
 import {
   readGitPageUiState,
@@ -43,6 +45,8 @@ import {
   writeGitPageUiState,
 } from "./git-page-ui-state";
 import { createGitTranslator } from "./i18n";
+import { createGitSettingsCopy } from "./settings-copy";
+import { createGitWorktreeCopy } from "./worktree-copy";
 import "./page.css";
 
 type Props = {
@@ -54,7 +58,7 @@ export type GitPageHandle = {
   confirmLeavePage: () => Promise<boolean>;
 };
 
-type RenderedGitTabKey = "changes" | "branches" | "commit-review";
+type RenderedGitTabKey = "changes" | "branches" | "worktrees" | "settings" | "commit-review";
 
 function normalizeError(error: unknown): string {
   if (error instanceof Error && error.message) {
@@ -81,7 +85,7 @@ function resolveWorkspaceId(
 }
 
 function normalizeRenderedGitTab(value: GitTabKey | undefined): RenderedGitTabKey {
-  return value === "branches" || value === "commit-review"
+  return value === "branches" || value === "worktrees" || value === "settings" || value === "commit-review"
     ? value
     : "changes";
 }
@@ -91,6 +95,8 @@ export const GitPage = forwardRef<GitPageHandle, Props>(function GitPage(props, 
   const [modal, modalContextHolder] = Modal.useModal();
   const copy = useMemo(() => createGitTranslator(props.language), [props.language]);
   const branchCopy = useMemo(() => createGitBranchCopy(props.language), [props.language]);
+  const settingsCopy = useMemo(() => createGitSettingsCopy(props.language), [props.language]);
+  const worktreeCopy = useMemo(() => createGitWorktreeCopy(props.language), [props.language]);
   const [bridgeReady, setBridgeReady] = useState(() => hasDesktopGitBridge());
   const [workspaceOptions, setWorkspaceOptions] = useState<WorkspaceSelectOption[]>([]);
   const [workspaceRestoreReady, setWorkspaceRestoreReady] = useState(false);
@@ -338,8 +344,37 @@ export const GitPage = forwardRef<GitPageHandle, Props>(function GitPage(props, 
           </div>
         ),
       },
+      {
+        key: "worktrees",
+        label: copy.worktreesTab,
+        children: (
+          <div className="git-page-panel-shell">
+            <GitWorktreeWorkbench
+              workspaceId={workspaceId ?? ""}
+              pageCopy={copy}
+              copy={worktreeCopy}
+              snapshot={snapshot}
+              loading={snapshotLoading}
+              onRefresh={loadSnapshot}
+            />
+          </div>
+        ),
+      },
+      {
+        key: "settings",
+        label: copy.settingsTab,
+        children: (
+          <div className="git-page-panel-shell">
+            <GitSettingsWorkbench
+              workspaceId={workspaceId ?? ""}
+              copy={copy}
+              settingsCopy={settingsCopy}
+            />
+          </div>
+        ),
+      },
     ];
-  }, [branchCopy, commitReviewState?.selectedFilePath, commitReviewState?.selectedFindingId, commitReviewState?.selectedTargetId, commitReviewState?.targetType, copy, loadSnapshot, props.language, snapshot, snapshotLoading, workspaceId]);
+  }, [branchCopy, commitReviewState?.selectedFilePath, commitReviewState?.selectedFindingId, commitReviewState?.selectedTargetId, commitReviewState?.targetType, copy, loadSnapshot, props.language, settingsCopy, snapshot, snapshotLoading, worktreeCopy, workspaceId]);
 
   if (!bridgeReady) {
     return (

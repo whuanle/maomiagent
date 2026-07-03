@@ -10,6 +10,7 @@ import type {
   DesktopGitCompareResult,
   DesktopGitCreateBranchInput,
   DesktopGitCreateTagInput,
+  DesktopGitCreateWorktreeInput,
   DesktopGitCreateStashInput,
   DesktopGitDeleteBranchInput,
   DesktopGitDiscardChangesInput,
@@ -29,17 +30,22 @@ import type {
   DesktopGitReviewDetailQuery,
   DesktopGitReviewDetailResult,
   DesktopGitReviewResult,
+  DesktopGitSaveSettingsInput,
+  DesktopGitSettingsResult,
   DesktopGitSaveIgnoreInput,
+  DesktopGitRemoveWorktreeInput,
   DesktopGitStageChangesInput,
   DesktopGitStashRefInput,
   DesktopGitStashesResult,
   DesktopGitUnstageChangesInput,
+  DesktopGitWorktreesResult,
   DesktopGitChangesResult,
 } from "../../shared/desktop-git";
 import { DESKTOP_WINDOW_BRIDGE_READY_EVENT } from "./desktop-window";
 
 type DesktopGitBridge = {
   getDesktopGitIgnore: (workspaceId: string) => Promise<DesktopGitIgnoreResult>;
+  getDesktopGitSettings: (workspaceId: string) => Promise<DesktopGitSettingsResult>;
   getDesktopGitChanges: (workspaceId: string) => Promise<DesktopGitChangesResult>;
   getDesktopGitReview: (
     workspaceId: string,
@@ -54,6 +60,7 @@ type DesktopGitBridge = {
   ) => Promise<DesktopGitCompareResult>;
   getDesktopGitBranches: (workspaceId: string) => Promise<DesktopGitBranchesResult>;
   getDesktopGitStashes: (workspaceId: string) => Promise<DesktopGitStashesResult>;
+  getDesktopGitWorktrees: (workspaceId: string) => Promise<DesktopGitWorktreesResult>;
   getDesktopGitHistory: (
     workspaceId: string,
     query?: DesktopGitHistoryQuery,
@@ -73,6 +80,10 @@ type DesktopGitBridge = {
   saveDesktopGitIgnore: (
     workspaceId: string,
     input: DesktopGitSaveIgnoreInput,
+  ) => Promise<DesktopGitOperationResult>;
+  saveDesktopGitSettings: (
+    workspaceId: string,
+    input: DesktopGitSaveSettingsInput,
   ) => Promise<DesktopGitOperationResult>;
   initDesktopGitRepository: (workspaceId: string) => Promise<DesktopGitOperationResult>;
   stageDesktopGitChanges: (
@@ -118,6 +129,17 @@ type DesktopGitBridge = {
   createDesktopGitTag: (
     workspaceId: string,
     input: DesktopGitCreateTagInput,
+  ) => Promise<DesktopGitOperationResult>;
+  createDesktopGitWorktree: (
+    workspaceId: string,
+    input: DesktopGitCreateWorktreeInput,
+  ) => Promise<DesktopGitOperationResult>;
+  removeDesktopGitWorktree: (
+    workspaceId: string,
+    input: DesktopGitRemoveWorktreeInput,
+  ) => Promise<DesktopGitOperationResult>;
+  pruneDesktopGitWorktrees: (
+    workspaceId: string,
   ) => Promise<DesktopGitOperationResult>;
   checkoutDesktopGitBranch: (
     workspaceId: string,
@@ -198,6 +220,12 @@ export function getDesktopGitIgnore(
   return getDesktopGitBridge().getDesktopGitIgnore(workspaceId);
 }
 
+export function getDesktopGitSettings(
+  workspaceId: string,
+): Promise<DesktopGitSettingsResult> {
+  return getDesktopGitBridge().getDesktopGitSettings(workspaceId);
+}
+
 export function getDesktopGitChanges(
   workspaceId: string,
 ): Promise<DesktopGitChangesResult> {
@@ -236,6 +264,12 @@ export function getDesktopGitStashes(
   return getDesktopGitBridge().getDesktopGitStashes(workspaceId);
 }
 
+export function getDesktopGitWorktrees(
+  workspaceId: string,
+): Promise<DesktopGitWorktreesResult> {
+  return getDesktopGitBridge().getDesktopGitWorktrees(workspaceId);
+}
+
 export function getDesktopGitHistory(
   workspaceId: string,
   query: DesktopGitHistoryQuery = {},
@@ -269,6 +303,13 @@ export function saveDesktopGitIgnore(
   input: DesktopGitSaveIgnoreInput,
 ): Promise<DesktopGitOperationResult> {
   return getDesktopGitBridge().saveDesktopGitIgnore(workspaceId, input);
+}
+
+export function saveDesktopGitSettings(
+  workspaceId: string,
+  input: DesktopGitSaveSettingsInput,
+): Promise<DesktopGitOperationResult> {
+  return getDesktopGitBridge().saveDesktopGitSettings(workspaceId, input);
 }
 
 export function initDesktopGitRepository(
@@ -352,6 +393,26 @@ export function createDesktopGitTag(
   input: DesktopGitCreateTagInput,
 ): Promise<DesktopGitOperationResult> {
   return getDesktopGitBridge().createDesktopGitTag(workspaceId, input);
+}
+
+export function createDesktopGitWorktree(
+  workspaceId: string,
+  input: DesktopGitCreateWorktreeInput,
+): Promise<DesktopGitOperationResult> {
+  return getDesktopGitBridge().createDesktopGitWorktree(workspaceId, input);
+}
+
+export function removeDesktopGitWorktree(
+  workspaceId: string,
+  input: DesktopGitRemoveWorktreeInput,
+): Promise<DesktopGitOperationResult> {
+  return getDesktopGitBridge().removeDesktopGitWorktree(workspaceId, input);
+}
+
+export function pruneDesktopGitWorktrees(
+  workspaceId: string,
+): Promise<DesktopGitOperationResult> {
+  return getDesktopGitBridge().pruneDesktopGitWorktrees(workspaceId);
 }
 
 export function checkoutDesktopGitBranch(

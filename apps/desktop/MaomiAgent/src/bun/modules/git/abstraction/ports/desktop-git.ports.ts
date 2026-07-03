@@ -10,6 +10,7 @@ import type {
   DesktopGitCompareResult,
   DesktopGitCreateBranchInput,
   DesktopGitCreateTagInput,
+  DesktopGitCreateWorktreeInput,
   DesktopGitCreateStashInput,
   DesktopGitDeleteBranchInput,
   DesktopGitDiscardChangesInput,
@@ -29,16 +30,21 @@ import type {
   DesktopGitReviewDetailQuery,
   DesktopGitReviewDetailResult,
   DesktopGitReviewResult,
+  DesktopGitSaveSettingsInput,
+  DesktopGitSettingsResult,
   DesktopGitSaveIgnoreInput,
+  DesktopGitRemoveWorktreeInput,
   DesktopGitStageChangesInput,
   DesktopGitStashRefInput,
   DesktopGitStashesResult,
   DesktopGitUnstageChangesInput,
+  DesktopGitWorktreesResult,
   DesktopGitChangesResult,
 } from "../models/desktop-git.models";
 
 export interface DesktopGitQueryPort {
   getGitIgnore(workspaceId: string): Promise<DesktopGitIgnoreResult>;
+  getGitSettings(workspaceId: string): Promise<DesktopGitSettingsResult>;
   getGitChanges(workspaceId: string): Promise<DesktopGitChangesResult>;
   getGitReview(
     workspaceId: string,
@@ -56,6 +62,7 @@ export interface DesktopGitQueryPort {
   ): Promise<DesktopGitCompareResult>;
   getGitBranches(workspaceId: string): Promise<DesktopGitBranchesResult>;
   getGitStashes(workspaceId: string): Promise<DesktopGitStashesResult>;
+  getGitWorktrees(workspaceId: string): Promise<DesktopGitWorktreesResult>;
   getGitHistory(
     workspaceId: string,
     input?: DesktopGitHistoryQuery,
@@ -82,6 +89,10 @@ export interface DesktopGitCommandPort {
   saveGitIgnore(
     workspaceId: string,
     input: DesktopGitSaveIgnoreInput,
+  ): Promise<DesktopGitOperationResult>;
+  saveGitSettings(
+    workspaceId: string,
+    input: DesktopGitSaveSettingsInput,
   ): Promise<DesktopGitOperationResult>;
   initGitRepository(workspaceId: string): Promise<DesktopGitOperationResult>;
   stageGitChanges(
@@ -124,6 +135,15 @@ export interface DesktopGitCommandPort {
     workspaceId: string,
     input: DesktopGitCreateTagInput,
   ): Promise<DesktopGitOperationResult>;
+  createGitWorktree(
+    workspaceId: string,
+    input: DesktopGitCreateWorktreeInput,
+  ): Promise<DesktopGitOperationResult>;
+  removeGitWorktree(
+    workspaceId: string,
+    input: DesktopGitRemoveWorktreeInput,
+  ): Promise<DesktopGitOperationResult>;
+  pruneGitWorktrees(workspaceId: string): Promise<DesktopGitOperationResult>;
   checkoutGitBranch(
     workspaceId: string,
     input: DesktopGitCheckoutBranchInput,

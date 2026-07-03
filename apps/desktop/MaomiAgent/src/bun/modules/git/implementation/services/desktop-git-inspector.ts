@@ -22,9 +22,15 @@ import type {
   DesktopGitReviewItem as WorkspaceGitReviewItem,
   DesktopGitReviewDetailResult as WorkspaceGitReviewDetailResult,
   DesktopGitReviewScope as WorkspaceGitReviewScope,
+  DesktopGitRepositorySettings as WorkspaceGitRepositorySettings,
+  DesktopGitRemoteSetting as WorkspaceGitRemoteSetting,
+  DesktopGitSettingsResult as WorkspaceGitSettingsResult,
   DesktopGitReviewResult as WorkspaceGitReviewResult,
   DesktopGitStashItem as WorkspaceGitStashItem,
   DesktopGitStashesResult as WorkspaceGitStashesResult,
+  DesktopGitWorktreeItem as WorkspaceGitWorktreeItem,
+  DesktopGitWorktreesResult as WorkspaceGitWorktreesResult,
+  DesktopGitGlobalSettings as WorkspaceGitGlobalSettings,
 } from "../../../../../shared/desktop-git";
 import {
   buildScopedDesktopGitResult as buildScopedWorkspaceGitResult,
@@ -885,6 +891,163 @@ async function readWorkspaceGitUpstream(rootPath: string): Promise<string | unde
   return value || undefined;
 }
 
+async function readGitConfigValue(
+  rootPath: string,
+  scopeArgs: string[],
+  key: string,
+): Promise<string | undefined> {
+  const result = await runGitCommand(rootPath, ["config", ...scopeArgs, "--get", key]);
+  if (!result.ok) {
+    return undefined;
+  }
+  const value = result.stdout.trim();
+  return value || undefined;
+}
+
+async function unsetGitConfigValue(
+  rootPath: string,
+  scopeArgs: string[],
+  key: string,
+): Promise<void> {
+  await runGitCommand(rootPath, ["config", ...scopeArgs, "--unset-all", key]);
+}
+
+async function writeGitConfigValue(input: {
+  workspaceId: string;
+  rootPath: string;
+  scopeArgs: string[];
+  key: string;
+  value?: string;
+  action: string;
+}) {
+  const normalized = input.value?.trim();
+  if (!normalized) {
+    await unsetGitConfigValue(input.rootPath, input.scopeArgs, input.key);
+    return;
+  }
+
+  const result = await runGitCommand(
+    input.rootPath,
+    ["config", ...input.scopeArgs, input.key, normalized],
+    20_000,
+  );
+  await ensureGitCommandSucceeded({
+    workspaceId: input.workspaceId,
+    action: input.action,
+    rootPath: input.rootPath,
+    result,
+  });
+}
+
+function parseGitRemoteConfigLine(line: string): WorkspaceGitRemoteSetting | null {
+  const normalized = line.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const matched = normalized.match(/^remote\.([^\s]+)\.url\s+(.+)$/);
+  if (!matched) {
+    return null;
+  }
+
+  const name = matched[1]?.trim() ?? "";
+  const url = matched[2]?.trim() ?? "";
+  if (!name || !url) {
+    return null;
+  }
+
+  return { name, url };
+}
+
+async function readGitRemoteSettings(rootPath: string): Promise<WorkspaceGitRemoteSetting[]> {
+  const result = await runGitCommand(rootPath, ["config", "--get-regexp", "^remote\\..*\\.url$"]);
+  if (!result.ok) {
+    if (result.exitCode === 1 && !result.timedOut) {
+      return [];
+    }
+    throw new RuntimeWorkspaceError("INVALID_ARGUMENT", "failed to read git remotes", {
+      rootPath,
+      stderr: describeGitCommandError(result),
+    });
+  }
+
+  return result.stdout
+    .split(/\r?\n/)
+    .map((line) => parseGitRemoteConfigLine(line))
+    .filter((item): item is WorkspaceGitRemoteSetting => Boolean(item))
+    .sort((left, right) => left.name.localeCompare(right.name, "en", { sensitivity: "base" }));
+}
+
+function normalizeGitRemoteSettings(input: WorkspaceGitRemoteSetting[]): WorkspaceGitRemoteSetting[] {
+  const seen = new Set<string>();
+  const normalized: WorkspaceGitRemoteSetting[] = [];
+  for (const item of input) {
+    const name = item.name.trim();
+    const url = item.url.trim();
+    if (!name || !url) {
+      throw new RuntimeWorkspaceError("INVALID_ARGUMENT", "git remote name and url are required", {
+        field: "remotes",
+      });
+    }
+    if (/\s/.test(name)) {
+      throw new RuntimeWorkspaceError("INVALID_ARGUMENT", "git remote name cannot contain spaces", {
+        field: "remotes",
+        remoteName: name,
+      });
+    }
+    const key = name.toLowerCase();
+    if (seen.has(key)) {
+      throw new RuntimeWorkspaceError("INVALID_ARGUMENT", "git remote names must be unique", {
+        field: "remotes",
+        remoteName: name,
+      });
+    }
+    seen.add(key);
+    normalized.push({ name, url });
+  }
+
+  return normalized;
+}
+
+async function replaceGitRemoteSettings(input: {
+  workspaceId: string;
+  rootPath: string;
+  remotes: WorkspaceGitRemoteSetting[];
+}) {
+  const listResult = await runGitCommand(input.rootPath, ["remote"]);
+  await ensureGitCommandSucceeded({
+    workspaceId: input.workspaceId,
+    action: "failed to list git remotes",
+    rootPath: input.rootPath,
+    result: listResult,
+  });
+
+  const currentNames = listResult.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  for (const remoteName of currentNames) {
+    const removeResult = await runGitCommand(input.rootPath, ["remote", "remove", remoteName], 20_000);
+    await ensureGitCommandSucceeded({
+      workspaceId: input.workspaceId,
+      action: `failed to remove git remote ${remoteName}`,
+      rootPath: input.rootPath,
+      result: removeResult,
+    });
+  }
+
+  for (const remote of input.remotes) {
+    const addResult = await runGitCommand(input.rootPath, ["remote", "add", remote.name, remote.url], 20_000);
+    await ensureGitCommandSucceeded({
+      workspaceId: input.workspaceId,
+      action: `failed to add git remote ${remote.name}`,
+      rootPath: input.rootPath,
+      result: addResult,
+    });
+  }
+}
+
 async function readWorkspaceLastCommit(rootPath: string): Promise<{ hash?: string; subject?: string }> {
   const result = await runGitCommand(rootPath, ["log", "-1", "--pretty=%H%x09%s"]);
   if (!result.ok) {
@@ -1564,6 +1727,93 @@ function parseGitStashLine(line: string): WorkspaceGitStashItem | null {
   };
 }
 
+function parseGitWorktreeReason(value: string): string | undefined {
+  const normalized = value.trim();
+  if (!normalized) {
+    return undefined;
+  }
+  return normalized.replace(/^\((.*)\)$/u, "$1").trim() || undefined;
+}
+
+function parseGitWorktreeListPorcelain(output: string): Array<Omit<WorkspaceGitWorktreeItem, "current">> {
+  const items: Array<Omit<WorkspaceGitWorktreeItem, "current">> = [];
+  const lines = output.split(/\r?\n/);
+  let current: Omit<WorkspaceGitWorktreeItem, "current"> | null = null;
+
+  const pushCurrent = () => {
+    if (!current?.path) {
+      return;
+    }
+    items.push(current);
+    current = null;
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      pushCurrent();
+      continue;
+    }
+
+    if (line.startsWith("worktree ")) {
+      pushCurrent();
+      current = {
+        path: line.slice("worktree ".length).trim(),
+        branch: undefined,
+        head: undefined,
+        bare: false,
+        detached: false,
+        locked: false,
+        lockedReason: undefined,
+        prunable: false,
+        prunableReason: undefined,
+      };
+      continue;
+    }
+
+    if (!current) {
+      continue;
+    }
+
+    if (line.startsWith("HEAD ")) {
+      current.head = line.slice("HEAD ".length).trim() || undefined;
+      continue;
+    }
+
+    if (line.startsWith("branch ")) {
+      const rawBranch = line.slice("branch ".length).trim();
+      current.branch = rawBranch.startsWith("refs/heads/")
+        ? rawBranch.slice("refs/heads/".length)
+        : rawBranch || undefined;
+      continue;
+    }
+
+    if (line.startsWith("locked")) {
+      current.locked = true;
+      current.lockedReason = parseGitWorktreeReason(line.slice("locked".length));
+      continue;
+    }
+
+    if (line.startsWith("prunable")) {
+      current.prunable = true;
+      current.prunableReason = parseGitWorktreeReason(line.slice("prunable".length));
+      continue;
+    }
+
+    if (line === "bare") {
+      current.bare = true;
+      continue;
+    }
+
+    if (line === "detached") {
+      current.detached = true;
+    }
+  }
+
+  pushCurrent();
+  return items;
+}
+
 function parseGitShortstatLine(line: string): { filesChanged: number; additions: number; deletions: number } {
   const filesMatch = /(\d+)\s+files?\s+changed/i.exec(line);
   const additionsMatch = /(\d+)\s+insertions?\(\+\)/i.exec(line);
@@ -1709,6 +1959,143 @@ export async function listRuntimeWorkspaceGitStashes(input: {
       .map((line) => parseGitStashLine(line))
       .filter((item): item is WorkspaceGitStashItem => Boolean(item))
       .sort((left, right) => left.index - right.index),
+  };
+}
+
+export async function listRuntimeWorkspaceGitWorktrees(input: {
+  workspaceId: string;
+  rootPath: string;
+}): Promise<WorkspaceGitWorktreesResult> {
+  const probe = await probeWorkspaceGitRepository({
+    workspaceId: input.workspaceId,
+    rootPath: input.rootPath,
+  });
+  if (!probe.isGitRepo) {
+    return {
+      workspaceId: input.workspaceId,
+      rootPath: input.rootPath,
+      isGitRepo: false,
+      items: [],
+    };
+  }
+
+  const result = await runGitCommand(probe.scope.gitRootPath, ["worktree", "list", "--porcelain"]);
+  await ensureGitCommandSucceeded({
+    workspaceId: input.workspaceId,
+    action: "failed to list git worktrees",
+    rootPath: probe.scope.gitRootPath,
+    result,
+  });
+
+  const workspaceRootPath = resolve(input.rootPath);
+  const items = parseGitWorktreeListPorcelain(result.stdout)
+    .map<WorkspaceGitWorktreeItem>((item) => {
+      const normalizedPath = resolve(item.path);
+      return {
+        ...item,
+        path: normalizedPath,
+        current: normalizedPath === workspaceRootPath,
+      };
+    })
+    .sort((left, right) => {
+      if (left.current !== right.current) {
+        return left.current ? -1 : 1;
+      }
+      return left.path.localeCompare(right.path, "en", { sensitivity: "base" });
+    });
+
+  return {
+    workspaceId: input.workspaceId,
+    rootPath: input.rootPath,
+    isGitRepo: true,
+    items,
+  };
+}
+
+export async function getRuntimeWorkspaceGitSettings(input: {
+  workspaceId: string;
+  rootPath: string;
+}): Promise<WorkspaceGitSettingsResult> {
+  const repoProbe = await probeWorkspaceGitRepository({
+    workspaceId: input.workspaceId,
+    rootPath: input.rootPath,
+  });
+
+  const globalScopeArgs = ["--global"];
+  const repositoryScopeArgs = ["--local"];
+  const repositoryRootPath = repoProbe.isGitRepo ? repoProbe.scope.gitRootPath : input.rootPath;
+
+  const [
+    globalUserName,
+    globalUserEmail,
+    globalDefaultBranch,
+    globalAutocrlf,
+    globalPullRebase,
+    globalPushDefault,
+    globalFetchPrune,
+  ] = await Promise.all([
+    readGitConfigValue(input.rootPath, globalScopeArgs, "user.name"),
+    readGitConfigValue(input.rootPath, globalScopeArgs, "user.email"),
+    readGitConfigValue(input.rootPath, globalScopeArgs, "init.defaultBranch"),
+    readGitConfigValue(input.rootPath, globalScopeArgs, "core.autocrlf"),
+    readGitConfigValue(input.rootPath, globalScopeArgs, "pull.rebase"),
+    readGitConfigValue(input.rootPath, globalScopeArgs, "push.default"),
+    readGitConfigValue(input.rootPath, globalScopeArgs, "fetch.prune"),
+  ]);
+
+  const globalSettings: WorkspaceGitGlobalSettings = {
+    userName: globalUserName,
+    userEmail: globalUserEmail,
+    defaultBranch: globalDefaultBranch,
+    autocrlf: globalAutocrlf,
+    pullRebase: globalPullRebase,
+    pushDefault: globalPushDefault,
+    fetchPrune: globalFetchPrune,
+  };
+
+  let repositorySettings: WorkspaceGitRepositorySettings = {};
+  if (repoProbe.isGitRepo) {
+    const [
+      repositoryUserName,
+      repositoryUserEmail,
+      repositoryDefaultBranch,
+      repositoryAutocrlf,
+      repositoryPullRebase,
+      repositoryPushDefault,
+      repositoryFetchPrune,
+      remotes,
+    ] = await Promise.all([
+      readGitConfigValue(repositoryRootPath, repositoryScopeArgs, "user.name"),
+      readGitConfigValue(repositoryRootPath, repositoryScopeArgs, "user.email"),
+      readGitConfigValue(repositoryRootPath, repositoryScopeArgs, "init.defaultBranch"),
+      readGitConfigValue(repositoryRootPath, repositoryScopeArgs, "core.autocrlf"),
+      readGitConfigValue(repositoryRootPath, repositoryScopeArgs, "pull.rebase"),
+      readGitConfigValue(repositoryRootPath, repositoryScopeArgs, "push.default"),
+      readGitConfigValue(repositoryRootPath, repositoryScopeArgs, "fetch.prune"),
+      readGitRemoteSettings(repositoryRootPath),
+    ]);
+
+    const originRemote = remotes.find((item) => item.name === "origin");
+
+    repositorySettings = {
+      userName: repositoryUserName,
+      userEmail: repositoryUserEmail,
+      defaultBranch: repositoryDefaultBranch,
+      autocrlf: repositoryAutocrlf,
+      pullRebase: repositoryPullRebase,
+      pushDefault: repositoryPushDefault,
+      fetchPrune: repositoryFetchPrune,
+      remotes,
+      originUrl: originRemote?.url,
+    };
+  }
+
+  return {
+    workspaceId: input.workspaceId,
+    rootPath: input.rootPath,
+    isGitRepo: repoProbe.isGitRepo,
+    global: globalSettings,
+    repository: repositorySettings,
   };
 }
 
@@ -2308,6 +2695,192 @@ export async function initRuntimeWorkspaceGitRepository(input: {
   });
 }
 
+export async function saveRuntimeWorkspaceGitSettings(input: {
+  workspaceId: string;
+  rootPath: string;
+  global?: WorkspaceGitGlobalSettings;
+  repository?: WorkspaceGitRepositorySettings;
+}): Promise<WorkspaceGitOperationResult> {
+  const hasGlobalUpdate = Boolean(input.global);
+  const hasRepositoryUpdate = Boolean(input.repository);
+  let repoScope: WorkspaceGitScope | undefined;
+
+  if (hasRepositoryUpdate) {
+    repoScope = await assertRuntimeWorkspaceGitRepository({
+      workspaceId: input.workspaceId,
+      rootPath: input.rootPath,
+    });
+  }
+
+  if (input.global) {
+    await Promise.all([
+      writeGitConfigValue({
+        workspaceId: input.workspaceId,
+        rootPath: input.rootPath,
+        scopeArgs: ["--global"],
+        key: "user.name",
+        value: input.global.userName,
+        action: "failed to save git global user.name",
+      }),
+      writeGitConfigValue({
+        workspaceId: input.workspaceId,
+        rootPath: input.rootPath,
+        scopeArgs: ["--global"],
+        key: "user.email",
+        value: input.global.userEmail,
+        action: "failed to save git global user.email",
+      }),
+      writeGitConfigValue({
+        workspaceId: input.workspaceId,
+        rootPath: input.rootPath,
+        scopeArgs: ["--global"],
+        key: "init.defaultBranch",
+        value: input.global.defaultBranch,
+        action: "failed to save git global init.defaultBranch",
+      }),
+      writeGitConfigValue({
+        workspaceId: input.workspaceId,
+        rootPath: input.rootPath,
+        scopeArgs: ["--global"],
+        key: "core.autocrlf",
+        value: input.global.autocrlf,
+        action: "failed to save git global core.autocrlf",
+      }),
+      writeGitConfigValue({
+        workspaceId: input.workspaceId,
+        rootPath: input.rootPath,
+        scopeArgs: ["--global"],
+        key: "pull.rebase",
+        value: input.global.pullRebase,
+        action: "failed to save git global pull.rebase",
+      }),
+      writeGitConfigValue({
+        workspaceId: input.workspaceId,
+        rootPath: input.rootPath,
+        scopeArgs: ["--global"],
+        key: "push.default",
+        value: input.global.pushDefault,
+        action: "failed to save git global push.default",
+      }),
+      writeGitConfigValue({
+        workspaceId: input.workspaceId,
+        rootPath: input.rootPath,
+        scopeArgs: ["--global"],
+        key: "fetch.prune",
+        value: input.global.fetchPrune,
+        action: "failed to save git global fetch.prune",
+      }),
+    ]);
+  }
+
+  if (input.repository && repoScope) {
+    await Promise.all([
+      writeGitConfigValue({
+        workspaceId: input.workspaceId,
+        rootPath: repoScope.gitRootPath,
+        scopeArgs: ["--local"],
+        key: "user.name",
+        value: input.repository.userName,
+        action: "failed to save git repository user.name",
+      }),
+      writeGitConfigValue({
+        workspaceId: input.workspaceId,
+        rootPath: repoScope.gitRootPath,
+        scopeArgs: ["--local"],
+        key: "user.email",
+        value: input.repository.userEmail,
+        action: "failed to save git repository user.email",
+      }),
+      writeGitConfigValue({
+        workspaceId: input.workspaceId,
+        rootPath: repoScope.gitRootPath,
+        scopeArgs: ["--local"],
+        key: "init.defaultBranch",
+        value: input.repository.defaultBranch,
+        action: "failed to save git repository init.defaultBranch",
+      }),
+      writeGitConfigValue({
+        workspaceId: input.workspaceId,
+        rootPath: repoScope.gitRootPath,
+        scopeArgs: ["--local"],
+        key: "core.autocrlf",
+        value: input.repository.autocrlf,
+        action: "failed to save git repository core.autocrlf",
+      }),
+      writeGitConfigValue({
+        workspaceId: input.workspaceId,
+        rootPath: repoScope.gitRootPath,
+        scopeArgs: ["--local"],
+        key: "pull.rebase",
+        value: input.repository.pullRebase,
+        action: "failed to save git repository pull.rebase",
+      }),
+      writeGitConfigValue({
+        workspaceId: input.workspaceId,
+        rootPath: repoScope.gitRootPath,
+        scopeArgs: ["--local"],
+        key: "push.default",
+        value: input.repository.pushDefault,
+        action: "failed to save git repository push.default",
+      }),
+      writeGitConfigValue({
+        workspaceId: input.workspaceId,
+        rootPath: repoScope.gitRootPath,
+        scopeArgs: ["--local"],
+        key: "fetch.prune",
+        value: input.repository.fetchPrune,
+        action: "failed to save git repository fetch.prune",
+      }),
+    ]);
+
+    if (Object.prototype.hasOwnProperty.call(input.repository, "remotes")) {
+      const remotes = normalizeGitRemoteSettings(input.repository.remotes ?? []);
+      await replaceGitRemoteSettings({
+        workspaceId: input.workspaceId,
+        rootPath: repoScope.gitRootPath,
+        remotes,
+      });
+    } else if (Object.prototype.hasOwnProperty.call(input.repository, "originUrl")) {
+      const originUrl = input.repository.originUrl?.trim();
+      if (!originUrl) {
+        throw new RuntimeWorkspaceError("INVALID_ARGUMENT", "origin url is required", {
+          workspaceId: input.workspaceId,
+          field: "originUrl",
+        });
+      }
+      const setRemoteResult = await runGitCommand(
+        repoScope.gitRootPath,
+        ["remote", "set-url", "origin", originUrl],
+        20_000,
+      );
+      if (!setRemoteResult.ok) {
+        const addRemoteResult = await runGitCommand(
+          repoScope.gitRootPath,
+          ["remote", "add", "origin", originUrl],
+          20_000,
+        );
+        await ensureGitCommandSucceeded({
+          workspaceId: input.workspaceId,
+          action: "failed to save git repository origin url",
+          rootPath: repoScope.gitRootPath,
+          result: addRemoteResult,
+        });
+      }
+    }
+  }
+
+  const scopeText = hasGlobalUpdate && hasRepositoryUpdate
+    ? "全局与仓库"
+    : hasGlobalUpdate
+      ? "全局"
+      : "仓库";
+  return createRuntimeWorkspaceGitOperationResult({
+    workspaceId: input.workspaceId,
+    rootPath: input.rootPath,
+    message: `已保存 ${scopeText} Git 设置`,
+  });
+}
+
 export async function stageRuntimeWorkspaceGitChanges(input: {
   workspaceId: string;
   rootPath: string;
@@ -2673,6 +3246,130 @@ export async function createRuntimeWorkspaceGitBranch(input: {
     rootPath: input.rootPath,
     message: input.checkout ? "已创建并切换分支" : "已创建分支",
     branch: name,
+  });
+}
+
+export async function createRuntimeWorkspaceGitWorktree(input: {
+  workspaceId: string;
+  rootPath: string;
+  path: string;
+  branchName?: string;
+  startPoint?: string;
+  detach?: boolean;
+  force?: boolean;
+}): Promise<WorkspaceGitOperationResult> {
+  const scope = await assertRuntimeWorkspaceGitRepository({
+    workspaceId: input.workspaceId,
+    rootPath: input.rootPath,
+  });
+  const targetPath = input.path.trim();
+  if (!targetPath) {
+    throw new RuntimeWorkspaceError("INVALID_ARGUMENT", "worktree path is required", {
+      workspaceId: input.workspaceId,
+      field: "path",
+    });
+  }
+
+  const branchName = input.branchName?.trim() || undefined;
+  const startPoint = input.startPoint?.trim() || undefined;
+  if (branchName) {
+    await validateGitBranchName(scope.gitRootPath, branchName);
+  }
+  if (input.detach && branchName) {
+    throw new RuntimeWorkspaceError("INVALID_ARGUMENT", "detach mode cannot be used with branchName", {
+      workspaceId: input.workspaceId,
+      field: "detach",
+    });
+  }
+
+  const args = ["worktree", "add"];
+  if (input.force) {
+    args.push("--force");
+  }
+  if (input.detach) {
+    args.push("--detach");
+  }
+  if (branchName) {
+    args.push("-b", branchName);
+  }
+  args.push(targetPath);
+  if (startPoint) {
+    args.push(startPoint);
+  }
+
+  const result = await runGitCommand(scope.gitRootPath, args, 45_000);
+  await ensureGitCommandSucceeded({
+    workspaceId: input.workspaceId,
+    action: "failed to create git worktree",
+    rootPath: scope.gitRootPath,
+    result,
+  });
+
+  return createRuntimeWorkspaceGitOperationResult({
+    workspaceId: input.workspaceId,
+    rootPath: input.rootPath,
+    message: "已创建工作树",
+    branch: branchName,
+  });
+}
+
+export async function removeRuntimeWorkspaceGitWorktree(input: {
+  workspaceId: string;
+  rootPath: string;
+  path: string;
+  force?: boolean;
+}): Promise<WorkspaceGitOperationResult> {
+  const scope = await assertRuntimeWorkspaceGitRepository({
+    workspaceId: input.workspaceId,
+    rootPath: input.rootPath,
+  });
+  const targetPath = input.path.trim();
+  if (!targetPath) {
+    throw new RuntimeWorkspaceError("INVALID_ARGUMENT", "worktree path is required", {
+      workspaceId: input.workspaceId,
+      field: "path",
+    });
+  }
+
+  const result = await runGitCommand(
+    scope.gitRootPath,
+    ["worktree", "remove", ...(input.force ? ["--force"] : []), targetPath],
+    45_000,
+  );
+  await ensureGitCommandSucceeded({
+    workspaceId: input.workspaceId,
+    action: "failed to remove git worktree",
+    rootPath: scope.gitRootPath,
+    result,
+  });
+
+  return createRuntimeWorkspaceGitOperationResult({
+    workspaceId: input.workspaceId,
+    rootPath: input.rootPath,
+    message: "已移除工作树",
+  });
+}
+
+export async function pruneRuntimeWorkspaceGitWorktrees(input: {
+  workspaceId: string;
+  rootPath: string;
+}): Promise<WorkspaceGitOperationResult> {
+  const scope = await assertRuntimeWorkspaceGitRepository({
+    workspaceId: input.workspaceId,
+    rootPath: input.rootPath,
+  });
+  const result = await runGitCommand(scope.gitRootPath, ["worktree", "prune"], 30_000);
+  await ensureGitCommandSucceeded({
+    workspaceId: input.workspaceId,
+    action: "failed to prune git worktrees",
+    rootPath: scope.gitRootPath,
+    result,
+  });
+
+  return createRuntimeWorkspaceGitOperationResult({
+    workspaceId: input.workspaceId,
+    rootPath: input.rootPath,
+    message: "已清理失效工作树记录",
   });
 }
 

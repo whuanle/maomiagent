@@ -17,6 +17,8 @@ type PreviewPanelSourceEditorProps = {
   content: string;
   monacoLanguage: string;
   emptyDescription?: ReactNode;
+  readOnly?: boolean;
+  onChange?: (value: string) => void;
 };
 
 export function PreviewPanelToolbar(props: PreviewPanelToolbarProps) {
@@ -35,6 +37,7 @@ export function PreviewPanelSourceEditor(props: PreviewPanelSourceEditorProps) {
   const editorRef = useRef<MonacoEditorNs.IStandaloneCodeEditor | null>(null);
   const layoutFrameRef = useRef<number | null>(null);
   const monacoTheme = isDarkThemeMode(readThemeMode()) ? "vs-dark" : "vs";
+  const readOnly = props.readOnly ?? true;
 
   useEffect(() => {
     const host = sourceHostRef.current;
@@ -140,12 +143,18 @@ export function PreviewPanelSourceEditor(props: PreviewPanelSourceEditorProps) {
               editor.layout();
             });
           }}
+          onChange={(value) => {
+            if (!props.onChange) {
+              return;
+            }
+            props.onChange(value ?? "");
+          }}
           options={{
             automaticLayout: false,
             minimap: { enabled: false },
             fontSize: 13,
             lineHeight: PREVIEW_PANEL_MONACO_LINE_HEIGHT,
-            readOnly: true,
+            readOnly,
             scrollBeyondLastLine: false,
             glyphMargin: false,
             folding: false,

@@ -89,6 +89,126 @@
   min-width: 280px;
 }
 
+.git-page-settings-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 8px 12px;
+}
+
+.git-page-settings-tabs,
+.git-page-settings-tabs .ant-tabs-content-holder,
+.git-page-settings-tabs .ant-tabs-content,
+.git-page-settings-tabs .ant-tabs-tabpane-active {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.git-page-settings-tabs .ant-tabs-tabpane-hidden {
+  display: none;
+}
+
+.git-page-settings-toolbar {
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+
+.git-page-settings-section-header {
+  width: min(860px, 100%);
+  display: grid;
+  gap: 4px;
+  margin-bottom: 14px;
+}
+
+.git-page-settings-section-title {
+  color: var(--app-text);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.git-page-settings-section-description {
+  color: var(--app-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.git-page-settings-form {
+  width: min(860px, 100%);
+}
+
+.git-page-settings-form .ant-form-item {
+  margin-bottom: 16px;
+}
+
+.git-page-settings-form .ant-form-item-label {
+  padding-bottom: 6px;
+}
+
+.git-page-settings-help {
+  color: var(--app-text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.git-page-settings-form .ant-input,
+.git-page-settings-form .ant-input-affix-wrapper,
+.git-page-settings-form .ant-select,
+.git-page-settings-form .ant-select-selector {
+  width: min(420px, 100%);
+}
+
+.git-page-settings-grid-2 {
+  width: min(860px, 100%);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
+  gap: 0 16px;
+}
+
+.git-page-settings-remote-list {
+  display: grid;
+  gap: 10px;
+}
+
+.git-page-settings-remote-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 180px) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+}
+
+.git-page-settings-remote-name,
+.git-page-settings-remote-url {
+  margin-bottom: 0;
+}
+
+.git-page-settings-remote-name .ant-form-item-explain-error,
+.git-page-settings-remote-url .ant-form-item-explain-error {
+  font-size: 12px;
+}
+
+.git-page-settings-remote-remove.ant-btn {
+  margin-top: 2px;
+}
+
+.git-page-settings-row {
+  width: 100%;
+}
+
+.git-page-settings-field {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.git-page-worktree-search {
+  flex: 0 0 320px;
+  width: 320px;
+  max-width: 320px;
+}
+
 .git-page-tab-bar-tools {
   min-width: 0;
   display: flex;
@@ -1021,6 +1141,12 @@
 
   .git-ai-review-commit-stage-copy {
     align-items: flex-start;
+  }
+
+  .git-page-worktree-search {
+    flex: 1 1 auto;
+    width: 100%;
+    max-width: none;
   }
 }
 
@@ -1971,18 +2097,54 @@
 }
 
 .git-page-gitignore-editor {
-  display: grid;
-  gap: 12px;
-  padding: 14px 16px 16px;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--app-border-soft);
+  border-radius: 16px;
+  background: var(--app-surface);
 }
 
-.git-page-gitignore-input.ant-input {
-  min-height: min(52vh, 520px);
-  padding: 12px;
-  background: var(--app-surface);
-  font-family: var(--app-font-family-mono, "Cascadia Code", Consolas, monospace);
-  font-size: 12px;
-  line-height: 1.65;
+.git-page-gitignore-editor .conversation-code-preview-surface-source {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0;
+}
+
+.git-page-gitignore-editor .workspace-file-preview-panel-editor-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.git-page-gitignore-editor .conversation-code-preview-monaco-wrapper {
+  border: none;
+  border-radius: 0;
+  min-height: min(54vh, 560px);
+}
+
+@media (max-width: 960px) {
+  .git-page-settings-grid-2 {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  .git-page-settings-remote-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .git-page-settings-remote-remove.ant-btn {
+    justify-self: flex-start;
+    margin-top: 0;
+  }
+
+  .git-page-settings-form .ant-input,
+  .git-page-settings-form .ant-input-affix-wrapper,
+  .git-page-settings-form .ant-select,
+  .git-page-settings-form .ant-select-selector {
+    width: 100%;
+  }
 }
 
 .git-page-branch-module {

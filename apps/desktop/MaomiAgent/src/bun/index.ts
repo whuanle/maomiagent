@@ -1022,6 +1022,8 @@ try {
               resolveDesktopUiDesignerCommandPort(host).saveDesignPackage(input),
             getDesktopGitIgnore: ({ workspaceId }) =>
               resolveDesktopGitQueryPort(host).getGitIgnore(workspaceId),
+            getDesktopGitSettings: ({ workspaceId }) =>
+              resolveDesktopGitQueryPort(host).getGitSettings(workspaceId),
             getDesktopGitChanges: ({ workspaceId }) =>
               resolveDesktopGitQueryPort(host).getGitChanges(workspaceId),
             getDesktopGitReview: ({ workspaceId }) =>
@@ -1034,6 +1036,8 @@ try {
               resolveDesktopGitQueryPort(host).getGitBranches(workspaceId),
             getDesktopGitStashes: ({ workspaceId }) =>
               resolveDesktopGitQueryPort(host).getGitStashes(workspaceId),
+            getDesktopGitWorktrees: ({ workspaceId }) =>
+              resolveDesktopGitQueryPort(host).getGitWorktrees(workspaceId),
             getDesktopGitHistory: ({ workspaceId, query }) =>
               resolveDesktopGitQueryPort(host).getGitHistory(workspaceId, query),
             getDesktopGitHistoryDetail: ({ workspaceId, hash }) =>
@@ -1044,6 +1048,8 @@ try {
               resolveDesktopGitQueryPort(host).getGitHunks(workspaceId, query),
             saveDesktopGitIgnore: ({ workspaceId, input }) =>
               resolveDesktopGitCommandPort(host).saveGitIgnore(workspaceId, input),
+            saveDesktopGitSettings: ({ workspaceId, input }) =>
+              resolveDesktopGitCommandPort(host).saveGitSettings(workspaceId, input),
             initDesktopGitRepository: ({ workspaceId }) =>
               resolveDesktopGitCommandPort(host).initGitRepository(workspaceId),
             stageDesktopGitChanges: ({ workspaceId, input }) =>
@@ -1068,6 +1074,12 @@ try {
               resolveDesktopGitCommandPort(host).createGitBranch(workspaceId, input),
             createDesktopGitTag: ({ workspaceId, input }) =>
               resolveDesktopGitCommandPort(host).createGitTag(workspaceId, input),
+            createDesktopGitWorktree: ({ workspaceId, input }) =>
+              resolveDesktopGitCommandPort(host).createGitWorktree(workspaceId, input),
+            removeDesktopGitWorktree: ({ workspaceId, input }) =>
+              resolveDesktopGitCommandPort(host).removeGitWorktree(workspaceId, input),
+            pruneDesktopGitWorktrees: ({ workspaceId }) =>
+              resolveDesktopGitCommandPort(host).pruneGitWorktrees(workspaceId),
             checkoutDesktopGitBranch: ({ workspaceId, input }) =>
               resolveDesktopGitCommandPort(host).checkoutGitBranch(workspaceId, input),
             mergeDesktopGitBranchIntoCurrent: ({ workspaceId, input }) =>

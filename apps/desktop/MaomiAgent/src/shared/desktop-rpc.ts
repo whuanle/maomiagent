@@ -260,6 +260,7 @@ import type {
   DesktopGitCompareResult,
   DesktopGitCreateBranchInput,
   DesktopGitCreateTagInput,
+  DesktopGitCreateWorktreeInput,
   DesktopGitCreateStashInput,
   DesktopGitDeleteBranchInput,
   DesktopGitDiscardChangesInput,
@@ -279,11 +280,15 @@ import type {
   DesktopGitReviewDetailQuery,
   DesktopGitReviewDetailResult,
   DesktopGitReviewResult,
+  DesktopGitSaveSettingsInput,
+  DesktopGitSettingsResult,
   DesktopGitSaveIgnoreInput,
+  DesktopGitRemoveWorktreeInput,
   DesktopGitStageChangesInput,
   DesktopGitStashRefInput,
   DesktopGitStashesResult,
   DesktopGitUnstageChangesInput,
+  DesktopGitWorktreesResult,
   DesktopGitChangesResult,
 } from "./desktop-git";
 import type {
@@ -757,6 +762,12 @@ export type DesktopRendererRPC = {
         };
         response: DesktopGitIgnoreResult;
       };
+      getDesktopGitSettings: {
+        params: {
+          workspaceId: string;
+        };
+        response: DesktopGitSettingsResult;
+      };
       getDesktopGitChanges: {
         params: {
           workspaceId: string;
@@ -795,6 +806,12 @@ export type DesktopRendererRPC = {
         };
         response: DesktopGitStashesResult;
       };
+      getDesktopGitWorktrees: {
+        params: {
+          workspaceId: string;
+        };
+        response: DesktopGitWorktreesResult;
+      };
       getDesktopGitHistory: {
         params: {
           workspaceId: string;
@@ -827,6 +844,13 @@ export type DesktopRendererRPC = {
         params: {
           workspaceId: string;
           input: DesktopGitSaveIgnoreInput;
+        };
+        response: DesktopGitOperationResult;
+      };
+      saveDesktopGitSettings: {
+        params: {
+          workspaceId: string;
+          input: DesktopGitSaveSettingsInput;
         };
         response: DesktopGitOperationResult;
       };
@@ -910,6 +934,26 @@ export type DesktopRendererRPC = {
         params: {
           workspaceId: string;
           input: DesktopGitCreateTagInput;
+        };
+        response: DesktopGitOperationResult;
+      };
+      createDesktopGitWorktree: {
+        params: {
+          workspaceId: string;
+          input: DesktopGitCreateWorktreeInput;
+        };
+        response: DesktopGitOperationResult;
+      };
+      removeDesktopGitWorktree: {
+        params: {
+          workspaceId: string;
+          input: DesktopGitRemoveWorktreeInput;
+        };
+        response: DesktopGitOperationResult;
+      };
+      pruneDesktopGitWorktrees: {
+        params: {
+          workspaceId: string;
         };
         response: DesktopGitOperationResult;
       };

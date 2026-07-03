@@ -14,6 +14,7 @@ import type {
   DesktopGitCompareResult,
   DesktopGitCreateBranchInput,
   DesktopGitCreateTagInput,
+  DesktopGitCreateWorktreeInput,
   DesktopGitCreateStashInput,
   DesktopGitDeleteBranchInput,
   DesktopGitDiscardChangesInput,
@@ -34,10 +35,14 @@ import type {
   DesktopGitReviewDetailResult,
   DesktopGitReviewResult,
   DesktopGitSaveIgnoreInput,
+  DesktopGitSaveSettingsInput,
+  DesktopGitSettingsResult,
+  DesktopGitRemoveWorktreeInput,
   DesktopGitStageChangesInput,
   DesktopGitStashRefInput,
   DesktopGitStashesResult,
   DesktopGitUnstageChangesInput,
+  DesktopGitWorktreesResult,
   DesktopGitChangesResult,
 } from "../../abstraction/models/desktop-git.models";
 import type { DesktopGitPort } from "../../abstraction/ports/desktop-git.ports";
@@ -60,6 +65,7 @@ import {
   fetchRuntimeWorkspaceGitRemote,
   getRuntimeWorkspaceGitHistoryDetail,
   getRuntimeWorkspaceGitReviewDetail,
+  getRuntimeWorkspaceGitSettings,
   initRuntimeWorkspaceGitRepository,
   listRuntimeWorkspaceGitBranches,
   listRuntimeWorkspaceGitChanges,
@@ -67,18 +73,23 @@ import {
   listRuntimeWorkspaceGitHunks,
   listRuntimeWorkspaceGitReview,
   listRuntimeWorkspaceGitStashes,
+  listRuntimeWorkspaceGitWorktrees,
   mergeRuntimeWorkspaceGitBranchIntoCurrent,
   popRuntimeWorkspaceGitStash,
   pullRuntimeWorkspaceGitRemote,
   pushRuntimeWorkspaceGitRemote,
   rebaseRuntimeWorkspaceCurrentGitBranch,
   renameRuntimeWorkspaceGitBranch,
+  removeRuntimeWorkspaceGitWorktree,
   resetRuntimeWorkspaceGitCommit,
   revertRuntimeWorkspaceGitCommit,
+  saveRuntimeWorkspaceGitSettings,
   stageRuntimeWorkspaceGitChanges,
   stageRuntimeWorkspaceGitHunks,
   unstageRuntimeWorkspaceGitChanges,
   unstageRuntimeWorkspaceGitHunks,
+  createRuntimeWorkspaceGitWorktree,
+  pruneRuntimeWorkspaceGitWorktrees,
 } from "./desktop-git-inspector";
 
 const WORKSPACE_ID_RE = /^[a-z0-9][a-z0-9._-]{1,63}$/;
@@ -181,6 +192,11 @@ export class DesktopGitService implements DesktopGitPort {
     }
   }
 
+  async getGitSettings(workspaceId: string): Promise<DesktopGitSettingsResult> {
+    const { workspaceId: id, rootPath } = await this.resolveWorkspaceRoot(workspaceId);
+    return getRuntimeWorkspaceGitSettings({ workspaceId: id, rootPath });
+  }
+
   async getGitChanges(workspaceId: string): Promise<DesktopGitChangesResult> {
     const { workspaceId: id, rootPath } = await this.resolveWorkspaceRoot(workspaceId);
     return listRuntimeWorkspaceGitChanges({ workspaceId: id, rootPath });
@@ -232,6 +248,11 @@ export class DesktopGitService implements DesktopGitPort {
     return listRuntimeWorkspaceGitStashes({ workspaceId: id, rootPath });
   }
 
+  async getGitWorktrees(workspaceId: string): Promise<DesktopGitWorktreesResult> {
+    const { workspaceId: id, rootPath } = await this.resolveWorkspaceRoot(workspaceId);
+    return listRuntimeWorkspaceGitWorktrees({ workspaceId: id, rootPath });
+  }
+
   async getGitHistory(
     workspaceId: string,
     input?: DesktopGitHistoryQuery,
@@ -261,10 +282,11 @@ export class DesktopGitService implements DesktopGitPort {
     workspaceId: string,
     input?: DesktopGitModuleSnapshotQuery,
   ): Promise<DesktopGitModuleSnapshotResult> {
-    const [changes, branches, stashes, history] = await Promise.all([
+    const [changes, branches, stashes, worktrees, history] = await Promise.all([
       this.getGitChanges(workspaceId),
       this.getGitBranches(workspaceId),
       this.getGitStashes(workspaceId),
+      this.getGitWorktrees(workspaceId),
       this.getGitHistory(workspaceId, {
         limit: input?.historyLimit,
         includeStats: false,
@@ -273,8 +295,8 @@ export class DesktopGitService implements DesktopGitPort {
 
     return {
       workspaceId: changes.workspaceId,
-      rootPath: changes.rootPath || branches.rootPath || stashes.rootPath || history.rootPath,
-      isGitRepo: changes.isGitRepo || branches.isGitRepo || stashes.isGitRepo || history.isGitRepo,
+      rootPath: changes.rootPath || branches.rootPath || stashes.rootPath || worktrees.rootPath || history.rootPath,
+      isGitRepo: changes.isGitRepo || branches.isGitRepo || stashes.isGitRepo || worktrees.isGitRepo || history.isGitRepo,
       fetchedAt: nowIso(),
       historyLimit:
         typeof input?.historyLimit === "number" && Number.isFinite(input.historyLimit)
@@ -283,6 +305,7 @@ export class DesktopGitService implements DesktopGitPort {
       changes,
       branches,
       stashes,
+      worktrees,
       history,
     };
   }
@@ -369,6 +392,19 @@ export class DesktopGitService implements DesktopGitPort {
         error: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  async saveGitSettings(
+    workspaceId: string,
+    input: DesktopGitSaveSettingsInput,
+  ): Promise<DesktopGitOperationResult> {
+    const { workspaceId: id, rootPath } = await this.resolveWorkspaceRoot(workspaceId);
+    return saveRuntimeWorkspaceGitSettings({
+      workspaceId: id,
+      rootPath,
+      global: input.global,
+      repository: input.repository,
+    });
   }
 
   async initGitRepository(workspaceId: string): Promise<DesktopGitOperationResult> {
@@ -493,6 +529,40 @@ export class DesktopGitService implements DesktopGitPort {
       ref: input.ref,
       push: input.push,
     });
+  }
+
+  async createGitWorktree(
+    workspaceId: string,
+    input: DesktopGitCreateWorktreeInput,
+  ): Promise<DesktopGitOperationResult> {
+    const { workspaceId: id, rootPath } = await this.resolveWorkspaceRoot(workspaceId);
+    return createRuntimeWorkspaceGitWorktree({
+      workspaceId: id,
+      rootPath,
+      path: input.path,
+      branchName: input.branchName,
+      startPoint: input.startPoint,
+      detach: input.detach,
+      force: input.force,
+    });
+  }
+
+  async removeGitWorktree(
+    workspaceId: string,
+    input: DesktopGitRemoveWorktreeInput,
+  ): Promise<DesktopGitOperationResult> {
+    const { workspaceId: id, rootPath } = await this.resolveWorkspaceRoot(workspaceId);
+    return removeRuntimeWorkspaceGitWorktree({
+      workspaceId: id,
+      rootPath,
+      path: input.path,
+      force: input.force,
+    });
+  }
+
+  async pruneGitWorktrees(workspaceId: string): Promise<DesktopGitOperationResult> {
+    const { workspaceId: id, rootPath } = await this.resolveWorkspaceRoot(workspaceId);
+    return pruneRuntimeWorkspaceGitWorktrees({ workspaceId: id, rootPath });
   }
 
   async checkoutGitBranch(

@@ -7,6 +7,8 @@ export type GitPageCopy = {
   refresh: string;
   changesTab: string;
   branchesTab: string;
+  worktreesTab: string;
+  settingsTab: string;
   commitReviewTab: string;
   commitReviewCurrentTarget: string;
   commitReviewCommitTarget: string;
@@ -99,6 +101,8 @@ const ZH_CN: GitPageCopy = {
   refresh: "刷新",
   changesTab: "变更",
   branchesTab: "分支",
+  worktreesTab: "工作树",
+  settingsTab: "设置",
   commitReviewTab: "Commit 审查",
   commitReviewCurrentTarget: "当前更改",
   commitReviewCommitTarget: "单个提交",
@@ -205,6 +209,8 @@ const EN_US: GitPageCopy = {
   refresh: "Refresh",
   changesTab: "Changes",
   branchesTab: "Branches",
+  worktreesTab: "Worktrees",
+  settingsTab: "Settings",
   commitReviewTab: "Commit Review",
   commitReviewCurrentTarget: "Current Changes",
   commitReviewCommitTarget: "Single Commit",

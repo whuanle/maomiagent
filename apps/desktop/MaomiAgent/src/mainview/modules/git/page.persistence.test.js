@@ -360,6 +360,8 @@ export function createGitTranslator() {
     refresh: "Refresh",
     changesTab: "Changes",
     branchesTab: "Branches",
+      worktreesTab: "Worktrees",
+    settingsTab: "Settings",
     commitReviewTab: "Commit Review",
     emptyNoBridge: "No bridge",
     emptyNoWorkspace: "No workspace",
